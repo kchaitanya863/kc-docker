@@ -1,0 +1,106 @@
+name: CI & Automated Release
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test & Lint (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check code formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy Linter
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Run Test Suite
+        run: cargo test --all --verbose
+
+  release:
+    name: Build & Publish Release (${{ matrix.target }})
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: boxr-linux-x86_64.tar.gz
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            artifact_name: boxr-linux-aarch64.tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: boxr-macos-arm64.tar.gz
+          - os: macos-13
+            target: x86_64-apple-darwin
+            artifact_name: boxr-macos-x86_64.tar.gz
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build Release Binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package Release Artifact
+        run: |
+          mkdir -p package/bin package/completions
+          cp target/${{ matrix.target }}/release/boxr package/bin/
+          cp install.sh package/
+          cp README.md package/
+          cp LICENSE package/ 2>/dev/null || true
+
+          # Generate shell completions
+          package/bin/boxr completion bash > package/completions/boxr.bash 2>/dev/null || true
+          package/bin/boxr completion zsh > package/completions/_boxr 2>/dev/null || true
+          package/bin/boxr completion fish > package/completions/boxr.fish 2>/dev/null || true
+
+          tar -czvf ${{ matrix.artifact_name }} -C package .
+
+      - name: Generate SHA-256 Checksum
+        run: |
+          if command -v shasum >/dev/null 2>&1; then
+            shasum -a 256 ${{ matrix.artifact_name }} > ${{ matrix.artifact_name }}.sha256
+          else
+            sha256sum ${{ matrix.artifact_name }} > ${{ matrix.artifact_name }}.sha256
+          fi
+
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ matrix.artifact_name }}
+            ${{ matrix.artifact_name }}.sha256
+          draft: false
+          prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}
+          generate_release_notes: true

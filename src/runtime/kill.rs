@@ -35,9 +35,11 @@ impl ContainerKiller {
 
         #[cfg(target_os = "macos")]
         {
+            let docker_bin = crate::runtime::darwin::find_real_docker_bin();
             let sig_name = format!("{}", sig);
-            let _ = std::process::Command::new("docker")
-                .args(["kill", "-s", &sig_name, &container.name])
+            let runner_name = format!("boxr-runner-{}", container.id);
+            let _ = std::process::Command::new(&docker_bin)
+                .args(["kill", "-s", &sig_name, &runner_name])
                 .output();
         }
 

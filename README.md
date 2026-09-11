@@ -18,12 +18,15 @@ A fast, lightweight, production-grade **Open Container Initiative (OCI)** compli
 
 ---
 
-## Architecture
+## Architecture & Documentation
+
+For detailed architectural diagrams, subsystem designs, and storage hierarchies, see the [Architecture & Internals Guide](docs/ARCHITECTURE.md).
 
 ```
 boxr/
 ├── src/
 │   ├── main.rs                 # CLI entrypoint and command routing
+│   ├── lib.rs                  # Library crate root and command handlers
 │   ├── cli.rs                  # Clap CLI arguments, options, and subcommands
 │   ├── oci/
 │   │   ├── mod.rs              # OCI module definitions
@@ -51,6 +54,18 @@ boxr/
 │   ├── network/
 │   │   ├── mod.rs              # Bridge networks, IPAM, and port forwarding
 │   │   └── rootless.rs         # Rootless user-space TCP port forwarder proxy
+│   ├── pod/
+│   │   └── mod.rs              # Podman pod lifecycle and namespace sharing
+│   ├── kube/
+│   │   └── mod.rs              # Kubernetes Pod YAML play, generate, and unshare
+│   ├── health/
+│   │   └── mod.rs              # Container healthcheck probes and restart policies
+│   ├── stats/
+│   │   └── mod.rs              # Real-time resource usage collector (CPU %, RAM, PIDs)
+│   ├── events/
+│   │   └── mod.rs              # Real-time JSONL lifecycle events recorder and streamer
+│   ├── system/
+│   │   └── mod.rs              # Disk space auditing (df) and automated pruning
 │   ├── volume/
 │   │   └── mod.rs              # Named volume storage and bind mount resolver
 │   ├── daemon/
@@ -60,7 +75,9 @@ boxr/
 │       ├── linux.rs            # Native Linux execution (unshare, pivot_root, mounts)
 │       └── darwin.rs           # macOS container execution bridge
 └── tests/
-    └── integration_test.rs     # Integration test suite
+    ├── e2e_test.rs             # End-to-end workload and integration test suite
+    ├── integration_test.rs     # Integration test suite
+    └── qa_*.rs                 # Exhaustive edge case and breaking test suites
 ```
 
 ---

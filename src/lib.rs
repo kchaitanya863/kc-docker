@@ -1,3 +1,35 @@
+//! # boxr 📦
+//!
+//! A fast, lightweight, production-grade **Open Container Initiative (OCI)** compliant
+//! container engine, image builder, compose orchestrator, and runtime written in **Rust**.
+//!
+//! ## Core Specifications Implemented
+//! - **OCI Distribution Spec**: Registry v2 client with bearer token authentication and multi-arch resolution.
+//! - **OCI Image Spec**: Manifest parsing, config extraction, layered rootfs extraction, and whiteout deletion handling.
+//! - **OCI Runtime Spec**: Generation of standard `config.json` container bundles and process execution.
+//!
+//! ## Subsystems
+//! - [`auth`]: Registry credentials management, image tarball archiving (`save`/`load`), and registry push.
+//! - [`builder`]: Multi-stage Dockerfile parser, step executor, and content-addressed build cache.
+//! - [`cgroups`]: Linux cgroups v2 resource controllers (memory, CPU quota, and PID limits).
+//! - [`cli`]: Command-line arguments and subcommands parsing via Clap.
+//! - [`completions`]: Shell auto-completion script generators (`bash`, `zsh`, `fish`) and drop-in aliases.
+//! - [`compose`]: `docker-compose.yml` parser with topological dependency ordering.
+//! - [`daemon`]: Unix domain socket server with Docker-compatible REST API endpoints.
+//! - [`events`]: Real-time container lifecycle events stream with JSONL persistence.
+//! - [`health`]: Container healthcheck probes and automatic restart policy supervisor.
+//! - [`kube`]: Kubernetes Pod YAML manifest generator and executor (`play kube` / `generate kube`).
+//! - [`network`]: Software bridge networks, sequential IPAM, and user-space rootless port forwarding.
+//! - [`oci`]: OCI spec definitions, image reference parsing, and registry distribution client.
+//! - [`pod`]: Podman-style pod abstractions for multi-container groups sharing namespaces.
+//! - [`runtime`]: Platform-specific container process execution engines (Linux & macOS).
+//! - [`security`]: Rootless user namespaces (`CLONE_NEWUSER`), UID/GID maps, capability whitelisting, and Seccomp filters.
+//! - [`stats`]: Real-time streaming container resource monitoring (CPU %, memory, PIDs).
+//! - [`storage`]: Content-addressable layer storage, image store, and Copy-on-Write overlay drivers.
+//! - [`system`]: System disk usage auditing (`system df`) and resource pruning (`system prune`).
+//! - [`terminal`]: Interactive terminal PTY raw mode guards and window resize signals.
+//! - [`volume`]: Persistent named volumes and host directory bind mounts.
+
 pub mod auth;
 pub mod builder;
 pub mod cgroups;
@@ -613,8 +645,9 @@ pub fn container_logs(args: &LogsArgs) -> Result<()> {
 
     #[cfg(target_os = "macos")]
     let runner_output = {
+        let docker_bin = runtime::darwin::find_real_docker_bin();
         let runner_name = format!("boxr-runner-{}", rec.id);
-        if let Ok(out) = std::process::Command::new("docker").args(["logs", &runner_name]).output() {
+        if let Ok(out) = std::process::Command::new(&docker_bin).args(["logs", &runner_name]).output() {
             let combined = String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr);
             if !combined.trim().is_empty() {
                 Some(combined)
@@ -810,20 +843,26 @@ pub fn wait_container(args: &cli::WaitArgs) -> Result<i32> {
             ContainerStatus::Running | ContainerStatus::Created | ContainerStatus::Paused => {
                 #[cfg(target_os = "macos")]
                 {
+                    let docker_bin = runtime::darwin::find_real_docker_bin();
                     let runner_name = format!("boxr-runner-{}", cont.id);
-                    if let Ok(output) = std::process::Command::new("docker")
+                    if let Ok(output) = std::process::Command::new(&docker_bin)
                         .args(["inspect", "-f", "{{.State.Running}}", &runner_name])
                         .output()
                     {
                         let s = String::from_utf8_lossy(&output.stdout);
-                        if s.trim() == "false" {
+                        let s_trim = s.trim();
+                        if s_trim == "false" || s_trim.is_empty() {
                             let _ = c_store.update_status(&cont.id, ContainerStatus::Exited(0));
                             println!("0");
                             return Ok(0);
                         }
+                    } else {
+                        let _ = c_store.update_status(&cont.id, ContainerStatus::Exited(0));
+                        println!("0");
+                        return Ok(0);
                     }
                 }
-                std::thread::sleep(std::time::Duration::from_millis(300));
+                std::thread::sleep(std::time::Duration::from_millis(200));
             }
         }
     }

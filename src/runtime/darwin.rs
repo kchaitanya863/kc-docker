@@ -4,8 +4,26 @@ use crate::volume::MountSpec;
 use anyhow::{anyhow, Context, Result};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+
+pub fn find_real_docker_bin() -> String {
+    // Check known Docker binary locations avoiding ~/.boxr/bin/docker loop
+    let known_paths = [
+        "/usr/local/bin/docker",
+        "/opt/homebrew/bin/docker",
+        "/Applications/Docker.app/Contents/Resources/bin/docker",
+        "/Users/knaragam/.docker/bin/docker",
+    ];
+    for p in known_paths {
+        if let Ok(meta) = std::fs::metadata(p) {
+            if meta.is_file() {
+                return p.to_string();
+            }
+        }
+    }
+    "docker".to_string()
+}
 
 /// Execute an OCI container bundle on macOS using the Linux VM execution bridge.
 pub fn execute_bundle(
@@ -15,7 +33,13 @@ pub fn execute_bundle(
     ports: &[PortMapping],
     detach: bool,
 ) -> Result<i32> {
-    let rootfs_path = bundle_path.join(&spec.root.path);
+    let raw_rootfs = PathBuf::from(&spec.root.path);
+    let rootfs_path = if raw_rootfs.is_absolute() {
+        raw_rootfs
+    } else {
+        bundle_path.join(&spec.root.path)
+    };
+
     if !rootfs_path.exists() {
         return Err(anyhow!("Rootfs not found at {:?}", rootfs_path));
     }
@@ -76,7 +100,8 @@ pub fn execute_bundle(
     shell_script.push_str(&exec_line);
 
     // Build docker runner command
-    let mut cmd = Command::new("docker");
+    let docker_bin = find_real_docker_bin();
+    let mut cmd = Command::new(&docker_bin);
     cmd.arg("run");
 
     let runner_name = format!("boxr-runner-{}", bundle_path.file_name().and_then(|n| n.to_str()).unwrap_or("run"));
@@ -165,6 +190,7 @@ pub fn execute_bundle(
 
 /// Execute a command in an existing container bundle
 pub fn exec_in_bundle(bundle_path: &Path, command: &[String], env: &[String]) -> Result<i32> {
+    let docker_bin = find_real_docker_bin();
     let runner_name = format!("boxr-runner-{}", bundle_path.file_name().and_then(|n| n.to_str()).unwrap_or("run"));
     let binary = &command[0];
     let args = &command[1..];
@@ -173,11 +199,11 @@ pub fn exec_in_bundle(bundle_path: &Path, command: &[String], env: &[String]) ->
     let rootfs_path = bundle_path.join("rootfs");
     let has_sh = rootfs_path.join("bin/sh").exists();
 
-    let mut check_cmd = Command::new("docker");
+    let mut check_cmd = Command::new(&docker_bin);
     check_cmd.args(["ps", "-q", "-f", &format!("name={}", runner_name)]);
     if let Ok(output) = check_cmd.output() {
         if !output.stdout.is_empty() {
-            let mut exec_cmd = Command::new("docker");
+            let mut exec_cmd = Command::new(&docker_bin);
             exec_cmd.args(["exec", "-i"]);
             for e in env {
                 exec_cmd.arg("-e").arg(e);
@@ -219,7 +245,7 @@ pub fn exec_in_bundle(bundle_path: &Path, command: &[String], env: &[String]) ->
         inner
     };
 
-    let mut cmd = Command::new("docker");
+    let mut cmd = Command::new(&docker_bin);
     cmd.arg("run").arg("--rm").arg("-i").arg("--privileged")
         .arg("-v").arg(format!("{}:/boxr-rootfs", rootfs_str));
 
