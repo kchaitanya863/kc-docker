@@ -20,8 +20,8 @@ use anyhow::{anyhow, Result};
 use chrono::Utc;
 use clap::Parser;
 use cli::{
-    BuildArgs, BuilderAction, Cli, Commands, ComposeArgs, ComposeSubcommand, ExecArgs,
-    LogsArgs, NetworkAction, NetworkSubcommands, PsArgs, RunArgs, SpecArgs, VolumeAction,
+    BuildArgs, BuilderAction, Cli, Commands, ComposeArgs, ComposeSubcommand, DiffArgs, ExecArgs,
+    LogsArgs, NetworkAction, NetworkSubcommands, PsArgs, RunArgs, SpecArgs, TopArgs, VolumeAction,
     VolumeSubcommands,
 };
 use events::{ContainerEvent, EventManager};
@@ -144,6 +144,12 @@ async fn main() -> Result<()> {
             } else {
                 println!("alias docker=\"boxr\"");
             }
+        }
+        Commands::Diff(args) => {
+            diff_container(&args)?;
+        }
+        Commands::Top(args) => {
+            top_container(&args)?;
         }
         Commands::Images => {
             list_images()?;
@@ -357,6 +363,9 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
 
     if args.detach {
         println!("{}", container_id);
+        if !parsed_ports.is_empty() {
+            let _ = network::rootless::PortForwardManager::start_forwarding(&parsed_ports).await;
+        }
     }
 
     EventManager::record(ContainerEvent::new(
@@ -475,6 +484,32 @@ fn inspect_target(target: &str) -> Result<()> {
     }
 
     Err(anyhow!("No such container or image: '{}'", target))
+}
+
+fn diff_container(args: &DiffArgs) -> Result<()> {
+    let c_store = ContainerStore::new();
+    let cont = c_store.find(&args.container).ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
+
+    let i_store = ImageStore::new();
+    let img = i_store.find(&cont.image).ok_or_else(|| anyhow!("Image '{}' not found", cont.image))?;
+
+    let base_rootfs = PathBuf::from(&img.rootfs_path);
+    let container_rootfs = PathBuf::from(&cont.bundle_path).join("rootfs");
+
+    let diffs = runtime::diff::FilesystemDiff::compare(&base_rootfs, &container_rootfs)?;
+    for d in diffs {
+        println!("{} {}", d.change_type, d.path);
+    }
+    Ok(())
+}
+
+fn top_container(args: &TopArgs) -> Result<()> {
+    let c_store = ContainerStore::new();
+    let cont = c_store.find(&args.container).ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
+
+    let bundle_path = PathBuf::from(&cont.bundle_path);
+    runtime::top::ContainerTop::list_processes(&bundle_path, &args.ps_args)?;
+    Ok(())
 }
 
 async fn build_image(args: BuildArgs) -> Result<()> {

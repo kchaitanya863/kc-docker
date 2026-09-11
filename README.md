@@ -100,6 +100,12 @@ The resulting binary will be at `target/release/boxr`.
 # Inspect container metadata
 ./target/release/boxr inspect web
 
+# Inspect container filesystem diff (Added, Changed, Deleted files)
+./target/release/boxr diff web
+
+# View running container processes
+./target/release/boxr top web
+
 # Stop, start, and remove
 ./target/release/boxr stop web
 ./target/release/boxr start web

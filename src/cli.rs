@@ -75,6 +75,12 @@ pub enum Commands {
     /// Manage builds and build cache
     Builder(BuilderSubcommands),
 
+    /// Inspect changes to files or directories on a container's filesystem
+    Diff(DiffArgs),
+
+    /// Display the running processes of a container
+    Top(TopArgs),
+
     /// Remove one or more containers
     Rm(RmArgs),
 
@@ -390,4 +396,20 @@ pub struct AliasArgs {
     /// Output shell alias command
     #[arg(long = "eval")]
     pub eval: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct DiffArgs {
+    /// Container to inspect changes on
+    pub container: String,
+}
+
+#[derive(Args, Debug)]
+pub struct TopArgs {
+    /// Container to inspect processes on
+    pub container: String,
+
+    /// Optional ps arguments
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    pub ps_args: Vec<String>,
 }

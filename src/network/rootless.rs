@@ -52,6 +52,30 @@ impl RootlessPortForwarder {
     }
 }
 
+pub struct PortForwardManager;
+
+impl PortForwardManager {
+    /// Start forwarding for all requested port mappings
+    pub async fn start_forwarding(ports: &[crate::network::PortMapping]) -> Result<Vec<Arc<RootlessPortForwarder>>> {
+        let mut forwarders = Vec::new();
+        for p in ports {
+            let host_ip_str = p.host_ip.as_deref().unwrap_or("0.0.0.0");
+            let host_addr: SocketAddr = format!("{}:{}", host_ip_str, p.host_port)
+                .parse()
+                .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], p.host_port)));
+
+            let target_addr: SocketAddr = format!("127.0.0.1:{}", p.container_port)
+                .parse()
+                .unwrap_or_else(|_| SocketAddr::from(([127, 0, 0, 1], p.container_port)));
+
+            let forwarder = Arc::new(RootlessPortForwarder::new(host_addr, target_addr));
+            let _ = forwarder.start().await;
+            forwarders.push(forwarder);
+        }
+        Ok(forwarders)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
