@@ -110,15 +110,25 @@ impl FilesystemDiff {
                 let cont_meta = fs::symlink_metadata(&path)?;
                 let base_meta = fs::symlink_metadata(&base_equiv)?;
 
-                if cont_meta.file_type() != base_meta.file_type()
+                let mut is_different = cont_meta.file_type() != base_meta.file_type()
                     || cont_meta.len() != base_meta.len()
                     || cont_meta
                         .modified()
                         .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
                         != base_meta
                             .modified()
-                            .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
-                {
+                            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+
+                // If filesystem timestamps or len matched, compare file content if regular files
+                if !is_different && path.is_file() && base_equiv.is_file() {
+                    if let (Ok(c1), Ok(c2)) = (fs::read(&path), fs::read(&base_equiv)) {
+                        if c1 != c2 {
+                            is_different = true;
+                        }
+                    }
+                }
+
+                if is_different {
                     diffs.push(DiffRecord {
                         change_type: DiffChangeType::Changed,
                         path: rel_str,
