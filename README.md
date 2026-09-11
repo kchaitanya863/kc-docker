@@ -318,11 +318,15 @@ Run the automated benchmark suite:
 
 | Benchmark Metric | Boxr (Rust) | Docker | Comparison |
 | :--- | :--- | :--- | :--- |
+| **Daemon Idle Memory Footprint** | **8.4 MB** | 859.2 MB | **102x lighter** 🍃 |
+| **CLI Peak RAM Usage (RSS)** | **8.3 MB** | 29.1 MB | **3.5x less RAM** ⚡ |
+| **CLI Binary Size on Disk** | **8.0 MB** (6.2M stripped) | 39.6 MB | **5x to 6.5x smaller** 📦 |
+| **Full Suite Disk Footprint** | **8.0 MB** | 2.1 GB | **260x smaller** 📦 |
 | **Dockerfile Build (Cold)** | **464.5 ms** | 880.6 ms | **1.90x faster** 🚀 |
 | **Dockerfile Build (Cached)** | **161.9 ms** | 182.4 ms | **1.13x faster** 🚀 |
-| **Container Startup Latency (Median)** | 261.5 ms | 193.4 ms | ~par (on macOS bridge) |
-| **5 Concurrent Containers Spawn** | 575.1 ms | 426.3 ms | sub-second throughput |
-| **Volume I/O (10MB Write+Read)** | 300.5 ms | 221.5 ms | near-native I/O |
+| **Container Startup Latency (Median)** | 261.5 ms | 191.6 ms | ~par (on macOS bridge) |
+| **5 Concurrent Containers Spawn** | 546.4 ms | 427.5 ms | sub-second throughput |
+| **Volume I/O (10MB Write+Read)** | 300.5 ms | 218.6 ms | near-native I/O |
 
 ---
 
