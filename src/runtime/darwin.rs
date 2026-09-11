@@ -1,13 +1,20 @@
+use crate::network::PortMapping;
 use crate::oci::runtime::Spec;
+use crate::volume::MountSpec;
 use anyhow::{anyhow, Context, Result};
+use std::fs::File;
+use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 /// Execute an OCI container bundle on macOS using the Linux VM execution bridge.
-/// Since macOS kernel (XNU) cannot natively execute Linux ELF binaries, this bridge
-/// mounts the Boxr-generated OCI rootfs and executes the process inside an isolated
-/// Linux container environment, streaming stdout/stderr and returning the exit code.
-pub fn execute_bundle(bundle_path: &Path, spec: &Spec) -> Result<i32> {
+pub fn execute_bundle(
+    bundle_path: &Path,
+    spec: &Spec,
+    mounts: &[MountSpec],
+    ports: &[PortMapping],
+    detach: bool,
+) -> Result<i32> {
     let rootfs_path = bundle_path.join(&spec.root.path);
     if !rootfs_path.exists() {
         return Err(anyhow!("Rootfs not found at {:?}", rootfs_path));
@@ -29,19 +36,29 @@ pub fn execute_bundle(bundle_path: &Path, spec: &Spec) -> Result<i32> {
 
     let cmd_args = &spec.process.args[1..];
 
-    // Build the command to run inside the Linux VM runner
-    // We bind-mount the unpacked rootfs to /boxr-rootfs, prepare /proc and /dev, then chroot
+    // Build the shell setup script inside the container runner
     let mut shell_script = String::new();
     shell_script.push_str("mkdir -p /boxr-rootfs/proc /boxr-rootfs/sys /boxr-rootfs/dev 2>/dev/null || true; ");
     shell_script.push_str("mount -t proc proc /boxr-rootfs/proc 2>/dev/null || true; ");
     shell_script.push_str("mount -t sysfs sysfs /boxr-rootfs/sys 2>/dev/null || true; ");
     shell_script.push_str("mount --bind /dev /boxr-rootfs/dev 2>/dev/null || true; ");
+
+    // Prepare mounts inside /boxr-rootfs
+    for (idx, m) in mounts.iter().enumerate() {
+        let container_mount = format!("/boxr-rootfs{}", m.destination);
+        let host_mount_in_runner = format!("/boxr-mounts/m{}", idx);
+        shell_script.push_str(&format!(
+            "mkdir -p \"{}\" 2>/dev/null || true; mount --bind \"{}\" \"{}\" 2>/dev/null || true; ",
+            container_mount, host_mount_in_runner, container_mount
+        ));
+    }
+
     shell_script.push_str(&format!(
         "cd \"/boxr-rootfs{}\" 2>/dev/null || cd /boxr-rootfs; ",
         spec.process.cwd
     ));
 
-    // Construct the command invocation
+    // Construct command invocation
     let mut exec_line = format!("chroot /boxr-rootfs {}", cmd_binary);
     for arg in cmd_args {
         exec_line.push_str(&format!(" \"{}\"", arg.replace('"', "\\\"")));
@@ -50,12 +67,31 @@ pub fn execute_bundle(bundle_path: &Path, spec: &Spec) -> Result<i32> {
 
     // Build docker runner command
     let mut cmd = Command::new("docker");
-    cmd.arg("run")
-        .arg("--rm")
-        .arg("-i")
-        .arg("--privileged")
-        .arg("-v")
-        .arg(format!("{}:/boxr-rootfs", rootfs_str));
+    cmd.arg("run");
+
+    if detach {
+        cmd.arg("-d");
+    } else {
+        cmd.arg("--rm").arg("-i");
+    }
+
+    cmd.arg("--privileged");
+    cmd.arg("-v").arg(format!("{}:/boxr-rootfs", rootfs_str));
+
+    // Bind mount volume specs into runner
+    for (idx, m) in mounts.iter().enumerate() {
+        let src = m.source.to_string_lossy();
+        cmd.arg("-v").arg(format!("{}:/boxr-mounts/m{}{}", src, idx, if m.read_only { ":ro" } else { "" }));
+    }
+
+    // Port forwardings
+    for p in ports {
+        if let Some(ip) = &p.host_ip {
+            cmd.arg("-p").arg(format!("{}:{}:{}/{}", ip, p.host_port, p.container_port, p.protocol));
+        } else {
+            cmd.arg("-p").arg(format!("{}:{}/{}", p.host_port, p.container_port, p.protocol));
+        }
+    }
 
     // Environment variables
     for env_var in &spec.process.env {
@@ -68,11 +104,70 @@ pub fn execute_bundle(bundle_path: &Path, spec: &Spec) -> Result<i32> {
 
     cmd.arg("alpine").arg("/bin/sh").arg("-c").arg(shell_script);
 
-    let mut child = cmd
-        .spawn()
-        .context("Failed to spawn container execution bridge (check if Docker Desktop / Linux VM is running)")?;
+    let log_path = bundle_path.join("logs.txt");
+
+    if detach {
+        let output = cmd.output()?;
+        let mut log_file = File::create(log_path)?;
+        log_file.write_all(&output.stdout)?;
+        log_file.write_all(&output.stderr)?;
+        return Ok(if output.status.success() { 0 } else { 1 });
+    }
+
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = cmd.spawn()?;
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let mut log_file = File::create(log_path)?;
+
+    if let Some(out) = stdout {
+        let reader = BufReader::new(out);
+        for line in reader.lines() {
+            if let Ok(l) = line {
+                println!("{}", l);
+                let _ = writeln!(log_file, "{}", l);
+            }
+        }
+    }
+
+    if let Some(err) = stderr {
+        let reader = BufReader::new(err);
+        for line in reader.lines() {
+            if let Ok(l) = line {
+                eprintln!("{}", l);
+                let _ = writeln!(log_file, "{}", l);
+            }
+        }
+    }
 
     let status = child.wait()?;
-    let code = status.code().unwrap_or(1);
-    Ok(code)
+    Ok(status.code().unwrap_or(0))
+}
+
+/// Execute a command in an existing container bundle
+pub fn exec_in_bundle(bundle_path: &Path, command: &[String], env: &[String]) -> Result<i32> {
+    let rootfs_path = bundle_path.join("rootfs");
+    let abs_rootfs = rootfs_path.canonicalize()?;
+    let rootfs_str = abs_rootfs.to_str().ok_or_else(|| anyhow!("Invalid path"))?;
+
+    let binary = &command[0];
+    let args = &command[1..];
+
+    let mut shell_script = format!("chroot /boxr-rootfs {}", binary);
+    for a in args {
+        shell_script.push_str(&format!(" \"{}\"", a.replace('"', "\\\"")));
+    }
+
+    let mut cmd = Command::new("docker");
+    cmd.arg("run").arg("--rm").arg("-i").arg("--privileged")
+        .arg("-v").arg(format!("{}:/boxr-rootfs", rootfs_str));
+
+    for e in env {
+        cmd.arg("-e").arg(e);
+    }
+
+    cmd.arg("alpine").arg("/bin/sh").arg("-c").arg(shell_script);
+    let status = cmd.status()?;
+    Ok(status.code().unwrap_or(0))
 }

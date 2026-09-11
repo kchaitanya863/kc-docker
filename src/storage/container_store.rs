@@ -2,8 +2,25 @@ use crate::storage::boxr_home;
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::PathBuf;
+use std::time::SystemTime;
+
+pub fn rand_id() -> [u8; 6] {
+    let mut bytes = [0u8; 6];
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let pid = std::process::id();
+    let combined = now ^ ((pid as u128) << 32);
+    let mut hasher = Sha256::new();
+    hasher.update(combined.to_le_bytes());
+    let hash = hasher.finalize();
+    bytes.copy_from_slice(&hash[..6]);
+    bytes
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ContainerStatus {
@@ -85,14 +102,14 @@ impl ContainerStore {
         self.save(&data)
     }
 
-    pub fn update_status(&self, id: &str, status: ContainerStatus) -> Result<()> {
+    pub fn update_status(&self, id_or_name: &str, status: ContainerStatus) -> Result<()> {
         let mut data = self.load();
-        if let Some(c) = data.containers.iter_mut().find(|c| c.id == id || c.id.starts_with(id)) {
+        if let Some(c) = data.containers.iter_mut().find(|c| c.id == id_or_name || c.id.starts_with(id_or_name) || c.name == id_or_name) {
             c.status = status;
             self.save(&data)?;
             Ok(())
         } else {
-            Err(anyhow!("Container not found: {}", id))
+            Err(anyhow!("Container not found: {}", id_or_name))
         }
     }
 

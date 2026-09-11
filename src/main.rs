@@ -1,23 +1,33 @@
+mod builder;
 mod cli;
+mod compose;
+mod daemon;
+mod network;
 mod oci;
 mod runtime;
 mod storage;
+mod volume;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use chrono::Utc;
 use clap::Parser;
-use cli::{Cli, Commands, PsArgs, RunArgs, SpecArgs};
+use cli::{
+    BuildArgs, Cli, Commands, ComposeArgs, ComposeSubcommand, ExecArgs, LogsArgs, NetworkAction, NetworkSubcommands, PsArgs, RunArgs,
+    SpecArgs, VolumeAction, VolumeSubcommands,
+};
+use network::{NetworkStore, PortMapping};
 use oci::distribution::RegistryClient;
 use oci::image::unpack_layer;
 use oci::reference::ImageReference;
 use oci::runtime::Spec;
-use runtime::execute_bundle;
+use runtime::{exec_in_bundle, execute_bundle};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 use storage::{
     ensure_directories, ContainerRecord, ContainerStatus, ContainerStore, ImageRecord, ImageStore,
 };
+use volume::VolumeStore;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -31,6 +41,37 @@ async fn main() -> Result<()> {
         Commands::Run(args) => {
             let code = run_container(args).await?;
             std::process::exit(code);
+        }
+        Commands::Stop(args) => {
+            stop_container(&args.container)?;
+        }
+        Commands::Start(args) => {
+            start_container(&args.container).await?;
+        }
+        Commands::Logs(args) => {
+            container_logs(&args)?;
+        }
+        Commands::Exec(args) => {
+            let code = exec_container(&args)?;
+            std::process::exit(code);
+        }
+        Commands::Inspect(args) => {
+            inspect_target(&args.target)?;
+        }
+        Commands::Build(args) => {
+            build_image(args).await?;
+        }
+        Commands::Compose(args) => {
+            handle_compose(args).await?;
+        }
+        Commands::Volume(args) => {
+            handle_volume(args)?;
+        }
+        Commands::Network(args) => {
+            handle_network(args)?;
+        }
+        Commands::Daemon(args) => {
+            daemon::start_daemon(args.socket.as_deref()).await?;
         }
         Commands::Images => {
             list_images()?;
@@ -52,7 +93,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn pull_image(image_str: &str) -> Result<ImageRecord> {
+pub async fn pull_image(image_str: &str) -> Result<ImageRecord> {
     let reference = ImageReference::parse(image_str)?;
     let mut client = RegistryClient::new();
 
@@ -127,7 +168,7 @@ async fn pull_image(image_str: &str) -> Result<ImageRecord> {
     Ok(record)
 }
 
-async fn run_container(args: RunArgs) -> Result<i32> {
+pub async fn run_container(args: RunArgs) -> Result<i32> {
     let image_store = ImageStore::new();
     let image_record = match image_store.find(&args.image) {
         Some(record) => record,
@@ -136,6 +177,19 @@ async fn run_container(args: RunArgs) -> Result<i32> {
             pull_image(&args.image).await?
         }
     };
+
+    // Parse port mappings
+    let mut parsed_ports = Vec::new();
+    for p in &args.ports {
+        parsed_ports.push(PortMapping::parse(p)?);
+    }
+
+    // Resolve volume mounts
+    let vol_store = VolumeStore::new();
+    let mut parsed_mounts = Vec::new();
+    for v in &args.volumes {
+        parsed_mounts.push(vol_store.resolve_mount(v)?);
+    }
 
     // Generate container ID and name
     let random_bytes: [u8; 6] = rand_bytes();
@@ -148,7 +202,7 @@ async fn run_container(args: RunArgs) -> Result<i32> {
 
     fs::create_dir_all(&bundle_dir)?;
 
-    // Clone/copy base rootfs into container bundle rootfs
+    // Clone base rootfs into container bundle rootfs
     let base_rootfs = PathBuf::from(&image_record.rootfs_path);
     copy_dir_recursive(&base_rootfs, &container_rootfs)?;
 
@@ -175,27 +229,225 @@ async fn run_container(args: RunArgs) -> Result<i32> {
 
     // Register container in store
     let container_store = ContainerStore::new();
+    let initial_status = if args.detach {
+        ContainerStatus::Running
+    } else {
+        ContainerStatus::Running
+    };
+
     let record = ContainerRecord {
         id: container_id.clone(),
         name: container_name.clone(),
         image: format!("{}:{}", image_record.reference, image_record.tag),
         command: spec.process.args.clone(),
         created_at: Utc::now(),
-        status: ContainerStatus::Running,
+        status: initial_status,
         bundle_path: bundle_dir.to_string_lossy().to_string(),
     };
     container_store.add(record)?;
 
-    // Execute the container
-    let exit_code = execute_bundle(&bundle_dir, &spec)?;
+    if args.detach {
+        println!("{}", container_id);
+    }
 
-    if args.rm {
-        let _ = container_store.remove(&container_id);
-    } else {
-        let _ = container_store.update_status(&container_id, ContainerStatus::Exited(exit_code));
+    // Execute the container
+    let exit_code = execute_bundle(&bundle_dir, &spec, &parsed_mounts, &parsed_ports, args.detach)?;
+
+    if !args.detach {
+        if args.rm {
+            let _ = container_store.remove(&container_id);
+        } else {
+            let _ = container_store.update_status(&container_id, ContainerStatus::Exited(exit_code));
+        }
     }
 
     Ok(exit_code)
+}
+
+fn stop_container(container: &str) -> Result<()> {
+    let store = ContainerStore::new();
+    store.update_status(container, ContainerStatus::Exited(0))?;
+    println!("{}", container);
+    Ok(())
+}
+
+async fn start_container(container: &str) -> Result<()> {
+    let store = ContainerStore::new();
+    let rec = store.find(container).ok_or_else(|| anyhow!("Container '{}' not found", container))?;
+
+    let bundle_path = PathBuf::from(&rec.bundle_path);
+    let config_file = bundle_path.join("config.json");
+    let content = fs::read_to_string(&config_file)?;
+    let spec: Spec = serde_json::from_str(&content)?;
+
+    store.update_status(&rec.id, ContainerStatus::Running)?;
+    let code = execute_bundle(&bundle_path, &spec, &[], &[], false)?;
+    store.update_status(&rec.id, ContainerStatus::Exited(code))?;
+    Ok(())
+}
+
+fn container_logs(args: &LogsArgs) -> Result<()> {
+    let store = ContainerStore::new();
+    let rec = store.find(&args.container).ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
+
+    let log_path = PathBuf::from(&rec.bundle_path).join("logs.txt");
+    if log_path.exists() {
+        let content = fs::read_to_string(log_path)?;
+        print!("{}", content);
+    } else {
+        println!("No logs available for container {}", args.container);
+    }
+    Ok(())
+}
+
+fn exec_container(args: &ExecArgs) -> Result<i32> {
+    let store = ContainerStore::new();
+    let rec = store.find(&args.container).ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
+
+    if args.command.is_empty() {
+        return Err(anyhow!("Command cannot be empty for exec"));
+    }
+
+    let bundle_path = PathBuf::from(&rec.bundle_path);
+    exec_in_bundle(&bundle_path, &args.command, &args.env)
+}
+
+fn inspect_target(target: &str) -> Result<()> {
+    let c_store = ContainerStore::new();
+    if let Some(c) = c_store.find(target) {
+        println!("{}", serde_json::to_string_pretty(&c)?);
+        return Ok(());
+    }
+
+    let i_store = ImageStore::new();
+    if let Some(i) = i_store.find(target) {
+        println!("{}", serde_json::to_string_pretty(&i)?);
+        return Ok(());
+    }
+
+    Err(anyhow!("No such container or image: '{}'", target))
+}
+
+async fn build_image(args: BuildArgs) -> Result<()> {
+    let builder = builder::ImageBuilder::new();
+    let context_dir = PathBuf::from(&args.path).canonicalize()?;
+    let dockerfile_path = if Path::new(&args.file).is_absolute() {
+        PathBuf::from(&args.file)
+    } else {
+        context_dir.join(&args.file)
+    };
+
+    builder.build(builder::BuildOptions {
+        context_dir,
+        dockerfile_path,
+        tag: args.tag,
+    }).await?;
+
+    Ok(())
+}
+
+async fn handle_compose(args: ComposeArgs) -> Result<()> {
+    let path = PathBuf::from(&args.file);
+    let project = compose::ComposeProject::load(&path)?;
+
+    match args.command {
+        ComposeSubcommand::Up(opts) => {
+            project.up(opts.detach, opts.build).await?;
+        }
+        ComposeSubcommand::Down(opts) => {
+            project.down(opts.volumes)?;
+        }
+        ComposeSubcommand::Ps => {
+            let containers = project.ps()?;
+            println!("{:<14} {:<24} {:<20} {:<16}", "CONTAINER ID", "NAME", "IMAGE", "STATUS");
+            for c in containers {
+                println!("{:<14} {:<24} {:<20} {:<16}", &c.id[..12.min(c.id.len())], c.name, c.image, c.status.to_string());
+            }
+        }
+        ComposeSubcommand::Logs(opts) => {
+            let containers = project.ps()?;
+            for c in containers {
+                if let Some(s) = &opts.service {
+                    if !c.name.contains(s) {
+                        continue;
+                    }
+                }
+                println!("=== Logs for {} ===", c.name);
+                let log_path = PathBuf::from(&c.bundle_path).join("logs.txt");
+                if log_path.exists() {
+                    let text = fs::read_to_string(log_path)?;
+                    print!("{}", text);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn handle_volume(args: VolumeSubcommands) -> Result<()> {
+    let store = VolumeStore::new();
+    match args.command {
+        VolumeAction::Create { name } => {
+            let vol = store.create(name.as_deref(), None)?;
+            println!("{}", vol.name);
+        }
+        VolumeAction::Ls => {
+            let vols = store.list();
+            println!("{:<20} {:<12} {:<40}", "VOLUME NAME", "DRIVER", "SCOPE");
+            for v in vols {
+                println!("{:<20} {:<12} {:<40}", v.name, v.driver, v.scope);
+            }
+        }
+        VolumeAction::Inspect { name } => {
+            let vol = store.find(&name).ok_or_else(|| anyhow!("Volume '{}' not found", name))?;
+            println!("{}", serde_json::to_string_pretty(&vol)?);
+        }
+        VolumeAction::Rm { name } => {
+            store.remove(&name)?;
+            println!("{}", name);
+        }
+        VolumeAction::Prune => {
+            let pruned = store.prune()?;
+            for p in pruned {
+                println!("{}", p);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn handle_network(args: NetworkSubcommands) -> Result<()> {
+    let store = NetworkStore::new();
+    match args.command {
+        NetworkAction::Create { name, subnet, gateway } => {
+            let net = store.create(&name, subnet.as_deref(), gateway.as_deref())?;
+            println!("{}", net.id);
+        }
+        NetworkAction::Ls => {
+            let nets = store.list();
+            println!("{:<14} {:<20} {:<12} {:<20}", "NETWORK ID", "NAME", "DRIVER", "SCOPE");
+            for n in nets {
+                println!("{:<14} {:<20} {:<12} {:<20}", &n.id[..12.min(n.id.len())], n.name, n.driver, "local");
+            }
+        }
+        NetworkAction::Inspect { name } => {
+            let net = store.find(&name).ok_or_else(|| anyhow!("Network '{}' not found", name))?;
+            println!("{}", serde_json::to_string_pretty(&net)?);
+        }
+        NetworkAction::Rm { name } => {
+            store.remove(&name)?;
+            println!("{}", name);
+        }
+        NetworkAction::Connect { network, container } => {
+            let ep = store.connect_container(&network, &container, &container)?;
+            println!("Connected {} with IP {}", container, ep.ipv4_address);
+        }
+        NetworkAction::Disconnect { network, container } => {
+            store.disconnect_container(&network, &container)?;
+            println!("Disconnected {} from {}", container, network);
+        }
+    }
+    Ok(())
 }
 
 fn list_images() -> Result<()> {

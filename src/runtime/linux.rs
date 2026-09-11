@@ -1,4 +1,6 @@
+use crate::network::PortMapping;
 use crate::oci::runtime::Spec;
+use crate::volume::MountSpec;
 use anyhow::{anyhow, Context, Result};
 use nix::mount::{mount, MsFlags};
 use nix::sched::{unshare, CloneFlags};
@@ -9,7 +11,13 @@ use std::fs;
 use std::path::Path;
 
 /// Native Linux execution of an OCI bundle using Linux namespaces and pivot_root.
-pub fn execute_bundle(bundle_path: &Path, spec: &Spec) -> Result<i32> {
+pub fn execute_bundle(
+    bundle_path: &Path,
+    spec: &Spec,
+    mounts: &[MountSpec],
+    _ports: &[PortMapping],
+    _detach: bool,
+) -> Result<i32> {
     let rootfs = bundle_path.join(&spec.root.path);
     if !rootfs.exists() {
         return Err(anyhow!("Rootfs does not exist at {:?}", rootfs));
@@ -35,7 +43,7 @@ pub fn execute_bundle(bundle_path: &Path, spec: &Spec) -> Result<i32> {
             }
         }
         ForkResult::Child => {
-            if let Err(err) = run_container_child(&abs_rootfs, spec) {
+            if let Err(err) = run_container_child(&abs_rootfs, spec, mounts) {
                 eprintln!("Container child failed: {:?}", err);
                 std::process::exit(1);
             }
@@ -44,7 +52,30 @@ pub fn execute_bundle(bundle_path: &Path, spec: &Spec) -> Result<i32> {
     }
 }
 
-fn run_container_child(rootfs: &Path, spec: &Spec) -> Result<()> {
+pub fn exec_in_bundle(bundle_path: &Path, command: &[String], env: &[String]) -> Result<i32> {
+    let rootfs = bundle_path.join("rootfs");
+    let abs_rootfs = rootfs.canonicalize()?;
+
+    let flags = CloneFlags::CLONE_NEWNS;
+    let _ = unshare(flags);
+
+    let binary = &command[0];
+    let binary_c = CString::new(binary.as_str())?;
+    let args_c: Vec<CString> = command.iter().map(|s| CString::new(s.as_str()).unwrap()).collect();
+
+    for e in env {
+        if let Some((k, v)) = e.split_once('=') {
+            std::env::set_var(k, v);
+        }
+    }
+
+    let _ = nix::unistd::chroot(&abs_rootfs);
+    let _ = chdir("/");
+    let _ = nix::unistd::execvp(&binary_c, &args_c);
+    Ok(0)
+}
+
+fn run_container_child(rootfs: &Path, spec: &Spec, mounts: &[MountSpec]) -> Result<()> {
     // Set hostname
     if let Some(hostname) = &spec.hostname {
         sethostname(hostname)?;
@@ -98,6 +129,17 @@ fn run_container_child(rootfs: &Path, spec: &Spec) -> Result<()> {
         MsFlags::MS_NOSUID | MsFlags::MS_STRICTATIME,
         Some("mode=755"),
     );
+
+    // Mount external volumes/binds
+    for m in mounts {
+        let target = rootfs.join(m.destination.trim_start_matches('/'));
+        let _ = fs::create_dir_all(&target);
+        let mut flags = MsFlags::MS_BIND | MsFlags::MS_REC;
+        if m.read_only {
+            flags |= MsFlags::MS_RDONLY;
+        }
+        let _ = mount(Some(&m.source), &target, None::<&str>, flags, None::<&str>);
+    }
 
     // Setup pivot_root
     let oldroot_path = rootfs.join(".oldroot");

@@ -6,7 +6,7 @@ use clap::{Args, Parser, Subcommand};
     author = "Boxr Contributors",
     version,
     about = "A fast, lightweight OCI container engine and runtime written in Rust",
-    long_about = "boxr is an Open Container Initiative (OCI) compliant container engine and runtime written in Rust.\nIt pulls image manifests and layers via the OCI Distribution Spec, unpacks root filesystems with whiteout support per the OCI Image Spec, generates OCI Runtime Spec bundles, and executes containers."
+    long_about = "boxr is a complete Open Container Initiative (OCI) compliant container engine, image builder, compose orchestrator, and runtime written in Rust."
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -20,6 +20,36 @@ pub enum Commands {
 
     /// Run a command in a new container
     Run(RunArgs),
+
+    /// Stop a running container
+    Stop(StopArgs),
+
+    /// Start a stopped container
+    Start(StartArgs),
+
+    /// Fetch the logs of a container
+    Logs(LogsArgs),
+
+    /// Run a command in an existing container
+    Exec(ExecArgs),
+
+    /// Return low-level information on Boxr objects (containers, images)
+    Inspect(InspectArgs),
+
+    /// Build an image from a Dockerfile
+    Build(BuildArgs),
+
+    /// Define and run multi-container applications with Boxr Compose
+    Compose(ComposeArgs),
+
+    /// Manage volumes
+    Volume(VolumeSubcommands),
+
+    /// Manage networks
+    Network(NetworkSubcommands),
+
+    /// Run the Boxr daemon background API server
+    Daemon(DaemonArgs),
 
     /// List local images
     Images,
@@ -39,34 +69,165 @@ pub enum Commands {
 
 #[derive(Args, Debug)]
 pub struct PullArgs {
-    /// The container image reference (e.g., 'hello-world', 'alpine:3.19', 'ghcr.io/org/repo:tag')
     pub image: String,
 }
 
-#[derive(Args, Debug)]
+#[derive(Args, Debug, Clone)]
 pub struct RunArgs {
-    /// Allocate a pseudo-TTY and keep stdin open
     #[arg(short = 'i', long = "interactive")]
     pub interactive: bool,
 
-    /// Automatically remove the container when it exits
+    #[arg(short = 'd', long = "detach")]
+    pub detach: bool,
+
     #[arg(long = "rm")]
     pub rm: bool,
 
-    /// Assign a name to the container
     #[arg(long = "name")]
     pub name: Option<String>,
 
-    /// Set environment variables (-e KEY=VALUE)
     #[arg(short = 'e', long = "env")]
     pub env: Vec<String>,
 
-    /// The container image to run
+    #[arg(short = 'p', long = "publish")]
+    pub ports: Vec<String>,
+
+    #[arg(short = 'v', long = "volume")]
+    pub volumes: Vec<String>,
+
     pub image: String,
 
-    /// Command and arguments to run inside the container (overrides image CMD)
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub command: Vec<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct StopArgs {
+    pub container: String,
+}
+
+#[derive(Args, Debug)]
+pub struct StartArgs {
+    pub container: String,
+}
+
+#[derive(Args, Debug)]
+pub struct LogsArgs {
+    #[arg(short = 'f', long = "follow")]
+    pub follow: bool,
+
+    pub container: String,
+}
+
+#[derive(Args, Debug)]
+pub struct ExecArgs {
+    #[arg(short = 'i', long = "interactive")]
+    pub interactive: bool,
+
+    #[arg(short = 'e', long = "env")]
+    pub env: Vec<String>,
+
+    pub container: String,
+
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    pub command: Vec<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct InspectArgs {
+    pub target: String,
+}
+
+#[derive(Args, Debug)]
+pub struct BuildArgs {
+    #[arg(short = 't', long = "tag")]
+    pub tag: Option<String>,
+
+    #[arg(short = 'f', long = "file", default_value = "Dockerfile")]
+    pub file: String,
+
+    #[arg(default_value = ".")]
+    pub path: String,
+}
+
+#[derive(Args, Debug)]
+pub struct ComposeArgs {
+    #[arg(short = 'f', long = "file", default_value = "docker-compose.yml")]
+    pub file: String,
+
+    #[command(subcommand)]
+    pub command: ComposeSubcommand,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ComposeSubcommand {
+    Up(ComposeUpArgs),
+    Down(ComposeDownArgs),
+    Ps,
+    Logs(ComposeLogsArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct ComposeUpArgs {
+    #[arg(short = 'd', long = "detach")]
+    pub detach: bool,
+
+    #[arg(long = "build")]
+    pub build: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct ComposeDownArgs {
+    #[arg(short = 'v', long = "volumes")]
+    pub volumes: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct ComposeLogsArgs {
+    pub service: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct VolumeSubcommands {
+    #[command(subcommand)]
+    pub command: VolumeAction,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum VolumeAction {
+    Create { name: Option<String> },
+    Ls,
+    Inspect { name: String },
+    Rm { name: String },
+    Prune,
+}
+
+#[derive(Args, Debug)]
+pub struct NetworkSubcommands {
+    #[command(subcommand)]
+    pub command: NetworkAction,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum NetworkAction {
+    Create {
+        name: String,
+        #[arg(long = "subnet")]
+        subnet: Option<String>,
+        #[arg(long = "gateway")]
+        gateway: Option<String>,
+    },
+    Ls,
+    Inspect { name: String },
+    Rm { name: String },
+    Connect { network: String, container: String },
+    Disconnect { network: String, container: String },
+}
+
+#[derive(Args, Debug)]
+pub struct DaemonArgs {
+    #[arg(short = 's', long = "socket")]
+    pub socket: Option<String>,
 }
 
 #[derive(Args, Debug)]
