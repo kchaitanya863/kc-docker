@@ -582,10 +582,6 @@ pub fn container_logs(args: &LogsArgs) -> Result<()> {
     let rec = store.find(&args.container).ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
 
     let log_path = PathBuf::from(&rec.bundle_path).join("logs.txt");
-    if !log_path.exists() {
-        println!("No logs available for container {}", args.container);
-        return Ok(());
-    }
 
     let print_line = |line: &str| {
         if args.timestamps {
@@ -595,7 +591,33 @@ pub fn container_logs(args: &LogsArgs) -> Result<()> {
         }
     };
 
-    let content = fs::read_to_string(&log_path)?;
+    #[cfg(target_os = "macos")]
+    let runner_output = {
+        let runner_name = format!("boxr-runner-{}", rec.id);
+        if let Ok(out) = std::process::Command::new("docker").args(["logs", &runner_name]).output() {
+            let combined = String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr);
+            if !combined.trim().is_empty() {
+                Some(combined)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    };
+
+    #[cfg(not(target_os = "macos"))]
+    let runner_output: Option<String> = None;
+
+    let content = if let Some(out) = runner_output {
+        out
+    } else if log_path.exists() {
+        fs::read_to_string(&log_path)?
+    } else {
+        println!("No logs available for container {}", args.container);
+        return Ok(());
+    };
+
     let mut lines: Vec<&str> = content.lines().collect();
 
     if let Some(tail) = args.tail {
@@ -768,12 +790,17 @@ pub fn wait_container(args: &cli::WaitArgs) -> Result<i32> {
             ContainerStatus::Running | ContainerStatus::Created | ContainerStatus::Paused => {
                 #[cfg(target_os = "macos")]
                 {
-                    // Check if underlying process has finished
-                    let log_file = PathBuf::from(&cont.bundle_path).join("logs.txt");
-                    if log_file.exists() {
-                        let _ = c_store.update_status(&cont.id, ContainerStatus::Exited(0));
-                        println!("0");
-                        return Ok(0);
+                    let runner_name = format!("boxr-runner-{}", cont.id);
+                    if let Ok(output) = std::process::Command::new("docker")
+                        .args(["inspect", "-f", "{{.State.Running}}", &runner_name])
+                        .output()
+                    {
+                        let s = String::from_utf8_lossy(&output.stdout);
+                        if s.trim() == "false" {
+                            let _ = c_store.update_status(&cont.id, ContainerStatus::Exited(0));
+                            println!("0");
+                            return Ok(0);
+                        }
                     }
                 }
                 std::thread::sleep(std::time::Duration::from_millis(300));
