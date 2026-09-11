@@ -67,7 +67,19 @@ boxr/
 
 ## Quick Start
 
-### Build
+### Installation
+
+#### Automated Installer (Recommended)
+
+```bash
+# Build & install boxr, Docker drop-in wrapper, and completions
+./install.sh
+
+# Or install from GitHub:
+curl -fsSL https://raw.githubusercontent.com/kchaitanya863/kc-docker/main/install.sh | sh
+```
+
+#### Manual Build
 
 ```bash
 cargo build --release
