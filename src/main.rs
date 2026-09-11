@@ -2,13 +2,16 @@ mod auth;
 mod builder;
 mod cgroups;
 mod cli;
+mod completions;
 mod compose;
 mod daemon;
+mod events;
 mod health;
 mod network;
 mod oci;
 mod runtime;
 mod security;
+mod stats;
 mod storage;
 mod terminal;
 mod volume;
@@ -21,6 +24,7 @@ use cli::{
     LogsArgs, NetworkAction, NetworkSubcommands, PsArgs, RunArgs, SpecArgs, VolumeAction,
     VolumeSubcommands,
 };
+use events::{ContainerEvent, EventManager};
 use network::{NetworkStore, PortMapping};
 use oci::distribution::RegistryClient;
 use oci::image::unpack_layer;
@@ -28,6 +32,7 @@ use oci::reference::ImageReference;
 use oci::runtime::Spec;
 use runtime::{exec_in_bundle, execute_bundle};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use storage::{
@@ -121,6 +126,25 @@ async fn main() -> Result<()> {
                 println!("Total reclaimed build cache entries: {}", count);
             }
         },
+        Commands::Stats(args) => {
+            stats::StatsCollector::display_stats(&args.containers, args.no_stream)?;
+        }
+        Commands::Events(args) => {
+            events::EventManager::stream_events(args.since.as_deref(), args.filter.as_deref())?;
+        }
+        Commands::Completion(args) => {
+            let shell = completions::ShellType::parse(&args.shell)?;
+            println!("{}", completions::CompletionGenerator::generate(shell));
+        }
+        Commands::Alias(args) => {
+            if args.install {
+                let bin_path = completions::CompletionGenerator::install_docker_wrapper()?;
+                println!("Installed docker wrapper script in: {}/docker", bin_path);
+                println!("Add to your PATH:\n  export PATH=\"{}:$PATH\"", bin_path);
+            } else {
+                println!("alias docker=\"boxr\"");
+            }
+        }
         Commands::Images => {
             list_images()?;
         }
@@ -321,11 +345,23 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
         health_status: initial_health,
         restart_count: 0,
     };
+    let mut event_attrs = HashMap::new();
+    event_attrs.insert("image".to_string(), format!("{}:{}", image_record.reference, image_record.tag));
+    event_attrs.insert("name".to_string(), container_name.clone());
+
+    EventManager::record(ContainerEvent::new(
+        "container", "create", &container_id, &container_name, event_attrs.clone()
+    ));
+
     container_store.add(record)?;
 
     if args.detach {
         println!("{}", container_id);
     }
+
+    EventManager::record(ContainerEvent::new(
+        "container", "start", &container_id, &container_name, event_attrs.clone()
+    ));
 
     // Enter raw terminal mode if interactive TTY was requested
     let _term_guard = if args.interactive && args.tty {
@@ -353,6 +389,11 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
             break;
         }
     }
+
+    event_attrs.insert("exitCode".to_string(), exit_code.to_string());
+    EventManager::record(ContainerEvent::new(
+        "container", "die", &container_id, &container_name, event_attrs
+    ));
 
     // Health check evaluation if configured
     if !health_cfg.test.is_empty() {

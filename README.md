@@ -194,6 +194,33 @@ curl --unix-socket ~/.boxr/boxr.sock http://localhost/version
 curl --unix-socket ~/.boxr/boxr.sock http://localhost/containers/json
 ```
 
+### Stats & Events Monitoring
+
+```bash
+# Display live streaming container resource stats (CPU, Memory, PIDs)
+./target/release/boxr stats
+
+# Snapshot stats without streaming
+./target/release/boxr stats --no-stream
+
+# Stream real-time container lifecycle events (create, start, die, stop)
+./target/release/boxr events
+```
+
+### Shell Completions & Docker Drop-in Alias
+
+```bash
+# Generate shell autocompletion script (bash, zsh, fish)
+./target/release/boxr completion zsh > ~/.zfunc/_boxr
+./target/release/boxr completion bash > /etc/bash_completion.d/boxr
+
+# Generate shell alias command
+./target/release/boxr alias
+
+# Install Docker drop-in wrapper script in ~/.boxr/bin/docker
+./target/release/boxr alias --install
+```
+
 ---
 
 ## Testing

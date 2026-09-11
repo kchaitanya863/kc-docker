@@ -81,6 +81,18 @@ pub enum Commands {
     /// Remove one or more images
     Rmi(RmiArgs),
 
+    /// Display a live stream of container(s) resource usage statistics
+    Stats(StatsArgs),
+
+    /// Get real time events from the server
+    Events(EventsArgs),
+
+    /// Generate shell completion scripts (bash, zsh, fish)
+    Completion(CompletionArgs),
+
+    /// Docker CLI drop-in alias / wrapper
+    Alias(AliasArgs),
+
     /// Generate a standard OCI runtime specification (config.json)
     Spec(SpecArgs),
 }
@@ -340,4 +352,42 @@ pub struct SpecArgs {
     /// Path to bundle directory where config.json should be created (default: current directory)
     #[arg(short = 'b', long = "bundle")]
     pub bundle: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct StatsArgs {
+    /// Disable streaming stats and only pull the first result
+    #[arg(long = "no-stream")]
+    pub no_stream: bool,
+
+    /// Target container IDs or names
+    pub containers: Vec<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct EventsArgs {
+    /// Show all events created since timestamp
+    #[arg(long = "since")]
+    pub since: Option<String>,
+
+    /// Filter output based on conditions provided
+    #[arg(short = 'f', long = "filter")]
+    pub filter: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct CompletionArgs {
+    /// Target shell (bash, zsh, fish)
+    pub shell: String,
+}
+
+#[derive(Args, Debug)]
+pub struct AliasArgs {
+    /// Install wrapper script in ~/.boxr/bin/docker
+    #[arg(long = "install")]
+    pub install: bool,
+
+    /// Output shell alias command
+    #[arg(long = "eval")]
+    pub eval: bool,
 }
