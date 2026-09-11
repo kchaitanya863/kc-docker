@@ -5,7 +5,7 @@ use anyhow::{Context, Result, anyhow};
 use nix::mount::{MsFlags, mount};
 use nix::sched::{CloneFlags, unshare};
 use nix::sys::wait::{WaitStatus, waitpid};
-use nix::unistd::{ForkResult, chdir, fork, pivot_root, sethostname};
+use nix::unistd::{ForkResult, chdir, fork, pivot_root};
 use std::ffi::CString;
 use std::fs;
 use std::path::Path;
@@ -66,7 +66,9 @@ pub fn exec_in_bundle(bundle_path: &Path, command: &[String], env: &[String]) ->
 
     for e in env {
         if let Some((k, v)) = e.split_once('=') {
-            std::env::set_var(k, v);
+            unsafe {
+                std::env::set_var(k, v);
+            }
         }
     }
 
@@ -79,7 +81,10 @@ pub fn exec_in_bundle(bundle_path: &Path, command: &[String], env: &[String]) ->
 fn run_container_child(rootfs: &Path, spec: &Spec, mounts: &[MountSpec]) -> Result<()> {
     // Set hostname
     if let Some(hostname) = &spec.hostname {
-        sethostname(hostname)?;
+        let host_c = CString::new(hostname.as_str())?;
+        unsafe {
+            libc::sethostname(host_c.as_ptr(), host_c.as_bytes().len());
+        }
     }
 
     // Ensure root filesystem is private
@@ -161,11 +166,15 @@ fn run_container_child(rootfs: &Path, spec: &Spec, mounts: &[MountSpec]) -> Resu
 
     // Clear environment and populate with spec environment
     for (k, _) in std::env::vars() {
-        std::env::remove_var(k);
+        unsafe {
+            std::env::remove_var(k);
+        }
     }
     for e in &spec.process.env {
         if let Some((k, v)) = e.split_once('=') {
-            std::env::set_var(k, v);
+            unsafe {
+                std::env::set_var(k, v);
+            }
         }
     }
 

@@ -37,7 +37,7 @@ jobs:
         run: cargo clippy --all-targets -- -A clippy::all
 
       - name: Run Test Suite
-        run: cargo test --all --verbose
+        run: cargo test --all --verbose -- --test-threads=1
 
   release:
     name: Build & Publish Release (${{ matrix.target }})
