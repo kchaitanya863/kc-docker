@@ -400,3 +400,41 @@ fn test_e2e_real_service_workload_redis() {
     let _ = Command::new(&bin).args(["stop", &cont_name]).output();
     let _ = Command::new(&bin).args(["rm", &cont_name]).output();
 }
+
+#[test]
+fn test_e2e_fullstack_compose_orchestration() {
+    let bin = boxr_bin();
+    if !bin.exists() {
+        return;
+    }
+
+    let compose_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("examples")
+        .join("fullstack-compose")
+        .join("docker-compose.yml");
+
+    if !compose_file.exists() {
+        return;
+    }
+
+    // Up
+    let output = Command::new(&bin)
+        .args(["compose", "-f", compose_file.to_str().unwrap(), "up", "-d"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    // Ps
+    let output = Command::new(&bin)
+        .args(["compose", "-f", compose_file.to_str().unwrap(), "ps"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    // Down
+    let output = Command::new(&bin)
+        .args(["compose", "-f", compose_file.to_str().unwrap(), "down", "-v"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+}
