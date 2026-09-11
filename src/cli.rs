@@ -96,6 +96,15 @@ pub enum Commands {
     /// Block until one or more containers stop, then print their exit codes
     Wait(WaitArgs),
 
+    /// Copy files/folders between a container and the local filesystem
+    Cp(CpArgs),
+
+    /// Update configuration of one or more containers
+    Update(UpdateArgs),
+
+    /// Attach local standard input, output, and error streams to a running container
+    Attach(AttachArgs),
+
     /// Remove one or more containers
     Rm(RmArgs),
 
@@ -470,5 +479,42 @@ pub struct RenameArgs {
 #[derive(Args, Debug)]
 pub struct WaitArgs {
     /// Container to wait on
+    pub container: String,
+}
+
+#[derive(Args, Debug)]
+pub struct CpArgs {
+    /// Source path (e.g. "my-container:/app/file" or "./local-file")
+    pub src: String,
+
+    /// Destination path (e.g. "./dest" or "my-container:/app/dest")
+    pub dest: String,
+}
+
+#[derive(Args, Debug)]
+pub struct UpdateArgs {
+    /// Memory limit
+    #[arg(long = "memory")]
+    pub memory: Option<String>,
+
+    /// CPU limit
+    #[arg(long = "cpus")]
+    pub cpus: Option<String>,
+
+    /// Maximum number of PIDs
+    #[arg(long = "pids-limit")]
+    pub pids_limit: Option<i64>,
+
+    /// Container to update
+    pub container: String,
+}
+
+#[derive(Args, Debug)]
+pub struct AttachArgs {
+    /// Do not attach STDIN
+    #[arg(long = "no-stdin")]
+    pub no_stdin: bool,
+
+    /// Container to attach to
     pub container: String,
 }

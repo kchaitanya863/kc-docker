@@ -20,9 +20,10 @@ use anyhow::{anyhow, Result};
 use chrono::Utc;
 use clap::Parser;
 use cli::{
-    BuildArgs, BuilderAction, Cli, Commands, CommitArgs, ComposeArgs, ComposeSubcommand, DiffArgs,
-    ExecArgs, LogsArgs, NetworkAction, NetworkSubcommands, PauseArgs, PsArgs, RenameArgs, RunArgs,
-    SpecArgs, TopArgs, UnpauseArgs, VolumeAction, VolumeSubcommands, WaitArgs,
+    AttachArgs, BuildArgs, BuilderAction, Cli, Commands, CommitArgs, ComposeArgs, ComposeSubcommand,
+    CpArgs, DiffArgs, ExecArgs, LogsArgs, NetworkAction, NetworkSubcommands, PauseArgs, PsArgs,
+    RenameArgs, RunArgs, SpecArgs, TopArgs, UnpauseArgs, UpdateArgs, VolumeAction, VolumeSubcommands,
+    WaitArgs,
 };
 use events::{ContainerEvent, EventManager};
 use network::{NetworkStore, PortMapping};
@@ -166,6 +167,15 @@ async fn main() -> Result<()> {
         Commands::Wait(args) => {
             let code = wait_container(&args)?;
             std::process::exit(code);
+        }
+        Commands::Cp(args) => {
+            cp_container(&args)?;
+        }
+        Commands::Update(args) => {
+            update_container(&args)?;
+        }
+        Commands::Attach(args) => {
+            attach_container(&args)?;
         }
         Commands::Images => {
             list_images()?;
@@ -617,6 +627,112 @@ fn wait_container(args: &WaitArgs) -> Result<i32> {
             }
         }
     }
+}
+
+fn cp_container(args: &CpArgs) -> Result<()> {
+    runtime::cp::ContainerCopy::copy(&args.src, &args.dest)
+}
+
+fn update_container(args: &UpdateArgs) -> Result<()> {
+    let c_store = ContainerStore::new();
+    let cont = c_store.find(&args.container).ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
+
+    let mut limits = cgroups::ResourceLimits::default();
+    if let Some(mem_str) = &args.memory {
+        limits.memory_max_bytes = cgroups::ResourceLimits::parse_memory(mem_str).ok();
+    }
+    if let Some(cpus_str) = &args.cpus {
+        if let Ok((quota, period)) = cgroups::ResourceLimits::parse_cpus(cpus_str) {
+            limits.cpu_quota_us = Some(quota);
+            limits.cpu_period_us = Some(period);
+        }
+    }
+    limits.pids_max = args.pids_limit;
+
+    if let Ok(cgroup_mgr) = cgroups::CgroupV2Manager::new(&cont.id) {
+        cgroup_mgr.apply_limits(&limits)?;
+    }
+
+    let mut attrs = HashMap::new();
+    attrs.insert("name".to_string(), cont.name.clone());
+    EventManager::record(ContainerEvent::new("container", "update", &cont.id, &cont.name, attrs));
+
+    println!("{}", args.container);
+    Ok(())
+}
+
+fn attach_container(args: &AttachArgs) -> Result<()> {
+    let c_store = ContainerStore::new();
+    let cont = c_store.find(&args.container).ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
+
+    println!("Attaching to container '{}' (Press Ctrl+C to detach)...", args.container);
+
+    let log_path = PathBuf::from(&cont.bundle_path).join("logs.txt");
+    if log_path.exists() {
+        let content = fs::read_to_string(&log_path)?;
+        print!("{}", content);
+    }
+
+    let mut pos = if log_path.exists() {
+        fs::metadata(&log_path)?.len()
+    } else {
+        0
+    };
+
+    let _term_guard = if !args.no_stdin {
+        terminal::TerminalGuard::enter_raw_mode().ok()
+    } else {
+        None
+    };
+
+    let mut idle_ticks = 0;
+    loop {
+        // Check if container has exited
+        #[cfg(target_os = "macos")]
+        {
+            if let Ok(output) = std::process::Command::new("docker")
+                .args(["ps", "-q", "-f", &format!("name={}", cont.name)])
+                .output()
+            {
+                if output.stdout.is_empty() {
+                    let _ = c_store.update_status(&cont.id, ContainerStatus::Exited(0));
+                    break;
+                }
+            }
+        }
+
+        if let Some(current) = c_store.find(&cont.id) {
+            if matches!(current.status, ContainerStatus::Exited(_)) || matches!(current.status, ContainerStatus::Failed(_)) {
+                break;
+            }
+        }
+
+        if log_path.exists() {
+            let meta = fs::metadata(&log_path)?;
+            let new_len = meta.len();
+            if new_len > pos {
+                use std::io::Seek;
+                let mut file = fs::File::open(&log_path)?;
+                file.seek(std::io::SeekFrom::Start(pos))?;
+                let mut buf = Vec::new();
+                use std::io::Read;
+                file.read_to_end(&mut buf)?;
+                print!("{}", String::from_utf8_lossy(&buf));
+                pos = new_len;
+                idle_ticks = 0;
+            } else {
+                idle_ticks += 1;
+            }
+        }
+
+        if args.no_stdin && idle_ticks > 5 {
+            break;
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+
+    Ok(())
 }
 
 async fn build_image(args: BuildArgs) -> Result<()> {

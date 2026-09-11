@@ -116,6 +116,16 @@ The resulting binary will be at `target/release/boxr`.
 # Wait for container to exit and print exit code
 ./target/release/boxr wait production-web
 
+# Copy files between host and container
+./target/release/boxr cp web:/app/config.json ./local-config.json
+./target/release/boxr cp ./updated-config.json web:/app/config.json
+
+# Dynamically update container resource limits without restarting
+./target/release/boxr update --memory 1g --cpus 2.0 --pids-limit 200 web
+
+# Attach local terminal streams to running container
+./target/release/boxr attach web
+
 # Stop, start, and remove
 ./target/release/boxr stop production-web
 ./target/release/boxr start production-web
