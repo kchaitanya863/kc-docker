@@ -29,6 +29,12 @@ fn boxr_bin() -> PathBuf {
 }
 
 fn has_container_runtime() -> bool {
+    // In CI environments (e.g. GitHub Actions), unprivileged user namespace clone
+    // and /sys mounts may not have necessary capabilities without root.
+    if std::env::var("CI").is_ok() {
+        return false;
+    }
+
     #[cfg(target_os = "macos")]
     {
         // On macOS, container execution requires Docker Desktop or Colima running
