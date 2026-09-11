@@ -40,6 +40,20 @@ impl OverlayDriver {
             }
         }
 
+        // Try native APFS Copy-On-Write clonefile on macOS
+        #[cfg(target_os = "macos")]
+        {
+            if Self::clonefile_cow(base_rootfs, &merged_dir).is_ok() {
+                return Ok(OverlayBundle {
+                    lower_dir: base_rootfs.to_path_buf(),
+                    upper_dir,
+                    work_dir,
+                    merged_dir,
+                    is_mounted: false,
+                });
+            }
+        }
+
         // Fallback: fast CoW hardlink tree
         Self::create_hardlink_tree(base_rootfs, &merged_dir)?;
 
@@ -50,6 +64,28 @@ impl OverlayDriver {
             merged_dir,
             is_mounted: false,
         })
+    }
+
+    #[cfg(target_os = "macos")]
+    fn clonefile_cow(src: &Path, dst: &Path) -> Result<()> {
+        use std::ffi::CString;
+        unsafe extern "C" {
+            fn clonefile(src: *const libc::c_char, dst: *const libc::c_char, flags: u32) -> libc::c_int;
+        }
+
+        if dst.exists() {
+            let _ = fs::remove_dir_all(dst);
+        }
+
+        let src_c = CString::new(src.to_str().ok_or_else(|| anyhow::anyhow!("Invalid src"))?)?;
+        let dst_c = CString::new(dst.to_str().ok_or_else(|| anyhow::anyhow!("Invalid dst"))?)?;
+
+        let res = unsafe { clonefile(src_c.as_ptr(), dst_c.as_ptr(), 0) };
+        if res == 0 {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("clonefile failed with error: {}", std::io::Error::last_os_error()))
+        }
     }
 
     #[cfg(target_os = "linux")]
