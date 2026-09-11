@@ -127,6 +127,11 @@ pub fn execute_bundle(
         return Ok(if output.status.success() { 0 } else { 1 });
     }
 
+    if spec.root.readonly {
+        let status = cmd.status()?;
+        return Ok(status.code().unwrap_or(0));
+    }
+
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn()?;
 

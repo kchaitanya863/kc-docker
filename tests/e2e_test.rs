@@ -176,19 +176,20 @@ fn test_e2e_container_lifecycle_pause_unpause_rename_commit_wait() {
         return;
     }
 
-    let name = "e2e-cycle-test";
-    let renamed = "e2e-cycle-renamed";
-    let snap_img = "e2e-snap:v1";
+    let run_id = hex::encode(boxr::storage::container_store::rand_id());
+    let name = format!("e2e-cycle-{}", &run_id[..6]);
+    let renamed = format!("e2e-renamed-{}", &run_id[..6]);
+    let snap_img = format!("e2e-snap-{}:v1", &run_id[..6]);
 
     // 1. Run in background
     let output = Command::new(&bin)
-        .args(["run", "-d", "--name", name, "alpine", "/bin/sh", "-c", "echo 'committed file' > /committed.txt; sleep 1"])
+        .args(["run", "-d", "--name", &name, "alpine", "/bin/sh", "-c", "echo 'committed file' > /committed.txt; sleep 1"])
         .output()
         .unwrap();
     assert!(output.status.success());
 
     // 2. Pause
-    let output = Command::new(&bin).args(["pause", name]).output().unwrap();
+    let output = Command::new(&bin).args(["pause", &name]).output().unwrap();
     assert!(output.status.success());
 
     // Verify paused status
@@ -197,20 +198,20 @@ fn test_e2e_container_lifecycle_pause_unpause_rename_commit_wait() {
     assert!(stdout.contains("Paused"));
 
     // 3. Unpause
-    let output = Command::new(&bin).args(["unpause", name]).output().unwrap();
+    let output = Command::new(&bin).args(["unpause", &name]).output().unwrap();
     assert!(output.status.success());
 
     // 4. Rename
-    let output = Command::new(&bin).args(["rename", name, renamed]).output().unwrap();
+    let output = Command::new(&bin).args(["rename", &name, &renamed]).output().unwrap();
     assert!(output.status.success());
 
     // 5. Commit
-    let output = Command::new(&bin).args(["commit", renamed, snap_img]).output().unwrap();
+    let output = Command::new(&bin).args(["commit", &renamed, &snap_img]).output().unwrap();
     assert!(output.status.success());
 
     // Verify committed image runs and has the file
     let output = Command::new(&bin)
-        .args(["run", "--rm", snap_img, "/bin/cat", "/committed.txt"])
+        .args(["run", "--rm", &snap_img, "/bin/cat", "/committed.txt"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -218,12 +219,12 @@ fn test_e2e_container_lifecycle_pause_unpause_rename_commit_wait() {
     assert!(stdout.contains("committed file"));
 
     // 6. Wait
-    let output = Command::new(&bin).args(["wait", renamed]).output().unwrap();
+    let output = Command::new(&bin).args(["wait", &renamed]).output().unwrap();
     assert!(output.status.success());
 
     // 7. Clean up
-    let _ = Command::new(&bin).args(["rm", renamed]).output();
-    let _ = Command::new(&bin).args(["rmi", snap_img]).output();
+    let _ = Command::new(&bin).args(["rm", &renamed]).output();
+    let _ = Command::new(&bin).args(["rmi", &snap_img]).output();
 }
 
 #[test]

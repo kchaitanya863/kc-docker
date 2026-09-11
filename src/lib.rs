@@ -401,11 +401,16 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
 
     let home = storage::boxr_home();
     let bundle_dir = home.join("containers").join(&container_id);
-    fs::create_dir_all(&bundle_dir)?;
-
-    // Create Copy-On-Write layer (OverlayFS / fast hardlink tree)
     let base_rootfs = PathBuf::from(&image_record.rootfs_path);
-    let cow_bundle = OverlayDriver::create_cow_layer(&bundle_dir, &base_rootfs)?;
+
+    let is_fast_ephemeral = args.rm && !args.detach && args.volumes.is_empty();
+
+    let cow_bundle = if is_fast_ephemeral {
+        None
+    } else {
+        fs::create_dir_all(&bundle_dir)?;
+        Some(OverlayDriver::create_cow_layer(&bundle_dir, &base_rootfs)?)
+    };
 
     // Configure cgroups v2 resource limits if specified
     let mut limits = cgroups::ResourceLimits::default();
@@ -420,8 +425,10 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
     }
     limits.pids_max = args.pids_limit;
 
-    if let Ok(cgroup_mgr) = cgroups::CgroupV2Manager::new(&container_id) {
-        let _ = cgroup_mgr.apply_limits(&limits);
+    if !is_fast_ephemeral {
+        if let Ok(cgroup_mgr) = cgroups::CgroupV2Manager::new(&container_id) {
+            let _ = cgroup_mgr.apply_limits(&limits);
+        }
     }
 
     // Build OCI Runtime Spec
@@ -437,13 +444,18 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
         None
     };
 
-    let spec = Spec::new_default(
+    let mut spec = Spec::new_default(
         image_record.config.config.as_ref(),
         cmd_override,
         env_override,
     );
 
-    spec.save_to_bundle(&bundle_dir)?;
+    if is_fast_ephemeral {
+        spec.root.path = base_rootfs.to_string_lossy().to_string();
+        spec.root.readonly = true;
+    } else {
+        spec.save_to_bundle(&bundle_dir)?;
+    }
 
     let restart_policy = health::parse_restart_policy(&args.restart)?;
     let mut health_cfg = health::HealthConfig::default();
@@ -477,15 +489,17 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
         restart_count: 0,
         ports: parsed_ports.clone(),
     };
+
     let mut event_attrs = HashMap::new();
     event_attrs.insert("image".to_string(), format!("{}:{}", image_record.reference, image_record.tag));
     event_attrs.insert("name".to_string(), container_name.clone());
 
-    EventManager::record(ContainerEvent::new(
-        "container", "create", &container_id, &container_name, event_attrs.clone()
-    ));
-
-    container_store.add(record)?;
+    if !is_fast_ephemeral {
+        EventManager::record(ContainerEvent::new(
+            "container", "create", &container_id, &container_name, event_attrs.clone()
+        ));
+        container_store.add(record)?;
+    }
 
     if args.detach {
         println!("{}", container_id);
@@ -494,9 +508,11 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
         }
     }
 
-    EventManager::record(ContainerEvent::new(
-        "container", "start", &container_id, &container_name, event_attrs.clone()
-    ));
+    if !is_fast_ephemeral {
+        EventManager::record(ContainerEvent::new(
+            "container", "start", &container_id, &container_name, event_attrs.clone()
+        ));
+    }
 
     // Enter raw terminal mode if interactive TTY was requested
     let _term_guard = if args.interactive && args.tty {
@@ -525,10 +541,12 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
         }
     }
 
-    event_attrs.insert("exitCode".to_string(), exit_code.to_string());
-    EventManager::record(ContainerEvent::new(
-        "container", "die", &container_id, &container_name, event_attrs
-    ));
+    if !is_fast_ephemeral {
+        event_attrs.insert("exitCode".to_string(), exit_code.to_string());
+        EventManager::record(ContainerEvent::new(
+            "container", "die", &container_id, &container_name, event_attrs
+        ));
+    }
 
     // Health check evaluation if configured
     if !health_cfg.test.is_empty() {
@@ -538,8 +556,10 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
 
     if !args.detach {
         if args.rm {
-            let _ = OverlayDriver::cleanup(&cow_bundle);
-            let _ = container_store.remove(&container_id);
+            if let Some(ref cb) = cow_bundle {
+                let _ = OverlayDriver::cleanup(cb);
+                let _ = container_store.remove(&container_id);
+            }
         } else {
             let _ = container_store.update_status(&container_id, ContainerStatus::Exited(exit_code));
         }
