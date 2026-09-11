@@ -1,5 +1,6 @@
 pub mod container_store;
 pub mod image_store;
+pub mod overlay;
 
 use anyhow::Result;
 use std::fs;
@@ -7,6 +8,7 @@ use std::path::PathBuf;
 
 pub use container_store::{ContainerRecord, ContainerStatus, ContainerStore};
 pub use image_store::{ImageRecord, ImageStore};
+pub use overlay::OverlayDriver;
 
 /// Get the base boxr directory (default: ~/.boxr)
 pub fn boxr_home() -> PathBuf {

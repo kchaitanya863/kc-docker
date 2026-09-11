@@ -57,6 +57,21 @@ pub enum Commands {
     /// List containers
     Ps(PsArgs),
 
+    /// Save one or more images to a tar archive
+    Save(SaveArgs),
+
+    /// Load an image from a tar archive
+    Load(LoadArgs),
+
+    /// Push an image to an OCI registry
+    Push(PushArgs),
+
+    /// Log in to an OCI registry
+    Login(LoginArgs),
+
+    /// Log out from an OCI registry
+    Logout(LogoutArgs),
+
     /// Remove one or more containers
     Rm(RmArgs),
 
@@ -77,6 +92,9 @@ pub struct RunArgs {
     #[arg(short = 'i', long = "interactive")]
     pub interactive: bool,
 
+    #[arg(short = 't', long = "tty")]
+    pub tty: bool,
+
     #[arg(short = 'd', long = "detach")]
     pub detach: bool,
 
@@ -95,10 +113,54 @@ pub struct RunArgs {
     #[arg(short = 'v', long = "volume")]
     pub volumes: Vec<String>,
 
+    #[arg(long = "memory")]
+    pub memory: Option<String>,
+
+    #[arg(long = "cpus")]
+    pub cpus: Option<String>,
+
+    #[arg(long = "pids-limit")]
+    pub pids_limit: Option<i64>,
+
+    #[arg(long = "rootless", default_value_t = true)]
+    pub rootless: bool,
+
     pub image: String,
 
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub command: Vec<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct SaveArgs {
+    #[arg(short = 'o', long = "output")]
+    pub output: Option<String>,
+    pub image: String,
+}
+
+#[derive(Args, Debug)]
+pub struct LoadArgs {
+    #[arg(short = 'i', long = "input")]
+    pub input: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct PushArgs {
+    pub image: String,
+}
+
+#[derive(Args, Debug)]
+pub struct LoginArgs {
+    #[arg(short = 'u', long = "username")]
+    pub username: Option<String>,
+    #[arg(short = 'p', long = "password")]
+    pub password: Option<String>,
+    pub server: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct LogoutArgs {
+    pub server: Option<String>,
 }
 
 #[derive(Args, Debug)]

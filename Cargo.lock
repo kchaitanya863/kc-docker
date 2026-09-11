@@ -170,6 +170,7 @@ dependencies = [
  "futures-util",
  "hex",
  "indicatif",
+ "libc",
  "nix",
  "reqwest",
  "serde",

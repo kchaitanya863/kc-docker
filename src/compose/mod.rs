@@ -227,12 +227,17 @@ impl ComposeProject {
 
             let run_args = RunArgs {
                 interactive: false,
+                tty: false,
                 detach,
                 rm: false,
                 name: Some(container_name),
                 env: env_vec,
                 ports: port_vec,
                 volumes: vol_vec,
+                memory: None,
+                cpus: None,
+                pids_limit: None,
+                rootless: true,
                 image: image_name,
                 command: cmd_vec,
             };

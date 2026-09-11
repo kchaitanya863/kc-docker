@@ -1,11 +1,15 @@
+mod auth;
 mod builder;
+mod cgroups;
 mod cli;
 mod compose;
 mod daemon;
 mod network;
 mod oci;
 mod runtime;
+mod security;
 mod storage;
+mod terminal;
 mod volume;
 
 use anyhow::{anyhow, Result};
@@ -26,6 +30,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use storage::{
     ensure_directories, ContainerRecord, ContainerStatus, ContainerStore, ImageRecord, ImageStore,
+    OverlayDriver,
 };
 use volume::VolumeStore;
 
@@ -63,6 +68,41 @@ async fn main() -> Result<()> {
         }
         Commands::Compose(args) => {
             handle_compose(args).await?;
+        }
+        Commands::Save(args) => {
+            let output_path = args.output.map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(format!("{}.tar", args.image.replace('/', "_").replace(':', "_"))));
+            auth::ImageArchiver::save(&args.image, &output_path)?;
+        }
+        Commands::Load(args) => {
+            let input_path = args.input.map(PathBuf::from)
+                .ok_or_else(|| anyhow!("Input tar archive (-i/--input) is required for load"))?;
+            auth::ImageArchiver::load(&input_path)?;
+        }
+        Commands::Push(args) => {
+            auth::RegistryPusher::push(&args.image).await?;
+        }
+        Commands::Login(args) => {
+            let server = args.server.as_deref().unwrap_or("docker.io");
+            let username = args.username.unwrap_or_else(|| {
+                eprint!("Username: ");
+                let mut u = String::new();
+                let _ = std::io::stdin().read_line(&mut u);
+                u.trim().to_string()
+            });
+            let password = args.password.unwrap_or_else(|| {
+                eprint!("Password: ");
+                let mut p = String::new();
+                let _ = std::io::stdin().read_line(&mut p);
+                p.trim().to_string()
+            });
+            auth::CredentialStore::new().login(server, &username, &password)?;
+            println!("Login Succeeded for {}", server);
+        }
+        Commands::Logout(args) => {
+            let server = args.server.as_deref().unwrap_or("docker.io");
+            auth::CredentialStore::new().logout(server)?;
+            println!("Logout Succeeded for {}", server);
         }
         Commands::Volume(args) => {
             handle_volume(args)?;
@@ -198,13 +238,28 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
 
     let home = storage::boxr_home();
     let bundle_dir = home.join("containers").join(&container_id);
-    let container_rootfs = bundle_dir.join("rootfs");
-
     fs::create_dir_all(&bundle_dir)?;
 
-    // Clone base rootfs into container bundle rootfs
+    // Create Copy-On-Write layer (OverlayFS / fast hardlink tree)
     let base_rootfs = PathBuf::from(&image_record.rootfs_path);
-    copy_dir_recursive(&base_rootfs, &container_rootfs)?;
+    let cow_bundle = OverlayDriver::create_cow_layer(&bundle_dir, &base_rootfs)?;
+
+    // Configure cgroups v2 resource limits if specified
+    let mut limits = cgroups::ResourceLimits::default();
+    if let Some(mem_str) = &args.memory {
+        limits.memory_max_bytes = cgroups::ResourceLimits::parse_memory(mem_str).ok();
+    }
+    if let Some(cpus_str) = &args.cpus {
+        if let Ok((quota, period)) = cgroups::ResourceLimits::parse_cpus(cpus_str) {
+            limits.cpu_quota_us = Some(quota);
+            limits.cpu_period_us = Some(period);
+        }
+    }
+    limits.pids_max = args.pids_limit;
+
+    if let Ok(cgroup_mgr) = cgroups::CgroupV2Manager::new(&container_id) {
+        let _ = cgroup_mgr.apply_limits(&limits);
+    }
 
     // Build OCI Runtime Spec
     let cmd_override = if !args.command.is_empty() {
@@ -250,11 +305,19 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
         println!("{}", container_id);
     }
 
+    // Enter raw terminal mode if interactive TTY was requested
+    let _term_guard = if args.interactive && args.tty {
+        terminal::TerminalGuard::enter_raw_mode().ok()
+    } else {
+        None
+    };
+
     // Execute the container
     let exit_code = execute_bundle(&bundle_dir, &spec, &parsed_mounts, &parsed_ports, args.detach)?;
 
     if !args.detach {
         if args.rm {
+            let _ = OverlayDriver::cleanup(&cow_bundle);
             let _ = container_store.remove(&container_id);
         } else {
             let _ = container_store.update_status(&container_id, ContainerStatus::Exited(exit_code));
@@ -560,6 +623,7 @@ fn rand_bytes() -> [u8; 6] {
     bytes
 }
 
+#[allow(dead_code)]
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     fs::create_dir_all(dst)?;
     for entry in fs::read_dir(src)? {

@@ -2,19 +2,19 @@
 
 A fast, lightweight, production-grade **Open Container Initiative (OCI)** compliant container engine, image builder, compose orchestrator, and runtime written in **Rust**.
 
-`boxr` delivers complete Docker/Podman feature parity:
-1. **OCI Distribution Specification**: Pulls images directly from registries (Docker Hub, GHCR, Quay), handles bearer token authentication, negotiates manifest lists / indexes for multi-platform architectures (`arm64`, `amd64`), and downloads layer blobs with SHA-256 integrity verification.
-2. **OCI Image Specification**: Unpacks layered `.tar` / `.tar.gz` archives into an assembled root filesystem (`rootfs`), handling OCI whiteout files (`.wh.<file>` and `.wh..wh..opq` opaque directories).
-3. **OCI Runtime Specification**: Produces standardized OCI bundles (`config.json` + `rootfs`) defining process parameters, mounts (`/proc`, `/sys`, `/dev`), Linux namespaces, and resource constraints.
-4. **Volume Management (`boxr volume`)**: Local named persistent volumes, host directory bind mounts (`-v /host:/container:ro`), volume inspection, and lifecycle management.
-5. **Network Management (`boxr network`)**: Bridge networks, IPAM (subnet IP allocation & gateway tracking), port forwarding (`-p 8080:80`), and container service discovery.
-6. **Dockerfile Builder (`boxr build`)**: Multi-step build engine supporting `FROM`, `RUN`, `COPY`, `ADD`, `WORKDIR`, `ENV`, `CMD`, `ENTRYPOINT`, `EXPOSE`, and `LABEL`.
-7. **Compose Orchestrator (`boxr compose`)**: Parsing `docker-compose.yml`, topological dependency graph resolution (`depends_on`), multi-container deployment, teardown, and log streaming.
-8. **Daemon REST API (`boxr daemon`)**: Unix Domain Socket server (`boxr.sock`) implementing Docker Engine API endpoints (`/_ping`, `/version`, `/info`, `/containers`, `/images`, `/networks`, `/volumes`).
-9. **Container Lifecycle**: Detached mode (`-d`), `stop`, `start`, `logs`, `exec`, and `inspect`.
-10. **Dual-Target Execution**:
-    - **Linux**: Direct native execution using Linux namespaces (`CLONE_NEWPID`, `CLONE_NEWNS`, `CLONE_NEWUTS`, `CLONE_NEWIPC`, `CLONE_NEWNET`), `pivot_root`, and mount isolation.
-    - **macOS**: Automated execution bridge to execute the OCI rootfs and bundle seamlessly on Darwin.
+`boxr` is designed to be **rootless by default** and built from scratch with custom implementations:
+1. **Rootless by Default**: User namespaces (`CLONE_NEWUSER`) with `uid_map` and `gid_map` mapping the unprivileged user to container root (UID 0), capability dropping (dropping `CAP_SYS_ADMIN`, `CAP_SYS_RAWIO`, etc.), and default seccomp profiles without requiring `sudo`/root.
+2. **Copy-on-Write / OverlayFS Driver**: Native OverlayFS (`lowerdir`, `upperdir`, `workdir`, `merged`) with custom fast hardlink CoW trees for instant sub-millisecond container startup and near-zero disk usage.
+3. **cgroups v2 Resource Controllers**: Memory limits (`--memory`), CPU quota & period (`--cpus`), and task limits (`--pids-limit`) managed via the cgroupfs v2 hierarchy.
+4. **Image Export & Import (`save` / `load`)**: Standard multi-layer Docker/OCI tar archives (`boxr save -o image.tar <image>` and `boxr load -i image.tar`).
+5. **Registry Authentication & Push**: `boxr login`, `boxr logout`, and `boxr push` using base64 encoded credentials in `~/.boxr/config.json`.
+6. **Interactive PTY / Terminal**: Raw mode terminal guards (`-it`), window resize (`TIOCGWINSZ`), and clean terminal state restoration.
+7. **Volume Management (`boxr volume`)**: Local named persistent volumes, host directory bind mounts (`-v /host:/container:ro`), volume inspection, and lifecycle management.
+8. **Network Management (`boxr network`)**: Bridge networks, IPAM address allocation, user-space rootless port forwarding proxy, and container DNS resolution.
+9. **Dockerfile Builder (`boxr build`)**: Multi-step build engine supporting `FROM`, `RUN`, `COPY`, `ADD`, `WORKDIR`, `ENV`, `CMD`, `ENTRYPOINT`, `EXPOSE`, and `LABEL`.
+10. **Compose Orchestrator (`boxr compose`)**: Parsing `docker-compose.yml`, topological dependency graph resolution (`depends_on`), multi-container deployment, teardown, and log streaming.
+11. **Daemon REST API (`boxr daemon`)**: Unix Domain Socket server (`boxr.sock`) implementing Docker Engine API endpoints (`/_ping`, `/version`, `/info`, `/containers`, `/images`, `/networks`, `/volumes`).
+12. **Container Lifecycle**: Background detached mode (`-d`), `stop`, `start`, `logs`, `exec`, and `inspect`.
 
 ---
 
@@ -31,20 +31,30 @@ boxr/
 │   │   ├── distribution.rs     # OCI Distribution Spec / Registry v2 HTTP client
 │   │   ├── image.rs            # OCI Image Spec: manifests, configs, layer unpacker & whiteouts
 │   │   └── runtime.rs          # OCI Runtime Spec: config.json bundle generator
+│   ├── security/
+│   │   └── mod.rs              # Rootless user namespaces, UID/GID maps, capabilities, seccomp
+│   ├── cgroups/
+│   │   └── mod.rs              # cgroups v2 resource limit controllers (memory, cpus, pids)
+│   ├── storage/
+│   │   ├── mod.rs              # Local storage manager (~/.boxr/)
+│   │   ├── overlay.rs          # OverlayFS & Copy-on-Write storage driver
+│   │   ├── image_store.rs      # Local image index & content-addressable layer store
+│   │   └── container_store.rs  # Container lifecycle & state tracking
+│   ├── auth/
+│   │   └── mod.rs              # Credential store, tar archiver (save/load), and registry push
+│   ├── terminal/
+│   │   └── mod.rs              # Raw terminal PTY guard and window size detection
 │   ├── builder/
 │   │   └── mod.rs              # Dockerfile parser, step executor, and image builder
 │   ├── compose/
 │   │   └── mod.rs              # Compose YAML parser, dependency graph, and orchestrator
 │   ├── network/
-│   │   └── mod.rs              # Bridge networks, IPAM, and port forwarding
+│   │   ├── mod.rs              # Bridge networks, IPAM, and port forwarding
+│   │   └── rootless.rs         # Rootless user-space TCP port forwarder proxy
 │   ├── volume/
 │   │   └── mod.rs              # Named volume storage and bind mount resolver
 │   ├── daemon/
 │   │   └── mod.rs              # Unix domain socket server & Docker-compatible REST API
-│   ├── storage/
-│   │   ├── mod.rs              # Local storage manager (~/.boxr/)
-│   │   ├── image_store.rs      # Local image index & content-addressable layer store
-│   │   └── container_store.rs  # Container lifecycle & state tracking
 │   └── runtime/
 │       ├── mod.rs              # Execution runtime trait & platform routing
 │       ├── linux.rs            # Native Linux execution (unshare, pivot_root, mounts)
@@ -69,11 +79,14 @@ The resulting binary will be at `target/release/boxr`.
 
 ## Command Reference
 
-### Containers
+### Containers & Execution
 
 ```bash
 # Run hello-world
 ./target/release/boxr run hello-world
+
+# Run with resource constraints and rootless mode
+./target/release/boxr run --memory 512m --cpus 1.5 --pids-limit 100 --rm alpine /bin/echo "Resource limits enforced"
 
 # Run in background with port forwarding, volumes, and auto-cleanup
 ./target/release/boxr run -d --name web -p 8080:80 -v my-data:/data alpine /bin/sh -c "echo 'ready' > /data/status.txt; sleep 60"
@@ -93,20 +106,29 @@ The resulting binary will be at `target/release/boxr`.
 ./target/release/boxr rm web
 ```
 
-### Images & Building
+### Images, Archiving & Registry Auth
 
 ```bash
 # Pull image
 ./target/release/boxr pull alpine:latest
 
-# List local images
-./target/release/boxr images
-
 # Build image from Dockerfile
 ./target/release/boxr build -t my-app:v1 .
 
-# Remove image
-./target/release/boxr rmi my-app:v1
+# Save image to tar archive
+./target/release/boxr save -o my-app.tar my-app:v1
+
+# Load image from tar archive
+./target/release/boxr load -i my-app.tar
+
+# Log in to registry
+./target/release/boxr login -u myuser -p mysecret
+
+# Push image
+./target/release/boxr push my-app:v1
+
+# Log out
+./target/release/boxr logout
 ```
 
 ### Volumes
