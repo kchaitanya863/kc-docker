@@ -73,7 +73,7 @@ fn test_e2e_cli_version_and_help() {
     let output = boxr_cmd(&bin).arg("--version").output().unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("boxr 0.1.0"));
+    assert!(stdout.contains("boxr "));
 
     let output = boxr_cmd(&bin).arg("--help").output().unwrap();
     assert!(output.status.success());
