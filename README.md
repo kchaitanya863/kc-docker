@@ -227,6 +227,31 @@ The resulting binary will be at `target/release/boxr`.
 ./target/release/boxr compose down
 ```
 
+### Podman Pods & Kubernetes Workloads
+
+```bash
+# Create a multi-container pod sharing network/IPC
+./target/release/boxr pod create --name web-pod -p 8080:80
+
+# List pods
+./target/release/boxr pod ps
+
+# Inspect pod configuration
+./target/release/boxr pod inspect web-pod
+
+# Play a Kubernetes Pod YAML directly
+./target/release/boxr play kube pod.yaml
+
+# Generate a Kubernetes Pod YAML from an existing container or pod
+./target/release/boxr generate kube my-container
+
+# Run a command inside a new user namespace
+./target/release/boxr unshare whoami
+
+# Remove pod and member containers
+./target/release/boxr pod rm web-pod
+```
+
 ### Daemon REST API
 
 ```bash

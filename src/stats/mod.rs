@@ -132,6 +132,7 @@ mod tests {
             restart_policy: crate::health::RestartPolicy::No,
             health_status: crate::health::HealthStatus::None,
             restart_count: 0,
+            ports: Vec::new(),
         };
 
         let stats = StatsCollector::collect_for_container(&rec);

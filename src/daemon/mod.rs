@@ -219,6 +219,7 @@ async fn create_container(
         restart_policy: crate::health::RestartPolicy::No,
         health_status: crate::health::HealthStatus::None,
         restart_count: 0,
+        ports: Vec::new(),
     };
 
     store.add(record.clone()).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;

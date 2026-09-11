@@ -58,6 +58,8 @@ pub struct ContainerRecord {
     pub health_status: crate::health::HealthStatus,
     #[serde(default)]
     pub restart_count: u32,
+    #[serde(default)]
+    pub ports: Vec<crate::network::PortMapping>,
 }
 
 fn default_health_status() -> crate::health::HealthStatus {
@@ -191,6 +193,7 @@ mod tests {
             restart_policy: crate::health::RestartPolicy::No,
             health_status: crate::health::HealthStatus::None,
             restart_count: 0,
+            ports: Vec::new(),
         };
 
         store.add(rec).unwrap();

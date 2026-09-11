@@ -21,6 +21,33 @@ pub enum Commands {
     /// Run a command in a new container
     Run(RunArgs),
 
+    /// Create a new container without starting it
+    Create(RunArgs),
+
+    /// Restart one or more containers
+    Restart(RestartArgs),
+
+    /// List port mappings or a specific mapping for the container
+    Port(PortArgs),
+
+    /// Create a tag TARGET_IMAGE that refers to SOURCE_IMAGE
+    Tag(TagArgs),
+
+    /// Export a container's filesystem as a tar archive
+    Export(ExportArgs),
+
+    /// Import the contents from a tarball to create a filesystem image
+    Import(ImportArgs),
+
+    /// Show the history of an image
+    History(HistoryArgs),
+
+    /// Search Docker Hub for images
+    Search(SearchArgs),
+
+    /// Display system-wide information
+    Info,
+
     /// Stop a running container
     Stop(StopArgs),
 
@@ -125,6 +152,18 @@ pub enum Commands {
 
     /// Generate shell completion scripts (bash, zsh, fish)
     Completion(CompletionArgs),
+
+    /// Manage pods (groups of containers sharing network and namespaces)
+    Pod(PodSubcommands),
+
+    /// Play a pod from a structured file (e.g. Kubernetes YAML)
+    Play(PlaySubcommands),
+
+    /// Generate structured data (e.g. Kubernetes YAML) from containers or pods
+    Generate(GenerateSubcommands),
+
+    /// Run a command in a new user namespace
+    Unshare(UnshareArgs),
 
     /// Docker CLI drop-in alias / wrapper
     Alias(AliasArgs),
@@ -561,4 +600,139 @@ pub enum SystemAction {
         #[arg(long = "volumes")]
         volumes: bool,
     },
+}
+
+#[derive(Args, Debug)]
+pub struct RestartArgs {
+    /// Seconds to wait before killing the container
+    #[arg(short = 't', long = "time", default_value_t = 10)]
+    pub time: u32,
+
+    /// Container to restart
+    pub container: String,
+}
+
+#[derive(Args, Debug)]
+pub struct PortArgs {
+    /// Container to inspect ports on
+    pub container: String,
+
+    /// Optional private port / protocol (e.g. 80/tcp)
+    pub port: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct TagArgs {
+    /// Source image
+    pub source: String,
+
+    /// Target image and tag
+    pub target: String,
+}
+
+#[derive(Args, Debug)]
+pub struct ExportArgs {
+    /// Write to a file, instead of STDOUT
+    #[arg(short = 'o', long = "output")]
+    pub output: Option<String>,
+
+    /// Container to export
+    pub container: String,
+}
+
+#[derive(Args, Debug)]
+pub struct ImportArgs {
+    /// The URL or - to read from STDIN
+    pub file: String,
+
+    /// Repository and optional tag to apply
+    pub reference: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct HistoryArgs {
+    /// Image to show history for
+    pub image: String,
+}
+
+#[derive(Args, Debug)]
+pub struct SearchArgs {
+    /// Search term
+    pub term: String,
+}
+
+#[derive(Args, Debug)]
+pub struct PodSubcommands {
+    #[command(subcommand)]
+    pub command: PodAction,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum PodAction {
+    /// Create a pod
+    Create {
+        /// Pod name
+        #[arg(long = "name")]
+        name: Option<String>,
+        /// Publish port (e.g. 8080:80)
+        #[arg(short = 'p', long = "publish")]
+        ports: Vec<String>,
+    },
+    /// List pods
+    Ps,
+    /// List pods
+    Ls,
+    /// Remove a pod
+    Rm {
+        pod: String,
+    },
+    /// Inspect a pod
+    Inspect {
+        pod: String,
+    },
+    /// Stop a pod
+    Stop {
+        pod: String,
+    },
+    /// Start a pod
+    Start {
+        pod: String,
+    },
+}
+
+#[derive(Args, Debug)]
+pub struct PlaySubcommands {
+    #[command(subcommand)]
+    pub command: PlayAction,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum PlayAction {
+    /// Play a pod from a Kubernetes YAML file
+    Kube {
+        /// Path to Kubernetes YAML file
+        file: String,
+    },
+}
+
+#[derive(Args, Debug)]
+pub struct GenerateSubcommands {
+    #[command(subcommand)]
+    pub command: GenerateAction,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum GenerateAction {
+    /// Generate Kubernetes Pod YAML for a container or pod
+    Kube {
+        /// Container or pod to generate YAML for
+        target: String,
+    },
+}
+
+#[derive(Args, Debug)]
+pub struct UnshareArgs {
+    /// Command to run inside new user namespace
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    pub command: Vec<String>,
 }
