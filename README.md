@@ -91,8 +91,12 @@ The resulting binary will be at `target/release/boxr`.
 # Run in background with port forwarding, volumes, and auto-cleanup
 ./target/release/boxr run -d --name web -p 8080:80 -v my-data:/data alpine /bin/sh -c "echo 'ready' > /data/status.txt; sleep 60"
 
-# View logs
-./target/release/boxr logs web
+# View logs (with live following, timestamps, and line tailing)
+./target/release/boxr logs -f -t -n 50 web
+
+# Send Unix signals to container process (default: SIGKILL)
+./target/release/boxr kill -s SIGHUP web
+./target/release/boxr kill web
 
 # Execute command inside running container
 ./target/release/boxr exec web /bin/cat /data/status.txt
@@ -234,6 +238,19 @@ curl --unix-socket ~/.boxr/boxr.sock http://localhost/containers/json
 
 # Stream real-time container lifecycle events (create, start, die, stop)
 ./target/release/boxr events
+```
+
+### System & Disk Usage
+
+```bash
+# Show disk space used by containers, images, volumes, and build cache
+./target/release/boxr system df
+
+# Reclaim space by removing stopped containers, unused networks, and build cache
+./target/release/boxr system prune
+
+# Comprehensive prune (including all unused images and volumes)
+./target/release/boxr system prune --all --volumes
 ```
 
 ### Shell Completions & Docker Drop-in Alias

@@ -1,6 +1,7 @@
 
 pub mod cp;
 pub mod diff;
+pub mod kill;
 pub mod top;
 
 #[cfg(target_os = "linux")]

@@ -1,0 +1,87 @@
+use crate::events::{ContainerEvent, EventManager};
+use crate::storage::{ContainerRecord, ContainerStatus, ContainerStore};
+use anyhow::{anyhow, Result};
+use std::collections::HashMap;
+
+pub struct ContainerKiller;
+
+impl ContainerKiller {
+    pub fn parse_signal(sig_str: &str) -> Result<i32> {
+        let upper = sig_str.trim().to_uppercase();
+        let stripped = upper.strip_prefix("SIG").unwrap_or(&upper);
+
+        match stripped {
+            "HUP" | "1" => Ok(1),
+            "INT" | "2" => Ok(2),
+            "QUIT" | "3" => Ok(3),
+            "KILL" | "9" => Ok(9),
+            "USR1" | "10" => Ok(10),
+            "USR2" | "12" => Ok(12),
+            "TERM" | "15" => Ok(15),
+            "CONT" | "18" => Ok(18),
+            "STOP" | "19" => Ok(19),
+            other => {
+                if let Ok(num) = other.parse::<i32>() {
+                    Ok(num)
+                } else {
+                    Err(anyhow!("Unknown signal '{}'", sig_str))
+                }
+            }
+        }
+    }
+
+    pub fn kill(container: &ContainerRecord, signal_str: Option<&str>) -> Result<()> {
+        let sig = signal_str.map(Self::parse_signal).transpose()?.unwrap_or(9); // Default SIGKILL
+
+        #[cfg(target_os = "macos")]
+        {
+            let sig_name = format!("{}", sig);
+            let _ = std::process::Command::new("docker")
+                .args(["kill", "-s", &sig_name, &container.name])
+                .output();
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            let cgroup_dir = std::path::PathBuf::from("/sys/fs/cgroup/boxr").join(&container.id);
+            let procs_file = cgroup_dir.join("cgroup.procs");
+            if procs_file.exists() {
+                if let Ok(content) = std::fs::read_to_string(procs_file) {
+                    for line in content.lines() {
+                        if let Ok(pid) = line.trim().parse::<i32>() {
+                            unsafe {
+                                libc::kill(pid, sig);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let store = ContainerStore::new();
+        let _ = store.update_status(&container.id, ContainerStatus::Exited(128 + sig));
+
+        let mut attrs = HashMap::new();
+        attrs.insert("signal".to_string(), sig.to_string());
+        attrs.insert("name".to_string(), container.name.clone());
+        EventManager::record(ContainerEvent::new("container", "kill", &container.id, &container.name, attrs));
+
+        println!("{}", container.id);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_signals() {
+        assert_eq!(ContainerKiller::parse_signal("SIGKILL").unwrap(), 9);
+        assert_eq!(ContainerKiller::parse_signal("KILL").unwrap(), 9);
+        assert_eq!(ContainerKiller::parse_signal("9").unwrap(), 9);
+        assert_eq!(ContainerKiller::parse_signal("SIGTERM").unwrap(), 15);
+        assert_eq!(ContainerKiller::parse_signal("TERM").unwrap(), 15);
+        assert_eq!(ContainerKiller::parse_signal("SIGHUP").unwrap(), 1);
+    }
+}

@@ -105,6 +105,12 @@ pub enum Commands {
     /// Attach local standard input, output, and error streams to a running container
     Attach(AttachArgs),
 
+    /// Kill one or more running containers
+    Kill(KillArgs),
+
+    /// Manage Boxr system (disk usage, prune)
+    System(SystemSubcommands),
+
     /// Remove one or more containers
     Rm(RmArgs),
 
@@ -226,8 +232,17 @@ pub struct StartArgs {
 
 #[derive(Args, Debug)]
 pub struct LogsArgs {
+    /// Follow log output
     #[arg(short = 'f', long = "follow")]
     pub follow: bool,
+
+    /// Show timestamps
+    #[arg(short = 't', long = "timestamps")]
+    pub timestamps: bool,
+
+    /// Number of lines to show from the end of the logs
+    #[arg(short = 'n', long = "tail")]
+    pub tail: Option<usize>,
 
     pub container: String,
 }
@@ -517,4 +532,33 @@ pub struct AttachArgs {
 
     /// Container to attach to
     pub container: String,
+}
+
+#[derive(Args, Debug)]
+pub struct KillArgs {
+    /// Signal to send (e.g. SIGHUP, SIGTERM, SIGKILL)
+    #[arg(short = 's', long = "signal")]
+    pub signal: Option<String>,
+
+    /// Container to kill
+    pub container: String,
+}
+
+#[derive(Args, Debug)]
+pub struct SystemSubcommands {
+    #[command(subcommand)]
+    pub command: SystemAction,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum SystemAction {
+    /// Show boxr disk usage
+    Df,
+    /// Remove unused data
+    Prune {
+        #[arg(short = 'a', long = "all")]
+        all: bool,
+        #[arg(long = "volumes")]
+        volumes: bool,
+    },
 }

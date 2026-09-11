@@ -13,6 +13,7 @@ mod runtime;
 mod security;
 mod stats;
 mod storage;
+mod system;
 mod terminal;
 mod volume;
 
@@ -21,9 +22,9 @@ use chrono::Utc;
 use clap::Parser;
 use cli::{
     AttachArgs, BuildArgs, BuilderAction, Cli, Commands, CommitArgs, ComposeArgs, ComposeSubcommand,
-    CpArgs, DiffArgs, ExecArgs, LogsArgs, NetworkAction, NetworkSubcommands, PauseArgs, PsArgs,
-    RenameArgs, RunArgs, SpecArgs, TopArgs, UnpauseArgs, UpdateArgs, VolumeAction, VolumeSubcommands,
-    WaitArgs,
+    CpArgs, DiffArgs, ExecArgs, KillArgs, LogsArgs, NetworkAction, NetworkSubcommands, PauseArgs,
+    PsArgs, RenameArgs, RunArgs, SpecArgs, SystemAction, TopArgs, UnpauseArgs,
+    UpdateArgs, VolumeAction, VolumeSubcommands, WaitArgs,
 };
 use events::{ContainerEvent, EventManager};
 use network::{NetworkStore, PortMapping};
@@ -177,6 +178,17 @@ async fn main() -> Result<()> {
         Commands::Attach(args) => {
             attach_container(&args)?;
         }
+        Commands::Kill(args) => {
+            kill_container(&args)?;
+        }
+        Commands::System(args) => match args.command {
+            SystemAction::Df => {
+                system::SystemManager::print_df()?;
+            }
+            SystemAction::Prune { all, volumes } => {
+                system::SystemManager::prune(all, volumes)?;
+            }
+        },
         Commands::Images => {
             list_images()?;
         }
@@ -475,13 +487,65 @@ fn container_logs(args: &LogsArgs) -> Result<()> {
     let rec = store.find(&args.container).ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
 
     let log_path = PathBuf::from(&rec.bundle_path).join("logs.txt");
-    if log_path.exists() {
-        let content = fs::read_to_string(log_path)?;
-        print!("{}", content);
-    } else {
+    if !log_path.exists() {
         println!("No logs available for container {}", args.container);
+        return Ok(());
     }
+
+    let print_line = |line: &str| {
+        if args.timestamps {
+            println!("{} {}", Utc::now().to_rfc3339(), line);
+        } else {
+            println!("{}", line);
+        }
+    };
+
+    let content = fs::read_to_string(&log_path)?;
+    let mut lines: Vec<&str> = content.lines().collect();
+
+    if let Some(tail) = args.tail {
+        if lines.len() > tail {
+            lines = lines[lines.len() - tail..].to_vec();
+        }
+    }
+
+    for l in lines {
+        print_line(l);
+    }
+
+    if args.follow {
+        let mut pos = fs::metadata(&log_path)?.len();
+        loop {
+            if let Some(current) = store.find(&rec.id) {
+                if !matches!(current.status, ContainerStatus::Running) {
+                    break;
+                }
+            }
+
+            let meta = fs::metadata(&log_path)?;
+            let new_len = meta.len();
+            if new_len > pos {
+                use std::io::{BufRead, Seek};
+                let mut file = fs::File::open(&log_path)?;
+                file.seek(std::io::SeekFrom::Start(pos))?;
+                let reader = std::io::BufReader::new(file);
+                for l in reader.lines().flatten() {
+                    print_line(&l);
+                }
+                pos = new_len;
+            }
+
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+    }
+
     Ok(())
+}
+
+fn kill_container(args: &KillArgs) -> Result<()> {
+    let store = ContainerStore::new();
+    let cont = store.find(&args.container).ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
+    runtime::kill::ContainerKiller::kill(&cont, args.signal.as_deref())
 }
 
 fn exec_container(args: &ExecArgs) -> Result<i32> {
