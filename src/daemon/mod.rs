@@ -216,6 +216,9 @@ async fn create_container(
         created_at: chrono::Utc::now(),
         status: ContainerStatus::Created,
         bundle_path: format!("/tmp/boxr/containers/{}", random_id),
+        restart_policy: crate::health::RestartPolicy::No,
+        health_status: crate::health::HealthStatus::None,
+        restart_count: 0,
     };
 
     store.add(record.clone()).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;

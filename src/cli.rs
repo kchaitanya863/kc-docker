@@ -72,6 +72,9 @@ pub enum Commands {
     /// Log out from an OCI registry
     Logout(LogoutArgs),
 
+    /// Manage builds and build cache
+    Builder(BuilderSubcommands),
+
     /// Remove one or more containers
     Rm(RmArgs),
 
@@ -124,6 +127,12 @@ pub struct RunArgs {
 
     #[arg(long = "rootless", default_value_t = true)]
     pub rootless: bool,
+
+    #[arg(long = "restart", default_value = "no")]
+    pub restart: String,
+
+    #[arg(long = "health-cmd")]
+    pub health_cmd: Option<String>,
 
     pub image: String,
 
@@ -208,8 +217,23 @@ pub struct BuildArgs {
     #[arg(short = 'f', long = "file", default_value = "Dockerfile")]
     pub file: String,
 
+    #[arg(long = "no-cache")]
+    pub no_cache: bool,
+
     #[arg(default_value = ".")]
     pub path: String,
+}
+
+#[derive(Args, Debug)]
+pub struct BuilderSubcommands {
+    #[command(subcommand)]
+    pub command: BuilderAction,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum BuilderAction {
+    /// Prune build cache
+    Prune,
 }
 
 #[derive(Args, Debug)]

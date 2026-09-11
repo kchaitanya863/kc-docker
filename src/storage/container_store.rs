@@ -50,6 +50,16 @@ pub struct ContainerRecord {
     pub created_at: DateTime<Utc>,
     pub status: ContainerStatus,
     pub bundle_path: String,
+    #[serde(default)]
+    pub restart_policy: crate::health::RestartPolicy,
+    #[serde(default = "default_health_status")]
+    pub health_status: crate::health::HealthStatus,
+    #[serde(default)]
+    pub restart_count: u32,
+}
+
+fn default_health_status() -> crate::health::HealthStatus {
+    crate::health::HealthStatus::None
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -156,6 +166,9 @@ mod tests {
             created_at: Utc::now(),
             status: ContainerStatus::Running,
             bundle_path: temp.path().join("bundle").to_string_lossy().to_string(),
+            restart_policy: crate::health::RestartPolicy::No,
+            health_status: crate::health::HealthStatus::None,
+            restart_count: 0,
         };
 
         store.add(rec).unwrap();

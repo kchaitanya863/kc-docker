@@ -189,6 +189,7 @@ impl ComposeProject {
                         context_dir: build_path.clone(),
                         dockerfile_path: build_path.join("Dockerfile"),
                         tag: Some(built_tag.clone()),
+                        no_cache: false,
                     }).await?;
                     record.reference
                 } else {
@@ -238,6 +239,8 @@ impl ComposeProject {
                 cpus: None,
                 pids_limit: None,
                 rootless: true,
+                restart: "no".to_string(),
+                health_cmd: None,
                 image: image_name,
                 command: cmd_vec,
             };

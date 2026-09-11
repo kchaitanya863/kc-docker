@@ -4,6 +4,7 @@ mod cgroups;
 mod cli;
 mod compose;
 mod daemon;
+mod health;
 mod network;
 mod oci;
 mod runtime;
@@ -16,8 +17,9 @@ use anyhow::{anyhow, Result};
 use chrono::Utc;
 use clap::Parser;
 use cli::{
-    BuildArgs, Cli, Commands, ComposeArgs, ComposeSubcommand, ExecArgs, LogsArgs, NetworkAction, NetworkSubcommands, PsArgs, RunArgs,
-    SpecArgs, VolumeAction, VolumeSubcommands,
+    BuildArgs, BuilderAction, Cli, Commands, ComposeArgs, ComposeSubcommand, ExecArgs,
+    LogsArgs, NetworkAction, NetworkSubcommands, PsArgs, RunArgs, SpecArgs, VolumeAction,
+    VolumeSubcommands,
 };
 use network::{NetworkStore, PortMapping};
 use oci::distribution::RegistryClient;
@@ -113,6 +115,12 @@ async fn main() -> Result<()> {
         Commands::Daemon(args) => {
             daemon::start_daemon(args.socket.as_deref()).await?;
         }
+        Commands::Builder(args) => match args.command {
+            BuilderAction::Prune => {
+                let count = builder::BuildCache::prune()?;
+                println!("Total reclaimed build cache entries: {}", count);
+            }
+        },
         Commands::Images => {
             list_images()?;
         }
@@ -282,6 +290,17 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
 
     spec.save_to_bundle(&bundle_dir)?;
 
+    let restart_policy = health::parse_restart_policy(&args.restart)?;
+    let mut health_cfg = health::HealthConfig::default();
+    if let Some(cmd) = &args.health_cmd {
+        health_cfg.test = cmd.split_whitespace().map(|s| s.to_string()).collect();
+    }
+    let initial_health = if health_cfg.test.is_empty() {
+        health::HealthStatus::None
+    } else {
+        health::HealthStatus::Starting
+    };
+
     // Register container in store
     let container_store = ContainerStore::new();
     let initial_status = if args.detach {
@@ -298,6 +317,9 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
         created_at: Utc::now(),
         status: initial_status,
         bundle_path: bundle_dir.to_string_lossy().to_string(),
+        restart_policy: restart_policy.clone(),
+        health_status: initial_health,
+        restart_count: 0,
     };
     container_store.add(record)?;
 
@@ -312,8 +334,31 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
         None
     };
 
-    // Execute the container
-    let exit_code = execute_bundle(&bundle_dir, &spec, &parsed_mounts, &parsed_ports, args.detach)?;
+    // Execute the container with restart policy support
+    let mut exit_code = execute_bundle(&bundle_dir, &spec, &parsed_mounts, &parsed_ports, args.detach)?;
+    let mut restart_count = 0;
+
+    while !args.detach {
+        let should_restart = match &restart_policy {
+            health::RestartPolicy::Always => true,
+            health::RestartPolicy::OnFailure { max_retries } => exit_code != 0 && restart_count < *max_retries,
+            _ => false,
+        };
+
+        if should_restart {
+            restart_count += 1;
+            println!("Container {} exited with code {}, restarting (attempt {})...", container_id, exit_code, restart_count);
+            exit_code = execute_bundle(&bundle_dir, &spec, &parsed_mounts, &parsed_ports, false)?;
+        } else {
+            break;
+        }
+    }
+
+    // Health check evaluation if configured
+    if !health_cfg.test.is_empty() {
+        let mut health_res = health::HealthCheckResult::default();
+        let _ = health::check_container_health(&bundle_dir, &health_cfg, &mut health_res);
+    }
 
     if !args.detach {
         if args.rm {
@@ -404,6 +449,7 @@ async fn build_image(args: BuildArgs) -> Result<()> {
         context_dir,
         dockerfile_path,
         tag: args.tag,
+        no_cache: args.no_cache,
     }).await?;
 
     Ok(())
