@@ -81,6 +81,21 @@ pub enum Commands {
     /// Display the running processes of a container
     Top(TopArgs),
 
+    /// Create a new image from a container's changes
+    Commit(CommitArgs),
+
+    /// Pause all processes within one or more containers
+    Pause(PauseArgs),
+
+    /// Unpause all processes within one or more containers
+    Unpause(UnpauseArgs),
+
+    /// Rename a container
+    Rename(RenameArgs),
+
+    /// Block until one or more containers stop, then print their exit codes
+    Wait(WaitArgs),
+
     /// Remove one or more containers
     Rm(RmArgs),
 
@@ -412,4 +427,48 @@ pub struct TopArgs {
     /// Optional ps arguments
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub ps_args: Vec<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct CommitArgs {
+    /// Commit message
+    #[arg(short = 'm', long = "message")]
+    pub message: Option<String>,
+
+    /// Author (e.g., "John Doe <john@example.com>")
+    #[arg(short = 'a', long = "author")]
+    pub author: Option<String>,
+
+    /// Container to commit
+    pub container: String,
+
+    /// Repository and optional tag (e.g., "my-image:v1")
+    pub repo_tag: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct PauseArgs {
+    /// Container to pause
+    pub container: String,
+}
+
+#[derive(Args, Debug)]
+pub struct UnpauseArgs {
+    /// Container to unpause
+    pub container: String,
+}
+
+#[derive(Args, Debug)]
+pub struct RenameArgs {
+    /// Container to rename
+    pub container: String,
+
+    /// New name for the container
+    pub new_name: String,
+}
+
+#[derive(Args, Debug)]
+pub struct WaitArgs {
+    /// Container to wait on
+    pub container: String,
 }

@@ -106,13 +106,23 @@ The resulting binary will be at `target/release/boxr`.
 # View running container processes
 ./target/release/boxr top web
 
+# Pause and unpause container
+./target/release/boxr pause web
+./target/release/boxr unpause web
+
+# Rename container
+./target/release/boxr rename web production-web
+
+# Wait for container to exit and print exit code
+./target/release/boxr wait production-web
+
 # Stop, start, and remove
-./target/release/boxr stop web
-./target/release/boxr start web
-./target/release/boxr rm web
+./target/release/boxr stop production-web
+./target/release/boxr start production-web
+./target/release/boxr rm production-web
 ```
 
-### Images, Archiving & Registry Auth
+### Images, Commit & Registry Auth
 
 ```bash
 # Pull image
@@ -120,6 +130,9 @@ The resulting binary will be at `target/release/boxr`.
 
 # Build image from Dockerfile
 ./target/release/boxr build -t my-app:v1 .
+
+# Commit container changes into a new image
+./target/release/boxr commit -m "added custom configs" my-container new-app:v1
 
 # Save image to tar archive
 ./target/release/boxr save -o my-app.tar my-app:v1

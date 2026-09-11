@@ -20,9 +20,9 @@ use anyhow::{anyhow, Result};
 use chrono::Utc;
 use clap::Parser;
 use cli::{
-    BuildArgs, BuilderAction, Cli, Commands, ComposeArgs, ComposeSubcommand, DiffArgs, ExecArgs,
-    LogsArgs, NetworkAction, NetworkSubcommands, PsArgs, RunArgs, SpecArgs, TopArgs, VolumeAction,
-    VolumeSubcommands,
+    BuildArgs, BuilderAction, Cli, Commands, CommitArgs, ComposeArgs, ComposeSubcommand, DiffArgs,
+    ExecArgs, LogsArgs, NetworkAction, NetworkSubcommands, PauseArgs, PsArgs, RenameArgs, RunArgs,
+    SpecArgs, TopArgs, UnpauseArgs, VolumeAction, VolumeSubcommands, WaitArgs,
 };
 use events::{ContainerEvent, EventManager};
 use network::{NetworkStore, PortMapping};
@@ -150,6 +150,22 @@ async fn main() -> Result<()> {
         }
         Commands::Top(args) => {
             top_container(&args)?;
+        }
+        Commands::Commit(args) => {
+            commit_container(&args)?;
+        }
+        Commands::Pause(args) => {
+            pause_container(&args)?;
+        }
+        Commands::Unpause(args) => {
+            unpause_container(&args)?;
+        }
+        Commands::Rename(args) => {
+            rename_container(&args)?;
+        }
+        Commands::Wait(args) => {
+            let code = wait_container(&args)?;
+            std::process::exit(code);
         }
         Commands::Images => {
             list_images()?;
@@ -510,6 +526,97 @@ fn top_container(args: &TopArgs) -> Result<()> {
     let bundle_path = PathBuf::from(&cont.bundle_path);
     runtime::top::ContainerTop::list_processes(&bundle_path, &args.ps_args)?;
     Ok(())
+}
+
+fn commit_container(args: &CommitArgs) -> Result<()> {
+    let c_store = ContainerStore::new();
+    let cont = c_store.find(&args.container).ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
+
+    let i_store = ImageStore::new();
+    let record = i_store.commit_container(&cont, args.repo_tag.as_deref(), args.message.as_deref(), args.author.as_deref())?;
+
+    let mut attrs = HashMap::new();
+    attrs.insert("image".to_string(), format!("{}:{}", record.reference, record.tag));
+    EventManager::record(ContainerEvent::new("container", "commit", &cont.id, &cont.name, attrs));
+
+    println!("sha256:{}", record.manifest_digest);
+    Ok(())
+}
+
+fn pause_container(args: &PauseArgs) -> Result<()> {
+    let c_store = ContainerStore::new();
+    let cont = c_store.find(&args.container).ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
+
+    if let Ok(cgroup_mgr) = cgroups::CgroupV2Manager::new(&cont.id) {
+        let _ = cgroup_mgr.freeze();
+    }
+    c_store.update_status(&cont.id, ContainerStatus::Paused)?;
+
+    let mut attrs = HashMap::new();
+    attrs.insert("name".to_string(), cont.name.clone());
+    EventManager::record(ContainerEvent::new("container", "pause", &cont.id, &cont.name, attrs));
+
+    println!("{}", args.container);
+    Ok(())
+}
+
+fn unpause_container(args: &UnpauseArgs) -> Result<()> {
+    let c_store = ContainerStore::new();
+    let cont = c_store.find(&args.container).ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
+
+    if let Ok(cgroup_mgr) = cgroups::CgroupV2Manager::new(&cont.id) {
+        let _ = cgroup_mgr.unfreeze();
+    }
+    c_store.update_status(&cont.id, ContainerStatus::Running)?;
+
+    let mut attrs = HashMap::new();
+    attrs.insert("name".to_string(), cont.name.clone());
+    EventManager::record(ContainerEvent::new("container", "unpause", &cont.id, &cont.name, attrs));
+
+    println!("{}", args.container);
+    Ok(())
+}
+
+fn rename_container(args: &RenameArgs) -> Result<()> {
+    let c_store = ContainerStore::new();
+    c_store.rename(&args.container, &args.new_name)?;
+
+    let mut attrs = HashMap::new();
+    attrs.insert("oldName".to_string(), args.container.clone());
+    attrs.insert("newName".to_string(), args.new_name.clone());
+    EventManager::record(ContainerEvent::new("container", "rename", &args.container, &args.new_name, attrs));
+
+    Ok(())
+}
+
+fn wait_container(args: &WaitArgs) -> Result<i32> {
+    let c_store = ContainerStore::new();
+    loop {
+        let cont = c_store.find(&args.container).ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
+        match cont.status {
+            ContainerStatus::Exited(code) => {
+                println!("{}", code);
+                return Ok(code);
+            }
+            ContainerStatus::Failed(err) => {
+                eprintln!("Container failed: {}", err);
+                return Ok(1);
+            }
+            ContainerStatus::Running | ContainerStatus::Created | ContainerStatus::Paused => {
+                #[cfg(target_os = "macos")]
+                {
+                    // Check if underlying process has finished
+                    let log_file = PathBuf::from(&cont.bundle_path).join("logs.txt");
+                    if log_file.exists() {
+                        let _ = c_store.update_status(&cont.id, ContainerStatus::Exited(0));
+                        println!("0");
+                        return Ok(0);
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(300));
+            }
+        }
+    }
 }
 
 async fn build_image(args: BuildArgs) -> Result<()> {

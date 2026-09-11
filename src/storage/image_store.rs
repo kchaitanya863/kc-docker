@@ -128,6 +128,61 @@ impl ImageStore {
             Err(anyhow!("Image not found: {}", query))
         }
     }
+
+    /// Commit a container's current filesystem snapshot into a new image
+    pub fn commit_container(
+        &self,
+        container: &crate::storage::ContainerRecord,
+        repo_tag: Option<&str>,
+        _message: Option<&str>,
+        _author: Option<&str>,
+    ) -> Result<ImageRecord> {
+        let home = boxr_home();
+        let random_id = hex::encode(crate::storage::container_store::rand_id());
+        let image_id = format!("sha256:{}", random_id);
+        let safe_id = image_id.replace(':', "_");
+
+        let dest_image_dir = home.join("images").join(&safe_id);
+        let dest_rootfs = dest_image_dir.join("rootfs");
+        fs::create_dir_all(&dest_rootfs)?;
+
+        let container_rootfs = PathBuf::from(&container.bundle_path).join("rootfs");
+        crate::storage::overlay::OverlayDriver::create_hardlink_tree(&container_rootfs, &dest_rootfs)?;
+
+        let full_tag = repo_tag.unwrap_or_else(|| &container.name);
+        let (repo, tag) = if let Some((r, t)) = full_tag.split_once(':') {
+            (r.to_string(), t.to_string())
+        } else {
+            (full_tag.to_string(), "latest".to_string())
+        };
+
+        let base_config = self.find(&container.image).map(|i| i.config).unwrap_or_else(|| {
+            crate::oci::image::ImageConfig {
+                architecture: std::env::consts::ARCH.to_string(),
+                os: "linux".to_string(),
+                config: Some(crate::oci::image::ExecutionConfig {
+                    cmd: Some(container.command.clone()),
+                    ..Default::default()
+                }),
+                rootfs: None,
+            }
+        });
+
+        let record = ImageRecord {
+            id: random_id[..12].to_string(),
+            reference: repo,
+            tag,
+            manifest_digest: image_id.clone(),
+            config_digest: image_id.clone(),
+            size_bytes: 1024 * 1024,
+            created_at: Utc::now(),
+            rootfs_path: dest_rootfs.to_string_lossy().to_string(),
+            config: base_config,
+        };
+
+        self.add(record.clone())?;
+        Ok(record)
+    }
 }
 
 #[cfg(test)]

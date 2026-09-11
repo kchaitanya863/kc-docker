@@ -26,6 +26,7 @@ pub fn rand_id() -> [u8; 6] {
 pub enum ContainerStatus {
     Created,
     Running,
+    Paused,
     Exited(i32),
     Failed(String),
 }
@@ -35,6 +36,7 @@ impl std::fmt::Display for ContainerStatus {
         match self {
             ContainerStatus::Created => write!(f, "Created"),
             ContainerStatus::Running => write!(f, "Up"),
+            ContainerStatus::Paused => write!(f, "Paused"),
             ContainerStatus::Exited(code) => write!(f, "Exited ({})", code),
             ContainerStatus::Failed(err) => write!(f, "Failed: {}", err),
         }
@@ -123,6 +125,26 @@ impl ContainerStore {
         }
     }
 
+    pub fn rename(&self, old_query: &str, new_name: &str) -> Result<()> {
+        let mut data = self.load();
+        let new_name_trimmed = new_name.trim();
+        if new_name_trimmed.is_empty() {
+            return Err(anyhow!("New container name cannot be empty"));
+        }
+
+        if data.containers.iter().any(|c| c.name == new_name_trimmed) {
+            return Err(anyhow!("Container name '{}' is already in use", new_name_trimmed));
+        }
+
+        if let Some(c) = data.containers.iter_mut().find(|c| c.id == old_query || c.id.starts_with(old_query) || c.name == old_query) {
+            c.name = new_name_trimmed.to_string();
+            self.save(&data)?;
+            Ok(())
+        } else {
+            Err(anyhow!("Container not found: {}", old_query))
+        }
+    }
+
     pub fn remove(&self, query: &str) -> Result<ContainerRecord> {
         let mut data = self.load();
         let pos = data.containers.iter().position(|c| {
@@ -177,11 +199,15 @@ mod tests {
         assert!(store.find("aabbcc").is_some());
         assert!(store.find("test-box").is_some());
 
-        store.update_status("aabbcc", ContainerStatus::Exited(0)).unwrap();
+        store.update_status("aabbcc", ContainerStatus::Paused).unwrap();
         let updated = store.find("test-box").unwrap();
-        assert_eq!(updated.status, ContainerStatus::Exited(0));
+        assert_eq!(updated.status, ContainerStatus::Paused);
 
-        store.remove("test-box").unwrap();
+        store.rename("test-box", "renamed-box").unwrap();
+        assert!(store.find("renamed-box").is_some());
+        assert!(store.find("test-box").is_none());
+
+        store.remove("renamed-box").unwrap();
         assert_eq!(store.list().len(), 0);
     }
 }

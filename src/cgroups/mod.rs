@@ -127,6 +127,28 @@ impl CgroupV2Manager {
         Ok(())
     }
 
+    /// Freeze all processes in the cgroup (pause)
+    pub fn freeze(&self) -> Result<()> {
+        if self.cgroup_path.exists() {
+            let freeze_file = self.cgroup_path.join("cgroup.freeze");
+            if freeze_file.exists() {
+                fs::write(freeze_file, "1")?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Thaw all processes in the cgroup (unpause)
+    pub fn unfreeze(&self) -> Result<()> {
+        if self.cgroup_path.exists() {
+            let freeze_file = self.cgroup_path.join("cgroup.freeze");
+            if freeze_file.exists() {
+                fs::write(freeze_file, "0")?;
+            }
+        }
+        Ok(())
+    }
+
     /// Clean up the container cgroup hierarchy
     pub fn cleanup(&self) -> Result<()> {
         if self.cgroup_path.exists() {
