@@ -283,11 +283,19 @@ curl --unix-socket ~/.boxr/boxr.sock http://localhost/containers/json
 
 ## Testing
 
-Run unit and integration tests:
+Run the full automated test suite (63 unit, integration, and E2E tests):
 
 ```bash
 cargo test
 ```
+
+### Test Coverage Highlights
+- **OCI Image References**: Positive canonical specs, custom registries/ports, tags with symbols, sha256 digest pins, and negative/malformed inputs.
+- **Dockerfile & Multi-Stage**: Named stages (`AS builder`), multi-stage artifact extraction (`COPY --from=`), `.dockerignore` negation (`!exception`) and globbing, line continuations, and malformed instruction detection.
+- **Compose Orchestrator**: Multi-service dependency graphs, circular dependency detection (`A -> B -> A`, `A -> B -> C -> A`), and undefined dependency validation.
+- **Volumes & Networking**: Host bind mounts, read-only modes, collision rejection, default `boxr0` bridge deletion protection, IPAM sequence allocation, and invalid port boundary checks.
+- **Security & Cgroups**: Custom Base64 roundtrip fuzzing across all byte lengths, default seccomp critical syscall blocking, cgroups memory unit multipliers, and Unix signal matrix.
+- **E2E & CLI Robustness**: Non-existent container error handling, invalid CLI flags, and syntax validation.
 
 ## License
 

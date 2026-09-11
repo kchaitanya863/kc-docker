@@ -61,13 +61,15 @@ impl DockerIgnore {
 
 fn pattern_matches(pattern: &str, path: &str) -> bool {
     let p = pattern.trim_end_matches('/');
-    if let Some(suffix) = p.strip_prefix("*.") {
-        path.ends_with(&format!(".{}", suffix))
-    } else if let Some(suffix) = p.strip_prefix('*') {
-        path.ends_with(suffix)
-    } else {
-        path == p || path.starts_with(&format!("{}/", p)) || path.ends_with(&format!("/{}", p))
+    if p.contains('*') {
+        let parts: Vec<&str> = p.split('*').collect();
+        if parts.len() == 2 {
+            let prefix = parts[0];
+            let suffix = parts[1];
+            return path.starts_with(prefix) && path.ends_with(suffix) && path.len() >= prefix.len() + suffix.len();
+        }
     }
+    path == p || path.starts_with(&format!("{}/", p)) || path.ends_with(&format!("/{}", p))
 }
 
 pub struct DockerfileParser;

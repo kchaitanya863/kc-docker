@@ -128,7 +128,12 @@ impl VolumeStore {
     /// Parse a volume flag string:
     /// e.g. "my-vol:/data:ro", "/host/path:/container/path", "my-vol:/data"
     pub fn resolve_mount(&self, spec_str: &str) -> Result<MountSpec> {
-        let parts: Vec<&str> = spec_str.split(':').collect();
+        let trimmed = spec_str.trim();
+        if trimmed.is_empty() {
+            return Err(anyhow!("Volume specification cannot be empty"));
+        }
+
+        let parts: Vec<&str> = trimmed.split(':').collect();
         if parts.is_empty() || parts.len() > 3 {
             return Err(anyhow!("Invalid volume format '{}', expected [source:]destination[:mode]", spec_str));
         }
@@ -147,6 +152,10 @@ impl VolumeStore {
             }
             _ => unreachable!(),
         };
+
+        if dest_str.trim().is_empty() {
+            return Err(anyhow!("Volume destination path cannot be empty"));
+        }
 
         if source_str.is_empty() {
             // Create anonymous volume
