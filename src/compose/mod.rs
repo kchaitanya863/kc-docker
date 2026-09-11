@@ -3,7 +3,7 @@ use crate::cli::RunArgs;
 use crate::network::NetworkStore;
 use crate::storage::{ContainerRecord, ContainerStore};
 use crate::volume::VolumeStore;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -87,8 +87,8 @@ impl ComposeProject {
         let content = fs::read_to_string(path)
             .with_context(|| format!("Failed to read compose file at {:?}", path))?;
 
-        let compose: ComposeFile = serde_yaml::from_str(&content)
-            .context("Failed to parse YAML compose file")?;
+        let compose: ComposeFile =
+            serde_yaml::from_str(&content).context("Failed to parse YAML compose file")?;
 
         let project_name = path
             .parent()
@@ -127,7 +127,10 @@ impl ComposeProject {
         order: &mut Vec<String>,
     ) -> Result<()> {
         if visiting.contains(service) {
-            return Err(anyhow!("Cyclic dependency detected involving service '{}'", service));
+            return Err(anyhow!(
+                "Cyclic dependency detected involving service '{}'",
+                service
+            ));
         }
 
         if !visited.contains(service) {
@@ -137,7 +140,11 @@ impl ComposeProject {
                 if let Some(deps) = &cfg.depends_on {
                     for dep in deps {
                         if !self.compose.services.contains_key(dep) {
-                            return Err(anyhow!("Service '{}' depends on undefined service '{}'", service, dep));
+                            return Err(anyhow!(
+                                "Service '{}' depends on undefined service '{}'",
+                                service,
+                                dep
+                            ));
                         }
                         self.visit_service(dep, visited, visiting, order)?;
                     }
@@ -154,7 +161,10 @@ impl ComposeProject {
 
     pub async fn up(&self, detach: bool, build: bool) -> Result<()> {
         let order = self.dependency_order()?;
-        println!("Starting compose project '{}' (service order: {:?})", self.name, order);
+        println!(
+            "Starting compose project '{}' (service order: {:?})",
+            self.name, order
+        );
 
         // Ensure default project network
         let net_store = NetworkStore::new();
@@ -185,12 +195,14 @@ impl ComposeProject {
                     let build_path = root_dir.join(build_path_str);
                     let builder = ImageBuilder::new();
                     let built_tag = format!("{}_{}:latest", self.name, svc_name);
-                    let record = builder.build(BuildOptions {
-                        context_dir: build_path.clone(),
-                        dockerfile_path: build_path.join("Dockerfile"),
-                        tag: Some(built_tag.clone()),
-                        no_cache: false,
-                    }).await?;
+                    let record = builder
+                        .build(BuildOptions {
+                            context_dir: build_path.clone(),
+                            dockerfile_path: build_path.join("Dockerfile"),
+                            tag: Some(built_tag.clone()),
+                            no_cache: false,
+                        })
+                        .await?;
                     record.reference
                 } else {
                     svc.image.clone().unwrap()
@@ -198,10 +210,17 @@ impl ComposeProject {
             } else if let Some(img) = &svc.image {
                 img.clone()
             } else {
-                return Err(anyhow!("Service '{}' must specify either image or build", svc_name));
+                return Err(anyhow!(
+                    "Service '{}' must specify either image or build",
+                    svc_name
+                ));
             };
 
-            let env_vec = svc.environment.as_ref().map(|e| e.to_vec()).unwrap_or_default();
+            let env_vec = svc
+                .environment
+                .as_ref()
+                .map(|e| e.to_vec())
+                .unwrap_or_default();
             let cmd_vec = svc.command.as_ref().map(|c| c.to_vec()).unwrap_or_default();
             let port_vec = svc.ports.clone().unwrap_or_default();
             let mut vol_vec = Vec::new();
@@ -221,7 +240,10 @@ impl ComposeProject {
                 }
             }
 
-            println!("Creating and starting service '{}' ({})", svc_name, container_name);
+            println!(
+                "Creating and starting service '{}' ({})",
+                svc_name, container_name
+            );
 
             // Attach to network
             let _ = net_store.connect_container(&project_net_name, &container_name, &svc_name);

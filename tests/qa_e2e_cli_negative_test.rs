@@ -4,12 +4,20 @@ use std::process::Command;
 fn boxr_bin() -> PathBuf {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.push("target");
-    path.push(if cfg!(debug_assertions) { "debug" } else { "release" });
+    path.push(if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    });
     path.push("boxr");
     if !path.exists() {
         let alt = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("target")
-            .join(if cfg!(debug_assertions) { "release" } else { "debug" })
+            .join(if cfg!(debug_assertions) {
+                "release"
+            } else {
+                "debug"
+            })
             .join("boxr");
         if alt.exists() {
             return alt;
@@ -30,7 +38,10 @@ fn test_qa_cli_negative_inspect_nonexistent() {
         .output()
         .unwrap();
 
-    assert!(!output.status.success(), "inspecting nonexistent container must fail");
+    assert!(
+        !output.status.success(),
+        "inspecting nonexistent container must fail"
+    );
 }
 
 #[test]
@@ -45,7 +56,10 @@ fn test_qa_cli_negative_rm_nonexistent() {
         .output()
         .unwrap();
 
-    assert!(!output.status.success(), "removing nonexistent container must fail");
+    assert!(
+        !output.status.success(),
+        "removing nonexistent container must fail"
+    );
 }
 
 #[test]
@@ -60,7 +74,10 @@ fn test_qa_cli_negative_stop_nonexistent() {
         .output()
         .unwrap();
 
-    assert!(!output.status.success(), "stopping nonexistent container must fail");
+    assert!(
+        !output.status.success(),
+        "stopping nonexistent container must fail"
+    );
 }
 
 #[test]
@@ -75,7 +92,10 @@ fn test_qa_cli_negative_rename_nonexistent() {
         .output()
         .unwrap();
 
-    assert!(!output.status.success(), "renaming nonexistent container must fail");
+    assert!(
+        !output.status.success(),
+        "renaming nonexistent container must fail"
+    );
 }
 
 #[test]
@@ -90,7 +110,10 @@ fn test_qa_cli_negative_invalid_flag() {
         .output()
         .unwrap();
 
-    assert!(!output.status.success(), "running with unknown flag must fail");
+    assert!(
+        !output.status.success(),
+        "running with unknown flag must fail"
+    );
 }
 
 #[test]
@@ -106,5 +129,8 @@ fn test_qa_cli_negative_copy_invalid_syntax() {
         .output()
         .unwrap();
 
-    assert!(!output.status.success(), "cp without container specifier must fail");
+    assert!(
+        !output.status.success(),
+        "cp without container specifier must fail"
+    );
 }

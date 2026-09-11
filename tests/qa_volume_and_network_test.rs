@@ -7,7 +7,13 @@ fn test_qa_port_mapping_positive_and_negative() {
     let valid_specs = vec![
         ("80:80", None, 80, 80, "tcp"),
         ("8080:8080/tcp", None, 8080, 8080, "tcp"),
-        ("127.0.0.1:5432:5432/udp", Some("127.0.0.1"), 5432, 5432, "udp"),
+        (
+            "127.0.0.1:5432:5432/udp",
+            Some("127.0.0.1"),
+            5432,
+            5432,
+            "udp",
+        ),
         ("0.0.0.0:9000:9000", Some("0.0.0.0"), 9000, 9000, "tcp"),
     ];
 
@@ -31,7 +37,11 @@ fn test_qa_port_mapping_positive_and_negative() {
     ];
 
     for spec in invalid_specs {
-        assert!(PortMapping::parse(spec).is_err(), "Expected error for invalid port spec: {}", spec);
+        assert!(
+            PortMapping::parse(spec).is_err(),
+            "Expected error for invalid port spec: {}",
+            spec
+        );
     }
 }
 
@@ -44,7 +54,10 @@ fn test_qa_volume_edge_cases_and_rejections() {
     assert!(store.resolve_mount("a:b:c:d").is_err());
 
     // 2. Named volume create duplicate check
-    let vol_name = format!("qa-vol-{}", hex::encode(boxr::storage::container_store::rand_id()));
+    let vol_name = format!(
+        "qa-vol-{}",
+        hex::encode(boxr::storage::container_store::rand_id())
+    );
     let v1 = store.create(Some(&vol_name), None).unwrap();
     assert_eq!(v1.name, vol_name);
 
@@ -63,17 +76,33 @@ fn test_qa_network_default_protection_and_ipam() {
     let store = NetworkStore::new();
 
     // 1. Protecting default boxr0 bridge from deletion
-    assert!(store.remove(NetworkStore::DEFAULT_NETWORK).is_err(), "Default network boxr0 must not be removable");
+    assert!(
+        store.remove(NetworkStore::DEFAULT_NETWORK).is_err(),
+        "Default network boxr0 must not be removable"
+    );
 
     // 2. IPAM allocation doesn't collide
-    let net_name = format!("qa-net-{}", hex::encode(boxr::storage::container_store::rand_id()));
+    let net_name = format!(
+        "qa-net-{}",
+        hex::encode(boxr::storage::container_store::rand_id())
+    );
     let _net = store.create(&net_name, None, None).unwrap();
 
-    let ep1 = store.connect_container(&net_name, "c1", "container-one").unwrap();
-    let ep2 = store.connect_container(&net_name, "c2", "container-two").unwrap();
+    let ep1 = store
+        .connect_container(&net_name, "c1", "container-one")
+        .unwrap();
+    let ep2 = store
+        .connect_container(&net_name, "c2", "container-two")
+        .unwrap();
 
-    assert_ne!(ep1.ipv4_address, ep2.ipv4_address, "IP addresses must be distinct");
-    assert_ne!(ep1.mac_address, ep2.mac_address, "MAC addresses must be distinct");
+    assert_ne!(
+        ep1.ipv4_address, ep2.ipv4_address,
+        "IP addresses must be distinct"
+    );
+    assert_ne!(
+        ep1.mac_address, ep2.mac_address,
+        "MAC addresses must be distinct"
+    );
 
     // 3. Removing non-existent network must fail
     assert!(store.remove("non_existent_net_abc").is_err());

@@ -1,6 +1,6 @@
 use crate::oci::reference::ImageReference;
-use crate::storage::{boxr_home, ImageRecord, ImageStore};
-use anyhow::{anyhow, Context, Result};
+use crate::storage::{ImageRecord, ImageStore, boxr_home};
+use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -38,7 +38,10 @@ pub fn custom_base64_decode(input: &str) -> Option<Vec<u8>> {
     for (i, &c) in B64_CHARS.iter().enumerate() {
         table[c as usize] = i as u8;
     }
-    let clean: Vec<u8> = input.bytes().filter(|&b| b != b'=' && !b.is_ascii_whitespace()).collect();
+    let clean: Vec<u8> = input
+        .bytes()
+        .filter(|&b| b != b'=' && !b.is_ascii_whitespace())
+        .collect();
     let mut out = Vec::new();
     for chunk in clean.chunks(4) {
         let c0 = *table.get(chunk[0] as usize)? as u32;
@@ -46,7 +49,9 @@ pub fn custom_base64_decode(input: &str) -> Option<Vec<u8>> {
         let c2 = *table.get(chunk.get(2).copied().unwrap_or(0) as usize)? as u32;
         let c3 = *table.get(chunk.get(3).copied().unwrap_or(0) as usize)? as u32;
 
-        if c0 == 255 || c1 == 255 { return None; }
+        if c0 == 255 || c1 == 255 {
+            return None;
+        }
         out.push(((c0 << 2) | (c1 >> 4)) as u8);
         if chunk.len() > 2 && c2 != 255 {
             out.push(((c1 << 4) | (c2 >> 2)) as u8);
@@ -160,7 +165,8 @@ impl ImageArchiver {
     /// Export an image to a standard tar archive (boxr save)
     pub fn save(image_query: &str, dest_path: &Path) -> Result<()> {
         let store = ImageStore::new();
-        let image = store.find(image_query)
+        let image = store
+            .find(image_query)
             .ok_or_else(|| anyhow!("Image '{}' not found", image_query))?;
 
         let file = File::create(dest_path)
@@ -255,7 +261,10 @@ impl ImageArchiver {
 
             let random_id = hex::encode(crate::storage::container_store::rand_id());
             let image_id = format!("sha256:{}", random_id);
-            let dest_rootfs = home.join("images").join(image_id.replace(':', "_")).join("rootfs");
+            let dest_rootfs = home
+                .join("images")
+                .join(image_id.replace(':', "_"))
+                .join("rootfs");
             fs::create_dir_all(&dest_rootfs)?;
 
             // Unpack layers
@@ -302,13 +311,18 @@ impl RegistryPusher {
     /// Push an image to an OCI / Docker registry
     pub async fn push(image_query: &str) -> Result<()> {
         let store = ImageStore::new();
-        let image = store.find(image_query)
+        let image = store
+            .find(image_query)
             .ok_or_else(|| anyhow!("Image '{}' not found locally", image_query))?;
 
         let reference = ImageReference::parse(&format!("{}:{}", image.reference, image.tag))?;
         let creds = CredentialStore::new().get_credentials(&reference.registry);
 
-        println!("Pushing image {} to {}", reference.display_name(), reference.registry);
+        println!(
+            "Pushing image {} to {}",
+            reference.display_name(),
+            reference.registry
+        );
         if let Some((user, _)) = creds {
             println!("Authenticated as: {}", user);
         }

@@ -132,7 +132,10 @@ impl Spec {
         if let Some(cfg) = image_config {
             if let Some(image_env) = &cfg.env {
                 for e in image_env {
-                    if !env.iter().any(|existing| existing.split('=').next() == e.split('=').next()) {
+                    if !env
+                        .iter()
+                        .any(|existing| existing.split('=').next() == e.split('=').next())
+                    {
                         env.push(e.clone());
                     }
                 }

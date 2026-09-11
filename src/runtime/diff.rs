@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -35,15 +35,30 @@ impl FilesystemDiff {
         let mut seen_base_files = HashSet::new();
 
         if !container_rootfs.exists() {
-            return Err(anyhow!("Container rootfs not found at {:?}", container_rootfs));
+            return Err(anyhow!(
+                "Container rootfs not found at {:?}",
+                container_rootfs
+            ));
         }
 
         // Walk container rootfs to find Added, Changed, and Whiteout Deleted files
-        Self::walk_and_compare(container_rootfs, container_rootfs, base_rootfs, &mut diffs, &mut seen_base_files)?;
+        Self::walk_and_compare(
+            container_rootfs,
+            container_rootfs,
+            base_rootfs,
+            &mut diffs,
+            &mut seen_base_files,
+        )?;
 
         // Walk base rootfs to detect files that were removed from container
         if base_rootfs.exists() {
-            Self::check_deleted_from_base(base_rootfs, base_rootfs, container_rootfs, &mut diffs, &seen_base_files)?;
+            Self::check_deleted_from_base(
+                base_rootfs,
+                base_rootfs,
+                container_rootfs,
+                &mut diffs,
+                &seen_base_files,
+            )?;
         }
 
         diffs.sort_by(|a, b| a.path.cmp(&b.path));
@@ -72,7 +87,10 @@ impl FilesystemDiff {
 
             // Check for OCI whiteout file
             if let Some(deleted_name) = file_name.strip_prefix(".wh.") {
-                let deleted_rel = rel_path.parent().unwrap_or(Path::new("")).join(deleted_name);
+                let deleted_rel = rel_path
+                    .parent()
+                    .unwrap_or(Path::new(""))
+                    .join(deleted_name);
                 diffs.push(DiffRecord {
                     change_type: DiffChangeType::Deleted,
                     path: format!("/{}", deleted_rel.to_string_lossy()),
@@ -94,8 +112,12 @@ impl FilesystemDiff {
 
                 if cont_meta.file_type() != base_meta.file_type()
                     || cont_meta.len() != base_meta.len()
-                    || cont_meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH)
-                        != base_meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+                    || cont_meta
+                        .modified()
+                        .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+                        != base_meta
+                            .modified()
+                            .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
                 {
                     diffs.push(DiffRecord {
                         change_type: DiffChangeType::Changed,
@@ -171,9 +193,21 @@ mod tests {
         fs::write(base.join("old.txt"), b"old")?;
 
         let diffs = FilesystemDiff::compare(&base, &container).unwrap();
-        assert!(diffs.iter().any(|d| d.change_type == DiffChangeType::Changed && d.path == "/common.txt"));
-        assert!(diffs.iter().any(|d| d.change_type == DiffChangeType::Added && d.path == "/new.txt"));
-        assert!(diffs.iter().any(|d| d.change_type == DiffChangeType::Deleted && d.path == "/old.txt"));
+        assert!(
+            diffs
+                .iter()
+                .any(|d| d.change_type == DiffChangeType::Changed && d.path == "/common.txt")
+        );
+        assert!(
+            diffs
+                .iter()
+                .any(|d| d.change_type == DiffChangeType::Added && d.path == "/new.txt")
+        );
+        assert!(
+            diffs
+                .iter()
+                .any(|d| d.change_type == DiffChangeType::Deleted && d.path == "/old.txt")
+        );
 
         Ok(())
     }

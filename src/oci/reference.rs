@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::fmt;
 
 /// An image reference parsed into its constituent parts according to OCI conventions.
@@ -39,10 +39,16 @@ impl ImageReference {
                 if colon_idx < slash_idx {
                     (remainder, Self::DEFAULT_TAG.to_string())
                 } else {
-                    (&remainder[..colon_idx], remainder[colon_idx + 1..].to_string())
+                    (
+                        &remainder[..colon_idx],
+                        remainder[colon_idx + 1..].to_string(),
+                    )
                 }
             } else {
-                (&remainder[..colon_idx], remainder[colon_idx + 1..].to_string())
+                (
+                    &remainder[..colon_idx],
+                    remainder[colon_idx + 1..].to_string(),
+                )
             }
         } else {
             (remainder, Self::DEFAULT_TAG.to_string())
@@ -51,15 +57,24 @@ impl ImageReference {
         // Parse registry and repository
         let (registry, repository) = if let Some(slash_idx) = name_part.find('/') {
             let potential_registry = &name_part[..slash_idx];
-            if potential_registry.contains('.') || potential_registry.contains(':') || potential_registry == "localhost" {
-                (potential_registry.to_string(), name_part[slash_idx + 1..].to_string())
+            if potential_registry.contains('.')
+                || potential_registry.contains(':')
+                || potential_registry == "localhost"
+            {
+                (
+                    potential_registry.to_string(),
+                    name_part[slash_idx + 1..].to_string(),
+                )
             } else {
                 // Docker Hub official/user repo like "library/hello-world" or "myuser/myimage"
                 (Self::DEFAULT_REGISTRY.to_string(), name_part.to_string())
             }
         } else {
             // Official library image on Docker Hub
-            (Self::DEFAULT_REGISTRY.to_string(), format!("library/{}", name_part))
+            (
+                Self::DEFAULT_REGISTRY.to_string(),
+                format!("library/{}", name_part),
+            )
         };
 
         // If repository still doesn't have a slash and registry is docker.io, prefix with library/

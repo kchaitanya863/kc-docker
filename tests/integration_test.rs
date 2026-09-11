@@ -69,8 +69,14 @@ fn test_port_spec_parsing() {
         };
         let parts: Vec<&str> = port_spec.split(':').collect();
         let (host_port, container_port) = match parts.len() {
-            2 => (parts[0].parse::<u16>().unwrap(), parts[1].parse::<u16>().unwrap()),
-            3 => (parts[1].parse::<u16>().unwrap(), parts[2].parse::<u16>().unwrap()),
+            2 => (
+                parts[0].parse::<u16>().unwrap(),
+                parts[1].parse::<u16>().unwrap(),
+            ),
+            3 => (
+                parts[1].parse::<u16>().unwrap(),
+                parts[2].parse::<u16>().unwrap(),
+            ),
             _ => panic!("unexpected port format"),
         };
         assert_eq!(host_port, expected_host);

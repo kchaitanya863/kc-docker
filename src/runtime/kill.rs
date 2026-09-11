@@ -1,6 +1,6 @@
 use crate::events::{ContainerEvent, EventManager};
 use crate::storage::{ContainerRecord, ContainerStatus, ContainerStore};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 
 pub struct ContainerKiller;
@@ -66,7 +66,13 @@ impl ContainerKiller {
         let mut attrs = HashMap::new();
         attrs.insert("signal".to_string(), sig.to_string());
         attrs.insert("name".to_string(), container.name.clone());
-        EventManager::record(ContainerEvent::new("container", "kill", &container.id, &container.name, attrs));
+        EventManager::record(ContainerEvent::new(
+            "container",
+            "kill",
+            &container.id,
+            &container.name,
+            attrs,
+        ));
 
         println!("{}", container.id);
         Ok(())

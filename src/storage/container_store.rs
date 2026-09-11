@@ -1,5 +1,5 @@
 use crate::storage::boxr_home;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -104,9 +104,9 @@ impl ContainerStore {
     #[allow(dead_code)]
     pub fn find(&self, query: &str) -> Option<ContainerRecord> {
         let data = self.load();
-        data.containers.into_iter().find(|c| {
-            c.id.starts_with(query) || c.name == query
-        })
+        data.containers
+            .into_iter()
+            .find(|c| c.id.starts_with(query) || c.name == query)
     }
 
     pub fn add(&self, record: ContainerRecord) -> Result<()> {
@@ -118,7 +118,11 @@ impl ContainerStore {
 
     pub fn update_status(&self, id_or_name: &str, status: ContainerStatus) -> Result<()> {
         let mut data = self.load();
-        if let Some(c) = data.containers.iter_mut().find(|c| c.id == id_or_name || c.id.starts_with(id_or_name) || c.name == id_or_name) {
+        if let Some(c) = data
+            .containers
+            .iter_mut()
+            .find(|c| c.id == id_or_name || c.id.starts_with(id_or_name) || c.name == id_or_name)
+        {
             c.status = status;
             self.save(&data)?;
             Ok(())
@@ -135,10 +139,17 @@ impl ContainerStore {
         }
 
         if data.containers.iter().any(|c| c.name == new_name_trimmed) {
-            return Err(anyhow!("Container name '{}' is already in use", new_name_trimmed));
+            return Err(anyhow!(
+                "Container name '{}' is already in use",
+                new_name_trimmed
+            ));
         }
 
-        if let Some(c) = data.containers.iter_mut().find(|c| c.id == old_query || c.id.starts_with(old_query) || c.name == old_query) {
+        if let Some(c) = data
+            .containers
+            .iter_mut()
+            .find(|c| c.id == old_query || c.id.starts_with(old_query) || c.name == old_query)
+        {
             c.name = new_name_trimmed.to_string();
             self.save(&data)?;
             Ok(())
@@ -149,9 +160,10 @@ impl ContainerStore {
 
     pub fn remove(&self, query: &str) -> Result<ContainerRecord> {
         let mut data = self.load();
-        let pos = data.containers.iter().position(|c| {
-            c.id.starts_with(query) || c.name == query
-        });
+        let pos = data
+            .containers
+            .iter()
+            .position(|c| c.id.starts_with(query) || c.name == query);
 
         if let Some(index) = pos {
             let removed = data.containers.remove(index);
@@ -202,7 +214,9 @@ mod tests {
         assert!(store.find("aabbcc").is_some());
         assert!(store.find("test-box").is_some());
 
-        store.update_status("aabbcc", ContainerStatus::Paused).unwrap();
+        store
+            .update_status("aabbcc", ContainerStatus::Paused)
+            .unwrap();
         let updated = store.find("test-box").unwrap();
         assert_eq!(updated.status, ContainerStatus::Paused);
 

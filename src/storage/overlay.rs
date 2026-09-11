@@ -70,7 +70,11 @@ impl OverlayDriver {
     fn clonefile_cow(src: &Path, dst: &Path) -> Result<()> {
         use std::ffi::CString;
         unsafe extern "C" {
-            fn clonefile(src: *const libc::c_char, dst: *const libc::c_char, flags: u32) -> libc::c_int;
+            fn clonefile(
+                src: *const libc::c_char,
+                dst: *const libc::c_char,
+                flags: u32,
+            ) -> libc::c_int;
         }
 
         if dst.exists() {
@@ -84,13 +88,16 @@ impl OverlayDriver {
         if res == 0 {
             Ok(())
         } else {
-            Err(anyhow::anyhow!("clonefile failed with error: {}", std::io::Error::last_os_error()))
+            Err(anyhow::anyhow!(
+                "clonefile failed with error: {}",
+                std::io::Error::last_os_error()
+            ))
         }
     }
 
     #[cfg(target_os = "linux")]
     fn mount_overlay(lower: &Path, upper: &Path, work: &Path, merged: &Path) -> Result<()> {
-        use nix::mount::{mount, MsFlags};
+        use nix::mount::{MsFlags, mount};
         use std::ffi::CString;
 
         let opts = format!(
@@ -146,7 +153,7 @@ impl OverlayDriver {
     pub fn cleanup(bundle: &OverlayBundle) -> Result<()> {
         #[cfg(target_os = "linux")]
         if bundle.is_mounted {
-            use nix::mount::{umount2, MntFlags};
+            use nix::mount::{MntFlags, umount2};
             let _ = umount2(&bundle.merged_dir, MntFlags::MNT_DETACH);
         }
 

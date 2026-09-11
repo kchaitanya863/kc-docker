@@ -1,12 +1,12 @@
 use crate::network::NetworkStore;
-use crate::storage::{boxr_home, ContainerRecord, ContainerStatus, ContainerStore, ImageStore};
+use crate::storage::{ContainerRecord, ContainerStatus, ContainerStore, ImageStore, boxr_home};
 use crate::volume::VolumeStore;
 use anyhow::{Context, Result};
 use axum::{
+    Json, Router,
     extract::{Path, Query},
     http::StatusCode,
     routing::{delete, get, post},
-    Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -142,8 +142,14 @@ async fn info() -> Json<InfoResponse> {
     let c_store = ContainerStore::new();
     let i_store = ImageStore::new();
     let containers = c_store.list();
-    let running = containers.iter().filter(|c| matches!(c.status, ContainerStatus::Running)).count();
-    let stopped = containers.iter().filter(|c| matches!(c.status, ContainerStatus::Exited(_))).count();
+    let running = containers
+        .iter()
+        .filter(|c| matches!(c.status, ContainerStatus::Running))
+        .count();
+    let stopped = containers
+        .iter()
+        .filter(|c| matches!(c.status, ContainerStatus::Exited(_)))
+        .count();
 
     Json(InfoResponse {
         id: "boxr-engine-01".to_string(),
@@ -171,7 +177,9 @@ struct CreateImageQuery {
     from_image: String,
 }
 
-async fn create_image(Query(params): Query<CreateImageQuery>) -> Result<Json<serde_json::Value>, StatusCode> {
+async fn create_image(
+    Query(params): Query<CreateImageQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
     match crate::pull_image(&params.from_image).await {
         Ok(rec) => Ok(Json(serde_json::to_value(rec).unwrap())),
         Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
@@ -222,7 +230,9 @@ async fn create_container(
         ports: Vec::new(),
     };
 
-    store.add(record.clone()).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    store
+        .add(record.clone())
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     #[derive(Serialize)]
     struct Resp {
@@ -232,10 +242,13 @@ async fn create_container(
         warnings: Vec<String>,
     }
 
-    Ok(Json(serde_json::to_value(Resp {
-        id: random_id,
-        warnings: vec![],
-    }).unwrap()))
+    Ok(Json(
+        serde_json::to_value(Resp {
+            id: random_id,
+            warnings: vec![],
+        })
+        .unwrap(),
+    ))
 }
 
 async fn start_container(Path(id): Path<String>) -> StatusCode {
@@ -273,7 +286,9 @@ struct CreateNetworkRequest {
     name: String,
 }
 
-async fn create_network(Json(payload): Json<CreateNetworkRequest>) -> Result<Json<serde_json::Value>, StatusCode> {
+async fn create_network(
+    Json(payload): Json<CreateNetworkRequest>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
     let store = NetworkStore::new();
     match store.create(&payload.name, None, None) {
         Ok(net) => Ok(Json(serde_json::to_value(net).unwrap())),
@@ -288,7 +303,12 @@ async fn list_volumes() -> Json<serde_json::Value> {
         #[serde(rename = "Volumes")]
         volumes: Vec<crate::volume::VolumeRecord>,
     }
-    Json(serde_json::to_value(VolResp { volumes: store.list() }).unwrap_or_default())
+    Json(
+        serde_json::to_value(VolResp {
+            volumes: store.list(),
+        })
+        .unwrap_or_default(),
+    )
 }
 
 #[derive(Deserialize)]
@@ -297,7 +317,9 @@ struct CreateVolumeRequest {
     name: Option<String>,
 }
 
-async fn create_volume(Json(payload): Json<CreateVolumeRequest>) -> Result<Json<serde_json::Value>, StatusCode> {
+async fn create_volume(
+    Json(payload): Json<CreateVolumeRequest>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
     let store = VolumeStore::new();
     match store.create(payload.name.as_deref(), None) {
         Ok(vol) => Ok(Json(serde_json::to_value(vol).unwrap())),
@@ -321,14 +343,24 @@ mod tests {
 
         let response = app
             .clone()
-            .oneshot(Request::builder().uri("/_ping").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/_ping")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
 
         let response = app
-            .oneshot(Request::builder().uri("/version").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/version")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
 

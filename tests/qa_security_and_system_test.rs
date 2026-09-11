@@ -33,14 +33,30 @@ fn test_qa_base64_roundtrip_all_lengths_and_fuzz() {
 #[test]
 fn test_qa_signal_parsing_matrix() {
     let signals = vec![
-        ("1", 1), ("HUP", 1), ("SIGHUP", 1),
-        ("2", 2), ("INT", 2), ("SIGINT", 2),
-        ("9", 9), ("KILL", 9), ("SIGKILL", 9),
-        ("10", 10), ("USR1", 10), ("SIGUSR1", 10),
-        ("12", 12), ("USR2", 12), ("SIGUSR2", 12),
-        ("15", 15), ("TERM", 15), ("SIGTERM", 15),
-        ("18", 18), ("CONT", 18), ("SIGCONT", 18),
-        ("19", 19), ("STOP", 19), ("SIGSTOP", 19),
+        ("1", 1),
+        ("HUP", 1),
+        ("SIGHUP", 1),
+        ("2", 2),
+        ("INT", 2),
+        ("SIGINT", 2),
+        ("9", 9),
+        ("KILL", 9),
+        ("SIGKILL", 9),
+        ("10", 10),
+        ("USR1", 10),
+        ("SIGUSR1", 10),
+        ("12", 12),
+        ("USR2", 12),
+        ("SIGUSR2", 12),
+        ("15", 15),
+        ("TERM", 15),
+        ("SIGTERM", 15),
+        ("18", 18),
+        ("CONT", 18),
+        ("SIGCONT", 18),
+        ("19", 19),
+        ("STOP", 19),
+        ("SIGSTOP", 19),
     ];
 
     for (input, expected) in signals {
@@ -58,10 +74,22 @@ fn test_qa_resource_limits_and_restart_policies() {
     assert_eq!(ResourceLimits::parse_memory("100b").unwrap(), 100);
     assert_eq!(ResourceLimits::parse_memory("10k").unwrap(), 10 * 1024);
     assert_eq!(ResourceLimits::parse_memory("10kb").unwrap(), 10 * 1024);
-    assert_eq!(ResourceLimits::parse_memory("256m").unwrap(), 256 * 1024 * 1024);
-    assert_eq!(ResourceLimits::parse_memory("256mb").unwrap(), 256 * 1024 * 1024);
-    assert_eq!(ResourceLimits::parse_memory("4g").unwrap(), 4 * 1024 * 1024 * 1024);
-    assert_eq!(ResourceLimits::parse_memory("4gb").unwrap(), 4 * 1024 * 1024 * 1024);
+    assert_eq!(
+        ResourceLimits::parse_memory("256m").unwrap(),
+        256 * 1024 * 1024
+    );
+    assert_eq!(
+        ResourceLimits::parse_memory("256mb").unwrap(),
+        256 * 1024 * 1024
+    );
+    assert_eq!(
+        ResourceLimits::parse_memory("4g").unwrap(),
+        4 * 1024 * 1024 * 1024
+    );
+    assert_eq!(
+        ResourceLimits::parse_memory("4gb").unwrap(),
+        4 * 1024 * 1024 * 1024
+    );
 
     // Invalid memory
     assert!(ResourceLimits::parse_memory("not_a_number").is_err());

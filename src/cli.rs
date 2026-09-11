@@ -400,10 +400,20 @@ pub enum NetworkAction {
         gateway: Option<String>,
     },
     Ls,
-    Inspect { name: String },
-    Rm { name: String },
-    Connect { network: String, container: String },
-    Disconnect { network: String, container: String },
+    Inspect {
+        name: String,
+    },
+    Rm {
+        name: String,
+    },
+    Connect {
+        network: String,
+        container: String,
+    },
+    Disconnect {
+        network: String,
+        container: String,
+    },
 }
 
 #[derive(Args, Debug)]
@@ -683,21 +693,13 @@ pub enum PodAction {
     /// List pods
     Ls,
     /// Remove a pod
-    Rm {
-        pod: String,
-    },
+    Rm { pod: String },
     /// Inspect a pod
-    Inspect {
-        pod: String,
-    },
+    Inspect { pod: String },
     /// Stop a pod
-    Stop {
-        pod: String,
-    },
+    Stop { pod: String },
     /// Start a pod
-    Start {
-        pod: String,
-    },
+    Start { pod: String },
 }
 
 #[derive(Args, Debug)]

@@ -1,5 +1,5 @@
 use crate::runtime::exec_in_bundle;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -99,15 +99,26 @@ pub fn parse_restart_policy(input: &str) -> Result<RestartPolicy> {
     } else if input == "on-failure" {
         Ok(RestartPolicy::OnFailure { max_retries: 3 })
     } else if let Some(retries_str) = input.strip_prefix("on-failure:") {
-        let retries: u32 = retries_str.parse().map_err(|_| anyhow!("Invalid retry count in on-failure: {}", retries_str))?;
-        Ok(RestartPolicy::OnFailure { max_retries: retries })
+        let retries: u32 = retries_str
+            .parse()
+            .map_err(|_| anyhow!("Invalid retry count in on-failure: {}", retries_str))?;
+        Ok(RestartPolicy::OnFailure {
+            max_retries: retries,
+        })
     } else {
-        Err(anyhow!("Invalid restart policy: '{}', expected no, always, on-failure[:max-retries], or unless-stopped", input))
+        Err(anyhow!(
+            "Invalid restart policy: '{}', expected no, always, on-failure[:max-retries], or unless-stopped",
+            input
+        ))
     }
 }
 
 /// Run a health check probe inside a container bundle
-pub fn check_container_health(bundle_path: &Path, config: &HealthConfig, current: &mut HealthCheckResult) -> Result<HealthStatus> {
+pub fn check_container_health(
+    bundle_path: &Path,
+    config: &HealthConfig,
+    current: &mut HealthCheckResult,
+) -> Result<HealthStatus> {
     if config.test.is_empty() {
         current.status = HealthStatus::None;
         return Ok(HealthStatus::None);
@@ -140,10 +151,22 @@ mod tests {
     #[test]
     fn test_parse_restart_policies() {
         assert_eq!(parse_restart_policy("no").unwrap(), RestartPolicy::No);
-        assert_eq!(parse_restart_policy("always").unwrap(), RestartPolicy::Always);
-        assert_eq!(parse_restart_policy("unless-stopped").unwrap(), RestartPolicy::UnlessStopped);
-        assert_eq!(parse_restart_policy("on-failure").unwrap(), RestartPolicy::OnFailure { max_retries: 3 });
-        assert_eq!(parse_restart_policy("on-failure:5").unwrap(), RestartPolicy::OnFailure { max_retries: 5 });
+        assert_eq!(
+            parse_restart_policy("always").unwrap(),
+            RestartPolicy::Always
+        );
+        assert_eq!(
+            parse_restart_policy("unless-stopped").unwrap(),
+            RestartPolicy::UnlessStopped
+        );
+        assert_eq!(
+            parse_restart_policy("on-failure").unwrap(),
+            RestartPolicy::OnFailure { max_retries: 3 }
+        );
+        assert_eq!(
+            parse_restart_policy("on-failure:5").unwrap(),
+            RestartPolicy::OnFailure { max_retries: 5 }
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use crate::oci::image::ImageConfig;
 use crate::storage::boxr_home;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -70,7 +70,10 @@ impl ImageStore {
                 return true;
             }
 
-            let img_short = img.reference.strip_prefix("library/").unwrap_or(&img.reference);
+            let img_short = img
+                .reference
+                .strip_prefix("library/")
+                .unwrap_or(&img.reference);
             let name_matches = img.reference == q_name || img_short == q_name;
 
             if let Some(tag) = q_tag {
@@ -84,7 +87,8 @@ impl ImageStore {
     pub fn add(&self, record: ImageRecord) -> Result<()> {
         let mut data = self.load();
         // Remove previous entry with same reference/tag if present
-        data.images.retain(|img| !(img.reference == record.reference && img.tag == record.tag));
+        data.images
+            .retain(|img| !(img.reference == record.reference && img.tag == record.tag));
         data.images.push(record);
         self.save(&data)
     }
@@ -103,7 +107,10 @@ impl ImageStore {
                 return true;
             }
 
-            let img_short = img.reference.strip_prefix("library/").unwrap_or(&img.reference);
+            let img_short = img
+                .reference
+                .strip_prefix("library/")
+                .unwrap_or(&img.reference);
             let name_matches = img.reference == q_name || img_short == q_name;
 
             if let Some(tag) = q_tag {
@@ -118,7 +125,10 @@ impl ImageStore {
             self.save(&data)?;
 
             // Only clean up rootfs directory if NO OTHER image shares this rootfs_path
-            let is_shared = data.images.iter().any(|img| img.rootfs_path == removed.rootfs_path || img.manifest_digest == removed.manifest_digest);
+            let is_shared = data.images.iter().any(|img| {
+                img.rootfs_path == removed.rootfs_path
+                    || img.manifest_digest == removed.manifest_digest
+            });
             if !is_shared {
                 let rootfs = PathBuf::from(&removed.rootfs_path);
                 if rootfs.exists() {
@@ -150,7 +160,10 @@ impl ImageStore {
         fs::create_dir_all(&dest_rootfs)?;
 
         let container_rootfs = PathBuf::from(&container.bundle_path).join("rootfs");
-        crate::storage::overlay::OverlayDriver::create_hardlink_tree(&container_rootfs, &dest_rootfs)?;
+        crate::storage::overlay::OverlayDriver::create_hardlink_tree(
+            &container_rootfs,
+            &dest_rootfs,
+        )?;
 
         let full_tag = repo_tag.unwrap_or_else(|| &container.name);
         let (repo, tag) = if let Some((r, t)) = full_tag.split_once(':') {
@@ -159,8 +172,10 @@ impl ImageStore {
             (full_tag.to_string(), "latest".to_string())
         };
 
-        let base_config = self.find(&container.image).map(|i| i.config).unwrap_or_else(|| {
-            crate::oci::image::ImageConfig {
+        let base_config = self
+            .find(&container.image)
+            .map(|i| i.config)
+            .unwrap_or_else(|| crate::oci::image::ImageConfig {
                 architecture: std::env::consts::ARCH.to_string(),
                 os: "linux".to_string(),
                 config: Some(crate::oci::image::ExecutionConfig {
@@ -168,8 +183,7 @@ impl ImageStore {
                     ..Default::default()
                 }),
                 rootfs: None,
-            }
-        });
+            });
 
         let record = ImageRecord {
             id: random_id[..12].to_string(),

@@ -1,7 +1,7 @@
 use crate::network::PortMapping;
 use crate::oci::runtime::Spec;
 use crate::volume::MountSpec;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -87,7 +87,10 @@ pub fn execute_bundle(
     let exec_line = if rootfs_path.join("bin/sh").exists() {
         let mut inner = format!("exec {}", cmd_binary);
         for arg in cmd_args {
-            inner.push_str(&format!(" \\\"{}\\\"", arg.replace('\\', "\\\\").replace('"', "\\\"")));
+            inner.push_str(&format!(
+                " \\\"{}\\\"",
+                arg.replace('\\', "\\\\").replace('"', "\\\"")
+            ));
         }
         format!("chroot /boxr-rootfs /bin/sh -c \"{}\"", inner)
     } else {
@@ -104,7 +107,13 @@ pub fn execute_bundle(
     let mut cmd = Command::new(&docker_bin);
     cmd.arg("run");
 
-    let runner_name = format!("boxr-runner-{}", bundle_path.file_name().and_then(|n| n.to_str()).unwrap_or("run"));
+    let runner_name = format!(
+        "boxr-runner-{}",
+        bundle_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("run")
+    );
     cmd.arg("--name").arg(&runner_name);
 
     if detach {
@@ -119,15 +128,26 @@ pub fn execute_bundle(
     // Bind mount volume specs into runner
     for (idx, m) in mounts.iter().enumerate() {
         let src = m.source.to_string_lossy();
-        cmd.arg("-v").arg(format!("{}:/boxr-mounts/m{}{}", src, idx, if m.read_only { ":ro" } else { "" }));
+        cmd.arg("-v").arg(format!(
+            "{}:/boxr-mounts/m{}{}",
+            src,
+            idx,
+            if m.read_only { ":ro" } else { "" }
+        ));
     }
 
     // Port forwardings
     for p in ports {
         if let Some(ip) = &p.host_ip {
-            cmd.arg("-p").arg(format!("{}:{}:{}/{}", ip, p.host_port, p.container_port, p.protocol));
+            cmd.arg("-p").arg(format!(
+                "{}:{}:{}/{}",
+                ip, p.host_port, p.container_port, p.protocol
+            ));
         } else {
-            cmd.arg("-p").arg(format!("{}:{}/{}", p.host_port, p.container_port, p.protocol));
+            cmd.arg("-p").arg(format!(
+                "{}:{}/{}",
+                p.host_port, p.container_port, p.protocol
+            ));
         }
     }
 
@@ -191,7 +211,13 @@ pub fn execute_bundle(
 /// Execute a command in an existing container bundle
 pub fn exec_in_bundle(bundle_path: &Path, command: &[String], env: &[String]) -> Result<i32> {
     let docker_bin = find_real_docker_bin();
-    let runner_name = format!("boxr-runner-{}", bundle_path.file_name().and_then(|n| n.to_str()).unwrap_or("run"));
+    let runner_name = format!(
+        "boxr-runner-{}",
+        bundle_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("run")
+    );
     let binary = &command[0];
     let args = &command[1..];
 
@@ -212,7 +238,10 @@ pub fn exec_in_bundle(bundle_path: &Path, command: &[String], env: &[String]) ->
             if has_sh {
                 let mut inner = format!("exec {}", binary);
                 for a in args {
-                    inner.push_str(&format!(" \\\"{}\\\"", a.replace('\\', "\\\\").replace('"', "\\\"")));
+                    inner.push_str(&format!(
+                        " \\\"{}\\\"",
+                        a.replace('\\', "\\\\").replace('"', "\\\"")
+                    ));
                 }
                 exec_cmd.args(["chroot", "/boxr-rootfs", "/bin/sh", "-c", &inner]);
             } else {
@@ -234,9 +263,15 @@ pub fn exec_in_bundle(bundle_path: &Path, command: &[String], env: &[String]) ->
     let shell_script = if has_sh {
         let mut inner = format!("exec {}", binary);
         for a in args {
-            inner.push_str(&format!(" \\\"{}\\\"", a.replace('\\', "\\\\").replace('"', "\\\"")));
+            inner.push_str(&format!(
+                " \\\"{}\\\"",
+                a.replace('\\', "\\\\").replace('"', "\\\"")
+            ));
         }
-        format!("mkdir -p /boxr-rootfs/proc /boxr-rootfs/dev; mount -t proc proc /boxr-rootfs/proc 2>/dev/null || true; mount --bind /dev /boxr-rootfs/dev 2>/dev/null || true; chroot /boxr-rootfs /bin/sh -c \"{}\"", inner)
+        format!(
+            "mkdir -p /boxr-rootfs/proc /boxr-rootfs/dev; mount -t proc proc /boxr-rootfs/proc 2>/dev/null || true; mount --bind /dev /boxr-rootfs/dev 2>/dev/null || true; chroot /boxr-rootfs /bin/sh -c \"{}\"",
+            inner
+        )
     } else {
         let mut inner = format!("chroot /boxr-rootfs {}", binary);
         for a in args {
@@ -246,8 +281,12 @@ pub fn exec_in_bundle(bundle_path: &Path, command: &[String], env: &[String]) ->
     };
 
     let mut cmd = Command::new(&docker_bin);
-    cmd.arg("run").arg("--rm").arg("-i").arg("--privileged")
-        .arg("-v").arg(format!("{}:/boxr-rootfs", rootfs_str));
+    cmd.arg("run")
+        .arg("--rm")
+        .arg("-i")
+        .arg("--privileged")
+        .arg("-v")
+        .arg(format!("{}:/boxr-rootfs", rootfs_str));
 
     for e in env {
         cmd.arg("-e").arg(e);

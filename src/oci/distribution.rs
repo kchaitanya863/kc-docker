@@ -1,12 +1,10 @@
-use crate::oci::image::{
-    media_types, Descriptor, ImageConfig, ImageManifest, ManifestListOrIndex,
-};
+use crate::oci::image::{Descriptor, ImageConfig, ImageManifest, ManifestListOrIndex, media_types};
 use crate::oci::reference::ImageReference;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use futures_util::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
-use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION};
 use reqwest::Client;
+use reqwest::header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderValue};
 use sha2::{Digest, Sha256};
 use std::env;
 use std::fs::File;
@@ -76,10 +74,7 @@ impl RegistryClient {
             None => return Ok(None),
         };
 
-        let mut url = format!(
-            "{}?scope=repository:{}:pull",
-            realm, reference.repository
-        );
+        let mut url = format!("{}?scope=repository:{}:pull", realm, reference.repository);
         if let Some(s) = service {
             url.push_str(&format!("&service={}", s));
         }
@@ -120,10 +115,7 @@ impl RegistryClient {
     ) -> Result<(ImageManifest, String)> {
         self.authenticate(reference).await?;
 
-        let tag_or_digest = reference
-            .digest
-            .as_deref()
-            .unwrap_or(&reference.tag);
+        let tag_or_digest = reference.digest.as_deref().unwrap_or(&reference.tag);
 
         let url = format!(
             "https://{}/v2/{}/manifests/{}",
@@ -192,7 +184,9 @@ impl RegistryClient {
                         })
                     })
                     .or_else(|| index.manifests.first())
-                    .ok_or_else(|| anyhow!("No suitable manifest found in index for target platform"))?;
+                    .ok_or_else(|| {
+                        anyhow!("No suitable manifest found in index for target platform")
+                    })?;
 
                 // Recursively fetch platform manifest by digest
                 let mut platform_ref = reference.clone();
@@ -202,8 +196,8 @@ impl RegistryClient {
         }
 
         // Direct image manifest
-        let manifest: ImageManifest = serde_json::from_slice(&body_bytes)
-            .context("Failed to parse image manifest JSON")?;
+        let manifest: ImageManifest =
+            serde_json::from_slice(&body_bytes).context("Failed to parse image manifest JSON")?;
 
         let digest = format!("sha256:{}", hex::encode(Sha256::digest(&body_bytes)));
         Ok((manifest, digest))
@@ -236,8 +230,8 @@ impl RegistryClient {
         }
 
         let body_bytes = resp.bytes().await?;
-        let config: ImageConfig = serde_json::from_slice(&body_bytes)
-            .context("Failed to parse image config JSON")?;
+        let config: ImageConfig =
+            serde_json::from_slice(&body_bytes).context("Failed to parse image config JSON")?;
 
         Ok(config)
     }

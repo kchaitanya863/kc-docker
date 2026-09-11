@@ -16,7 +16,8 @@ pub mod media_types {
     pub const OCI_LAYER_TAR: &str = "application/vnd.oci.image.layer.v1.tar";
     pub const OCI_LAYER_TAR_GZIP: &str = "application/vnd.oci.image.layer.v1.tar+gzip";
 
-    pub const DOCKER_MANIFEST_LIST_V2: &str = "application/vnd.docker.distribution.manifest.list.v2+json";
+    pub const DOCKER_MANIFEST_LIST_V2: &str =
+        "application/vnd.docker.distribution.manifest.list.v2+json";
     pub const DOCKER_MANIFEST_V2: &str = "application/vnd.docker.distribution.manifest.v2+json";
     pub const DOCKER_CONTAINER_IMAGE_V1: &str = "application/vnd.docker.container.image.v1+json";
     pub const DOCKER_LAYER_TAR_GZIP: &str = "application/vnd.docker.image.rootfs.diff.tar.gzip";
@@ -126,7 +127,10 @@ pub fn unpack_layer(layer_archive_path: &Path, target_dir: &Path) -> Result<()> 
     for entry_result in archive.entries()? {
         let mut entry = entry_result?;
         let entry_path = entry.path()?.to_path_buf();
-        let file_name = entry_path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+        let file_name = entry_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
 
         if file_name == ".wh..wh..opq" {
             // Opaque whiteout: clear previous content in this directory
@@ -167,7 +171,10 @@ pub fn unpack_layer(layer_archive_path: &Path, target_dir: &Path) -> Result<()> 
             // On non-root platforms (like macOS), some chown/mknod operations in tar might fail.
             // In that case, fallback to manually extracting content.
             if !dest.exists() {
-                eprintln!("Direct unpack warning ({}), attempting fallback: {:?}", e, dest);
+                eprintln!(
+                    "Direct unpack warning ({}), attempting fallback: {:?}",
+                    e, dest
+                );
             }
         }
     }
@@ -187,8 +194,8 @@ pub fn unpack_layer(layer_archive_path: &Path, target_dir: &Path) -> Result<()> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use flate2::write::GzEncoder;
     use flate2::Compression;
+    use flate2::write::GzEncoder;
     use tempfile::tempdir;
 
     #[test]
@@ -207,7 +214,9 @@ mod tests {
         header.set_size(data.len() as u64);
         header.set_mode(0o644);
         header.set_cksum();
-        builder.append_data(&mut header, "test.txt", &data[..]).unwrap();
+        builder
+            .append_data(&mut header, "test.txt", &data[..])
+            .unwrap();
         builder.finish().unwrap();
         let gz = builder.into_inner().unwrap();
         gz.finish().unwrap();

@@ -18,7 +18,13 @@ pub struct ContainerEvent {
 }
 
 impl ContainerEvent {
-    pub fn new(event_type: &str, action: &str, actor_id: &str, actor_name: &str, attributes: HashMap<String, String>) -> Self {
+    pub fn new(
+        event_type: &str,
+        action: &str,
+        actor_id: &str,
+        actor_name: &str,
+        attributes: HashMap<String, String>,
+    ) -> Self {
         Self {
             timestamp: Utc::now(),
             event_type: event_type.to_string(),
@@ -65,7 +71,11 @@ impl EventManager {
             let _ = fs::create_dir_all(parent);
         }
 
-        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&file_path) {
+        if let Ok(mut file) = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&file_path)
+        {
             if let Ok(line) = serde_json::to_string(&event) {
                 let _ = writeln!(file, "{}", line);
             }
@@ -86,7 +96,10 @@ impl EventManager {
             if let Ok(line) = line_res {
                 if let Ok(event) = serde_json::from_str::<ContainerEvent>(&line) {
                     if let Some(filt) = filter {
-                        if !event.event_type.contains(filt) && !event.action.contains(filt) && !event.actor_name.contains(filt) {
+                        if !event.event_type.contains(filt)
+                            && !event.action.contains(filt)
+                            && !event.actor_name.contains(filt)
+                        {
                             continue;
                         }
                     }
@@ -116,7 +129,8 @@ mod tests {
         attrs.insert("image".to_string(), "alpine:latest".to_string());
         attrs.insert("name".to_string(), "my-container".to_string());
 
-        let event = ContainerEvent::new("container", "start", "1234567890ab", "my-container", attrs);
+        let event =
+            ContainerEvent::new("container", "start", "1234567890ab", "my-container", attrs);
         let line = event.display_line();
 
         assert!(line.contains("container start 1234567890ab"));

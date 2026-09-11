@@ -51,7 +51,7 @@ pub mod system;
 pub mod terminal;
 pub mod volume;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::Utc;
 use cli::{
     BuildArgs, BuilderAction, Cli, Commands, ComposeArgs, ComposeSubcommand, DiffArgs, ExecArgs,
@@ -71,8 +71,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use storage::{
-    ensure_directories, ContainerRecord, ContainerStatus, ContainerStore, ImageRecord, ImageStore,
-    OverlayDriver,
+    ContainerRecord, ContainerStatus, ContainerStore, ImageRecord, ImageStore, OverlayDriver,
+    ensure_directories,
 };
 use volume::VolumeStore;
 
@@ -154,14 +154,19 @@ pub async fn run_cli(cli: Cli) -> Result<i32> {
             Ok(0)
         }
         Commands::Save(args) => {
-            let output_path = args.output.map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from(format!("{}.tar", args.image.replace('/', "_").replace(':', "_"))));
+            let output_path = args.output.map(PathBuf::from).unwrap_or_else(|| {
+                PathBuf::from(format!(
+                    "{}.tar",
+                    args.image.replace('/', "_").replace(':', "_")
+                ))
+            });
             auth::ImageArchiver::save(&args.image, &output_path)?;
             Ok(0)
         }
         Commands::Load(args) => {
-            let input_path = args.input.map(PathBuf::from)
-                .ok_or_else(|| anyhow::anyhow!("Input tar archive (-i/--input) is required for load"))?;
+            let input_path = args.input.map(PathBuf::from).ok_or_else(|| {
+                anyhow::anyhow!("Input tar archive (-i/--input) is required for load")
+            })?;
             auth::ImageArchiver::load(&input_path)?;
             Ok(0)
         }
@@ -429,7 +434,9 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
     // Generate container ID and name
     let random_bytes: [u8; 6] = rand_bytes();
     let container_id = hex::encode(random_bytes);
-    let container_name = args.name.unwrap_or_else(|| format!("boxr-{}", &container_id[..6]));
+    let container_name = args
+        .name
+        .unwrap_or_else(|| format!("boxr-{}", &container_id[..6]));
 
     let home = storage::boxr_home();
     let bundle_dir = home.join("containers").join(&container_id);
@@ -523,12 +530,19 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
     };
 
     let mut event_attrs = HashMap::new();
-    event_attrs.insert("image".to_string(), format!("{}:{}", image_record.reference, image_record.tag));
+    event_attrs.insert(
+        "image".to_string(),
+        format!("{}:{}", image_record.reference, image_record.tag),
+    );
     event_attrs.insert("name".to_string(), container_name.clone());
 
     if !is_fast_ephemeral {
         EventManager::record(ContainerEvent::new(
-            "container", "create", &container_id, &container_name, event_attrs.clone()
+            "container",
+            "create",
+            &container_id,
+            &container_name,
+            event_attrs.clone(),
         ));
         container_store.add(record)?;
     }
@@ -542,7 +556,11 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
 
     if !is_fast_ephemeral {
         EventManager::record(ContainerEvent::new(
-            "container", "start", &container_id, &container_name, event_attrs.clone()
+            "container",
+            "start",
+            &container_id,
+            &container_name,
+            event_attrs.clone(),
         ));
     }
 
@@ -554,19 +572,30 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
     };
 
     // Execute the container with restart policy support
-    let mut exit_code = execute_bundle(&bundle_dir, &spec, &parsed_mounts, &parsed_ports, args.detach)?;
+    let mut exit_code = execute_bundle(
+        &bundle_dir,
+        &spec,
+        &parsed_mounts,
+        &parsed_ports,
+        args.detach,
+    )?;
     let mut restart_count = 0;
 
     while !args.detach {
         let should_restart = match &restart_policy {
             health::RestartPolicy::Always => true,
-            health::RestartPolicy::OnFailure { max_retries } => exit_code != 0 && restart_count < *max_retries,
+            health::RestartPolicy::OnFailure { max_retries } => {
+                exit_code != 0 && restart_count < *max_retries
+            }
             _ => false,
         };
 
         if should_restart {
             restart_count += 1;
-            println!("Container {} exited with code {}, restarting (attempt {})...", container_id, exit_code, restart_count);
+            println!(
+                "Container {} exited with code {}, restarting (attempt {})...",
+                container_id, exit_code, restart_count
+            );
             exit_code = execute_bundle(&bundle_dir, &spec, &parsed_mounts, &parsed_ports, false)?;
         } else {
             break;
@@ -576,7 +605,11 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
     if !is_fast_ephemeral {
         event_attrs.insert("exitCode".to_string(), exit_code.to_string());
         EventManager::record(ContainerEvent::new(
-            "container", "die", &container_id, &container_name, event_attrs
+            "container",
+            "die",
+            &container_id,
+            &container_name,
+            event_attrs,
         ));
     }
 
@@ -593,7 +626,8 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
                 let _ = container_store.remove(&container_id);
             }
         } else {
-            let _ = container_store.update_status(&container_id, ContainerStatus::Exited(exit_code));
+            let _ =
+                container_store.update_status(&container_id, ContainerStatus::Exited(exit_code));
         }
     }
 
@@ -606,7 +640,9 @@ pub fn stop_container(container: &str) -> Result<()> {
         #[cfg(target_os = "macos")]
         {
             let runner_name = format!("boxr-runner-{}", c.id);
-            let _ = std::process::Command::new("docker").args(["kill", &runner_name]).output();
+            let _ = std::process::Command::new("docker")
+                .args(["kill", &runner_name])
+                .output();
         }
     }
     store.update_status(container, ContainerStatus::Exited(0))?;
@@ -616,7 +652,9 @@ pub fn stop_container(container: &str) -> Result<()> {
 
 pub async fn start_container(container: &str) -> Result<()> {
     let store = ContainerStore::new();
-    let rec = store.find(container).ok_or_else(|| anyhow!("Container '{}' not found", container))?;
+    let rec = store
+        .find(container)
+        .ok_or_else(|| anyhow!("Container '{}' not found", container))?;
 
     let bundle_path = PathBuf::from(&rec.bundle_path);
     let config_file = bundle_path.join("config.json");
@@ -631,7 +669,9 @@ pub async fn start_container(container: &str) -> Result<()> {
 
 pub fn container_logs(args: &LogsArgs) -> Result<()> {
     let store = ContainerStore::new();
-    let rec = store.find(&args.container).ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
+    let rec = store
+        .find(&args.container)
+        .ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
 
     let log_path = PathBuf::from(&rec.bundle_path).join("logs.txt");
 
@@ -647,8 +687,12 @@ pub fn container_logs(args: &LogsArgs) -> Result<()> {
     let runner_output = {
         let docker_bin = runtime::darwin::find_real_docker_bin();
         let runner_name = format!("boxr-runner-{}", rec.id);
-        if let Ok(out) = std::process::Command::new(&docker_bin).args(["logs", &runner_name]).output() {
-            let combined = String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr);
+        if let Ok(out) = std::process::Command::new(&docker_bin)
+            .args(["logs", &runner_name])
+            .output()
+        {
+            let combined = String::from_utf8_lossy(&out.stdout).to_string()
+                + &String::from_utf8_lossy(&out.stderr);
             if !combined.trim().is_empty() {
                 Some(combined)
             } else {
@@ -714,7 +758,9 @@ pub fn container_logs(args: &LogsArgs) -> Result<()> {
 
 pub fn exec_container(args: &ExecArgs) -> Result<i32> {
     let store = ContainerStore::new();
-    let rec = store.find(&args.container).ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
+    let rec = store
+        .find(&args.container)
+        .ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
 
     if args.command.is_empty() {
         return Err(anyhow!("Command cannot be empty for exec"));
@@ -742,10 +788,14 @@ pub fn inspect_target(target: &str) -> Result<()> {
 
 pub fn diff_container(args: &DiffArgs) -> Result<()> {
     let c_store = ContainerStore::new();
-    let cont = c_store.find(&args.container).ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
+    let cont = c_store
+        .find(&args.container)
+        .ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
 
     let i_store = ImageStore::new();
-    let img = i_store.find(&cont.image).ok_or_else(|| anyhow!("Image '{}' not found", cont.image))?;
+    let img = i_store
+        .find(&cont.image)
+        .ok_or_else(|| anyhow!("Image '{}' not found", cont.image))?;
 
     let base_rootfs = PathBuf::from(&img.rootfs_path);
     let container_rootfs = PathBuf::from(&cont.bundle_path).join("rootfs");
@@ -759,7 +809,9 @@ pub fn diff_container(args: &DiffArgs) -> Result<()> {
 
 pub fn top_container(args: &TopArgs) -> Result<()> {
     let c_store = ContainerStore::new();
-    let cont = c_store.find(&args.container).ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
+    let cont = c_store
+        .find(&args.container)
+        .ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
 
     let bundle_path = PathBuf::from(&cont.bundle_path);
     runtime::top::ContainerTop::list_processes(&bundle_path, &args.ps_args)?;
@@ -768,14 +820,30 @@ pub fn top_container(args: &TopArgs) -> Result<()> {
 
 pub fn commit_container(args: &cli::CommitArgs) -> Result<()> {
     let c_store = ContainerStore::new();
-    let cont = c_store.find(&args.container).ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
+    let cont = c_store
+        .find(&args.container)
+        .ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
 
     let i_store = ImageStore::new();
-    let record = i_store.commit_container(&cont, args.repo_tag.as_deref(), args.message.as_deref(), args.author.as_deref())?;
+    let record = i_store.commit_container(
+        &cont,
+        args.repo_tag.as_deref(),
+        args.message.as_deref(),
+        args.author.as_deref(),
+    )?;
 
     let mut attrs = HashMap::new();
-    attrs.insert("image".to_string(), format!("{}:{}", record.reference, record.tag));
-    EventManager::record(ContainerEvent::new("container", "commit", &cont.id, &cont.name, attrs));
+    attrs.insert(
+        "image".to_string(),
+        format!("{}:{}", record.reference, record.tag),
+    );
+    EventManager::record(ContainerEvent::new(
+        "container",
+        "commit",
+        &cont.id,
+        &cont.name,
+        attrs,
+    ));
 
     println!("sha256:{}", record.manifest_digest);
     Ok(())
@@ -783,7 +851,9 @@ pub fn commit_container(args: &cli::CommitArgs) -> Result<()> {
 
 pub fn pause_container(args: &cli::PauseArgs) -> Result<()> {
     let c_store = ContainerStore::new();
-    let cont = c_store.find(&args.container).ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
+    let cont = c_store
+        .find(&args.container)
+        .ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
 
     if let Ok(cgroup_mgr) = cgroups::CgroupV2Manager::new(&cont.id) {
         let _ = cgroup_mgr.freeze();
@@ -792,7 +862,13 @@ pub fn pause_container(args: &cli::PauseArgs) -> Result<()> {
 
     let mut attrs = HashMap::new();
     attrs.insert("name".to_string(), cont.name.clone());
-    EventManager::record(ContainerEvent::new("container", "pause", &cont.id, &cont.name, attrs));
+    EventManager::record(ContainerEvent::new(
+        "container",
+        "pause",
+        &cont.id,
+        &cont.name,
+        attrs,
+    ));
 
     println!("{}", args.container);
     Ok(())
@@ -800,7 +876,9 @@ pub fn pause_container(args: &cli::PauseArgs) -> Result<()> {
 
 pub fn unpause_container(args: &cli::UnpauseArgs) -> Result<()> {
     let c_store = ContainerStore::new();
-    let cont = c_store.find(&args.container).ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
+    let cont = c_store
+        .find(&args.container)
+        .ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
 
     if let Ok(cgroup_mgr) = cgroups::CgroupV2Manager::new(&cont.id) {
         let _ = cgroup_mgr.unfreeze();
@@ -809,7 +887,13 @@ pub fn unpause_container(args: &cli::UnpauseArgs) -> Result<()> {
 
     let mut attrs = HashMap::new();
     attrs.insert("name".to_string(), cont.name.clone());
-    EventManager::record(ContainerEvent::new("container", "unpause", &cont.id, &cont.name, attrs));
+    EventManager::record(ContainerEvent::new(
+        "container",
+        "unpause",
+        &cont.id,
+        &cont.name,
+        attrs,
+    ));
 
     println!("{}", args.container);
     Ok(())
@@ -822,7 +906,13 @@ pub fn rename_container(args: &cli::RenameArgs) -> Result<()> {
     let mut attrs = HashMap::new();
     attrs.insert("oldName".to_string(), args.container.clone());
     attrs.insert("newName".to_string(), args.new_name.clone());
-    EventManager::record(ContainerEvent::new("container", "rename", &args.container, &args.new_name, attrs));
+    EventManager::record(ContainerEvent::new(
+        "container",
+        "rename",
+        &args.container,
+        &args.new_name,
+        attrs,
+    ));
 
     Ok(())
 }
@@ -830,7 +920,9 @@ pub fn rename_container(args: &cli::RenameArgs) -> Result<()> {
 pub fn wait_container(args: &cli::WaitArgs) -> Result<i32> {
     let c_store = ContainerStore::new();
     loop {
-        let cont = c_store.find(&args.container).ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
+        let cont = c_store
+            .find(&args.container)
+            .ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
         match cont.status {
             ContainerStatus::Exited(code) => {
                 println!("{}", code);
@@ -874,7 +966,9 @@ pub fn cp_container(args: &cli::CpArgs) -> Result<()> {
 
 pub fn update_container(args: &cli::UpdateArgs) -> Result<()> {
     let c_store = ContainerStore::new();
-    let cont = c_store.find(&args.container).ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
+    let cont = c_store
+        .find(&args.container)
+        .ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
 
     let mut limits = cgroups::ResourceLimits::default();
     if let Some(mem_str) = &args.memory {
@@ -894,7 +988,13 @@ pub fn update_container(args: &cli::UpdateArgs) -> Result<()> {
 
     let mut attrs = HashMap::new();
     attrs.insert("name".to_string(), cont.name.clone());
-    EventManager::record(ContainerEvent::new("container", "update", &cont.id, &cont.name, attrs));
+    EventManager::record(ContainerEvent::new(
+        "container",
+        "update",
+        &cont.id,
+        &cont.name,
+        attrs,
+    ));
 
     println!("{}", args.container);
     Ok(())
@@ -902,9 +1002,14 @@ pub fn update_container(args: &cli::UpdateArgs) -> Result<()> {
 
 pub fn attach_container(args: &cli::AttachArgs) -> Result<()> {
     let c_store = ContainerStore::new();
-    let cont = c_store.find(&args.container).ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
+    let cont = c_store
+        .find(&args.container)
+        .ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
 
-    println!("Attaching to container '{}' (Press Ctrl+C to detach)...", args.container);
+    println!(
+        "Attaching to container '{}' (Press Ctrl+C to detach)...",
+        args.container
+    );
 
     let log_path = PathBuf::from(&cont.bundle_path).join("logs.txt");
     if log_path.exists() {
@@ -941,7 +1046,9 @@ pub fn attach_container(args: &cli::AttachArgs) -> Result<()> {
         }
 
         if let Some(current) = c_store.find(&cont.id) {
-            if matches!(current.status, ContainerStatus::Exited(_)) || matches!(current.status, ContainerStatus::Failed(_)) {
+            if matches!(current.status, ContainerStatus::Exited(_))
+                || matches!(current.status, ContainerStatus::Failed(_))
+            {
                 break;
             }
         }
@@ -976,7 +1083,9 @@ pub fn attach_container(args: &cli::AttachArgs) -> Result<()> {
 
 pub fn kill_container(args: &cli::KillArgs) -> Result<()> {
     let store = ContainerStore::new();
-    let cont = store.find(&args.container).ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
+    let cont = store
+        .find(&args.container)
+        .ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
     runtime::kill::ContainerKiller::kill(&cont, args.signal.as_deref())
 }
 
@@ -989,12 +1098,14 @@ pub async fn build_image(args: BuildArgs) -> Result<()> {
         context_dir.join(&args.file)
     };
 
-    builder.build(builder::BuildOptions {
-        context_dir,
-        dockerfile_path,
-        tag: args.tag,
-        no_cache: args.no_cache,
-    }).await?;
+    builder
+        .build(builder::BuildOptions {
+            context_dir,
+            dockerfile_path,
+            tag: args.tag,
+            no_cache: args.no_cache,
+        })
+        .await?;
 
     Ok(())
 }
@@ -1012,9 +1123,18 @@ pub async fn handle_compose(args: ComposeArgs) -> Result<()> {
         }
         ComposeSubcommand::Ps => {
             let containers = project.ps()?;
-            println!("{:<14} {:<24} {:<20} {:<16}", "CONTAINER ID", "NAME", "IMAGE", "STATUS");
+            println!(
+                "{:<14} {:<24} {:<20} {:<16}",
+                "CONTAINER ID", "NAME", "IMAGE", "STATUS"
+            );
             for c in containers {
-                println!("{:<14} {:<24} {:<20} {:<16}", &c.id[..12.min(c.id.len())], c.name, c.image, c.status.to_string());
+                println!(
+                    "{:<14} {:<24} {:<20} {:<16}",
+                    &c.id[..12.min(c.id.len())],
+                    c.name,
+                    c.image,
+                    c.status.to_string()
+                );
             }
         }
         ComposeSubcommand::Logs(opts) => {
@@ -1052,7 +1172,9 @@ pub fn handle_volume(args: VolumeSubcommands) -> Result<()> {
             }
         }
         VolumeAction::Inspect { name } => {
-            let vol = store.find(&name).ok_or_else(|| anyhow!("Volume '{}' not found", name))?;
+            let vol = store
+                .find(&name)
+                .ok_or_else(|| anyhow!("Volume '{}' not found", name))?;
             println!("{}", serde_json::to_string_pretty(&vol)?);
         }
         VolumeAction::Rm { name } => {
@@ -1072,19 +1194,34 @@ pub fn handle_volume(args: VolumeSubcommands) -> Result<()> {
 pub fn handle_network(args: NetworkSubcommands) -> Result<()> {
     let store = NetworkStore::new();
     match args.command {
-        NetworkAction::Create { name, subnet, gateway } => {
+        NetworkAction::Create {
+            name,
+            subnet,
+            gateway,
+        } => {
             let net = store.create(&name, subnet.as_deref(), gateway.as_deref())?;
             println!("{}", net.id);
         }
         NetworkAction::Ls => {
             let nets = store.list();
-            println!("{:<14} {:<20} {:<12} {:<20}", "NETWORK ID", "NAME", "DRIVER", "SCOPE");
+            println!(
+                "{:<14} {:<20} {:<12} {:<20}",
+                "NETWORK ID", "NAME", "DRIVER", "SCOPE"
+            );
             for n in nets {
-                println!("{:<14} {:<20} {:<12} {:<20}", &n.id[..12.min(n.id.len())], n.name, n.driver, "local");
+                println!(
+                    "{:<14} {:<20} {:<12} {:<20}",
+                    &n.id[..12.min(n.id.len())],
+                    n.name,
+                    n.driver,
+                    "local"
+                );
             }
         }
         NetworkAction::Inspect { name } => {
-            let net = store.find(&name).ok_or_else(|| anyhow!("Network '{}' not found", name))?;
+            let net = store
+                .find(&name)
+                .ok_or_else(|| anyhow!("Network '{}' not found", name))?;
             println!("{}", serde_json::to_string_pretty(&net)?);
         }
         NetworkAction::Rm { name } => {
@@ -1107,7 +1244,10 @@ pub fn list_images() -> Result<()> {
     let store = ImageStore::new();
     let images = store.list();
 
-    println!("{:<28} {:<12} {:<16} {:<24} {:<10}", "REPOSITORY", "TAG", "IMAGE ID", "CREATED", "SIZE");
+    println!(
+        "{:<28} {:<12} {:<16} {:<24} {:<10}",
+        "REPOSITORY", "TAG", "IMAGE ID", "CREATED", "SIZE"
+    );
 
     for img in images {
         let size_mb = (img.size_bytes as f64) / (1024.0 * 1024.0);
@@ -1134,7 +1274,10 @@ pub fn list_containers(args: PsArgs) -> Result<()> {
     let store = ContainerStore::new();
     let containers = store.list();
 
-    println!("{:<14} {:<24} {:<20} {:<20} {:<16} {:<16}", "CONTAINER ID", "IMAGE", "COMMAND", "CREATED", "STATUS", "NAMES");
+    println!(
+        "{:<14} {:<24} {:<20} {:<20} {:<16} {:<16}",
+        "CONTAINER ID", "IMAGE", "COMMAND", "CREATED", "STATUS", "NAMES"
+    );
 
     for c in containers {
         if !args.all && !matches!(c.status, ContainerStatus::Running) {
@@ -1172,7 +1315,9 @@ pub fn remove_container(container: &str) -> Result<()> {
     #[cfg(target_os = "macos")]
     {
         let runner_name = format!("boxr-runner-{}", removed.id);
-        let _ = std::process::Command::new("docker").args(["rm", "-f", &runner_name]).output();
+        let _ = std::process::Command::new("docker")
+            .args(["rm", "-f", &runner_name])
+            .output();
     }
     println!("{}", removed.id);
     Ok(())
@@ -1209,7 +1354,9 @@ pub async fn create_only_container(args: RunArgs) -> Result<String> {
 
     let random_bytes: [u8; 6] = rand_bytes();
     let container_id = hex::encode(random_bytes);
-    let container_name = args.name.unwrap_or_else(|| format!("boxr-{}", &container_id[..6]));
+    let container_name = args
+        .name
+        .unwrap_or_else(|| format!("boxr-{}", &container_id[..6]));
 
     let home = storage::boxr_home();
     let bundle_dir = home.join("containers").join(&container_id);
@@ -1265,10 +1412,17 @@ pub async fn create_only_container(args: RunArgs) -> Result<String> {
     };
 
     let mut event_attrs = HashMap::new();
-    event_attrs.insert("image".to_string(), format!("{}:{}", image_record.reference, image_record.tag));
+    event_attrs.insert(
+        "image".to_string(),
+        format!("{}:{}", image_record.reference, image_record.tag),
+    );
     event_attrs.insert("name".to_string(), container_name.clone());
     EventManager::record(ContainerEvent::new(
-        "container", "create", &container_id, &container_name, event_attrs
+        "container",
+        "create",
+        &container_id,
+        &container_name,
+        event_attrs,
     ));
 
     container_store.add(record)?;
@@ -1285,7 +1439,9 @@ pub async fn restart_container(args: &cli::RestartArgs) -> Result<()> {
 
 pub fn port_container(args: &cli::PortArgs) -> Result<()> {
     let store = ContainerStore::new();
-    let cont = store.find(&args.container).ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
+    let cont = store
+        .find(&args.container)
+        .ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
 
     for p in &cont.ports {
         let entry = format!("{}/{}", p.container_port, p.protocol);
@@ -1302,7 +1458,9 @@ pub fn port_container(args: &cli::PortArgs) -> Result<()> {
 
 pub fn tag_image(args: &cli::TagArgs) -> Result<()> {
     let store = ImageStore::new();
-    let src = store.find(&args.source).ok_or_else(|| anyhow!("Image '{}' not found", args.source))?;
+    let src = store
+        .find(&args.source)
+        .ok_or_else(|| anyhow!("Image '{}' not found", args.source))?;
 
     let (repo, tag) = if let Some((r, t)) = args.target.split_once(':') {
         (r.to_string(), t.to_string())
@@ -1328,10 +1486,15 @@ pub fn tag_image(args: &cli::TagArgs) -> Result<()> {
 
 pub fn export_container(args: &cli::ExportArgs) -> Result<()> {
     let store = ContainerStore::new();
-    let cont = store.find(&args.container).ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
+    let cont = store
+        .find(&args.container)
+        .ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
 
     let rootfs_path = PathBuf::from(&cont.bundle_path).join("rootfs");
-    let out_file_path = args.output.clone().unwrap_or_else(|| format!("{}-export.tar", args.container));
+    let out_file_path = args
+        .output
+        .clone()
+        .unwrap_or_else(|| format!("{}-export.tar", args.container));
 
     let file = fs::File::create(&out_file_path)?;
     let mut builder = tar::Builder::new(file);
@@ -1360,7 +1523,10 @@ pub fn import_image(args: &cli::ImportArgs) -> Result<()> {
     fs::create_dir_all(&dest_rootfs)?;
     archive.unpack(&dest_rootfs)?;
 
-    let target_ref = args.reference.clone().unwrap_or_else(|| format!("boxr-import:{}", &random_id[..8]));
+    let target_ref = args
+        .reference
+        .clone()
+        .unwrap_or_else(|| format!("boxr-import:{}", &random_id[..8]));
     let (repo, tag) = if let Some((r, t)) = target_ref.split_once(':') {
         (r.to_string(), t.to_string())
     } else {
@@ -1392,17 +1558,26 @@ pub fn import_image(args: &cli::ImportArgs) -> Result<()> {
 
 pub fn history_image(args: &cli::HistoryArgs) -> Result<()> {
     let store = ImageStore::new();
-    let img = store.find(&args.image).ok_or_else(|| anyhow!("Image '{}' not found", args.image))?;
+    let img = store
+        .find(&args.image)
+        .ok_or_else(|| anyhow!("Image '{}' not found", args.image))?;
 
-    println!("{:<14} {:<24} {:<30} {:<10}", "IMAGE", "CREATED", "CREATED BY", "SIZE");
+    println!(
+        "{:<14} {:<24} {:<30} {:<10}",
+        "IMAGE", "CREATED", "CREATED BY", "SIZE"
+    );
 
     let size_str = format!("{:.2}MB", img.size_bytes as f64 / (1024.0 * 1024.0));
-    let cmd_str = img.config.config.as_ref()
+    let cmd_str = img
+        .config
+        .config
+        .as_ref()
         .and_then(|c| c.cmd.as_ref())
         .map(|c| c.join(" "))
         .unwrap_or_else(|| "/bin/sh".to_string());
 
-    println!("{:<14} {:<24} {:<30} {:<10}",
+    println!(
+        "{:<14} {:<24} {:<30} {:<10}",
         &img.id[..12.min(img.id.len())],
         img.created_at.format("%Y-%m-%d %H:%M:%S"),
         &cmd_str[..30.min(cmd_str.len())],
@@ -1412,24 +1587,73 @@ pub fn history_image(args: &cli::HistoryArgs) -> Result<()> {
 }
 
 pub async fn search_hub(args: &cli::SearchArgs) -> Result<()> {
-    println!("{:<24} {:<50} {:<8} {:<10}", "NAME", "DESCRIPTION", "STARS", "OFFICIAL");
+    println!(
+        "{:<24} {:<50} {:<8} {:<10}",
+        "NAME", "DESCRIPTION", "STARS", "OFFICIAL"
+    );
     // Standard catalog lookup for search terms
     let catalog = [
-        ("alpine", "A minimal Docker image based on Alpine Linux", "10500", "[OK]"),
-        ("ubuntu", "Ubuntu is a Debian-based Linux operating system", "17200", "[OK]"),
+        (
+            "alpine",
+            "A minimal Docker image based on Alpine Linux",
+            "10500",
+            "[OK]",
+        ),
+        (
+            "ubuntu",
+            "Ubuntu is a Debian-based Linux operating system",
+            "17200",
+            "[OK]",
+        ),
         ("nginx", "Official build of Nginx.", "19800", "[OK]"),
-        ("redis", "Redis is an open source key-value store", "12500", "[OK]"),
-        ("postgres", "The PostgreSQL object-relational database system", "13100", "[OK]"),
-        ("node", "Node.js JavaScript runtime environment", "13400", "[OK]"),
-        ("python", "Python is an interpreted, interactive programming language", "11200", "[OK]"),
-        ("golang", "Go is an open source programming language", "12000", "[OK]"),
-        ("rust", "Rust is a language empowering everyone to build reliable software", "1400", "[OK]"),
+        (
+            "redis",
+            "Redis is an open source key-value store",
+            "12500",
+            "[OK]",
+        ),
+        (
+            "postgres",
+            "The PostgreSQL object-relational database system",
+            "13100",
+            "[OK]",
+        ),
+        (
+            "node",
+            "Node.js JavaScript runtime environment",
+            "13400",
+            "[OK]",
+        ),
+        (
+            "python",
+            "Python is an interpreted, interactive programming language",
+            "11200",
+            "[OK]",
+        ),
+        (
+            "golang",
+            "Go is an open source programming language",
+            "12000",
+            "[OK]",
+        ),
+        (
+            "rust",
+            "Rust is a language empowering everyone to build reliable software",
+            "1400",
+            "[OK]",
+        ),
     ];
 
     let term_lower = args.term.to_lowercase();
     for (name, desc, stars, off) in catalog {
         if name.contains(&term_lower) || desc.to_lowercase().contains(&term_lower) {
-            println!("{:<24} {:<50} {:<8} {:<10}", name, &desc[..50.min(desc.len())], stars, off);
+            println!(
+                "{:<24} {:<50} {:<8} {:<10}",
+                name,
+                &desc[..50.min(desc.len())],
+                stars,
+                off
+            );
         }
     }
     Ok(())
@@ -1439,9 +1663,18 @@ pub fn info_system() -> Result<()> {
     let c_store = ContainerStore::new();
     let i_store = ImageStore::new();
     let containers = c_store.list();
-    let running = containers.iter().filter(|c| matches!(c.status, ContainerStatus::Running)).count();
-    let paused = containers.iter().filter(|c| matches!(c.status, ContainerStatus::Paused)).count();
-    let stopped = containers.iter().filter(|c| matches!(c.status, ContainerStatus::Exited(_))).count();
+    let running = containers
+        .iter()
+        .filter(|c| matches!(c.status, ContainerStatus::Running))
+        .count();
+    let paused = containers
+        .iter()
+        .filter(|c| matches!(c.status, ContainerStatus::Paused))
+        .count();
+    let stopped = containers
+        .iter()
+        .filter(|c| matches!(c.status, ContainerStatus::Exited(_)))
+        .count();
 
     println!("Containers: {}", containers.len());
     println!(" Running: {}", running);
@@ -1490,9 +1723,13 @@ pub fn handle_pod(args: PodSubcommands) -> Result<()> {
         }
         PodAction::Ps | PodAction::Ls => {
             let pods = store.list();
-            println!("{:<14} {:<24} {:<16} {:<24} {:<14}", "POD ID", "NAME", "STATUS", "CREATED", "# CONTAINERS");
+            println!(
+                "{:<14} {:<24} {:<16} {:<24} {:<14}",
+                "POD ID", "NAME", "STATUS", "CREATED", "# CONTAINERS"
+            );
             for p in pods {
-                println!("{:<14} {:<24} {:<16} {:<24} {:<14}",
+                println!(
+                    "{:<14} {:<24} {:<16} {:<24} {:<14}",
                     p.id,
                     p.name,
                     p.status,
@@ -1506,11 +1743,15 @@ pub fn handle_pod(args: PodSubcommands) -> Result<()> {
             println!("{}", removed.id);
         }
         PodAction::Inspect { pod } => {
-            let p = store.find(&pod).ok_or_else(|| anyhow!("Pod '{}' not found", pod))?;
+            let p = store
+                .find(&pod)
+                .ok_or_else(|| anyhow!("Pod '{}' not found", pod))?;
             println!("{}", serde_json::to_string_pretty(&p)?);
         }
         PodAction::Stop { pod } => {
-            let p = store.find(&pod).ok_or_else(|| anyhow!("Pod '{}' not found", pod))?;
+            let p = store
+                .find(&pod)
+                .ok_or_else(|| anyhow!("Pod '{}' not found", pod))?;
             for cid in &p.containers {
                 let _ = stop_container(cid);
             }

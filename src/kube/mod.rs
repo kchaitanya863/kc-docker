@@ -1,7 +1,7 @@
 use crate::cli::RunArgs;
 use crate::pod::PodStore;
 use crate::storage::ContainerStore;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -62,11 +62,14 @@ impl KubeManager {
         let content = fs::read_to_string(yaml_path)
             .with_context(|| format!("Failed to read Kubernetes YAML at {:?}", yaml_path))?;
 
-        let pod_yaml: KubePodYaml = serde_yaml::from_str(&content)
-            .context("Failed to parse Kubernetes Pod YAML")?;
+        let pod_yaml: KubePodYaml =
+            serde_yaml::from_str(&content).context("Failed to parse Kubernetes Pod YAML")?;
 
         if pod_yaml.kind != "Pod" {
-            return Err(anyhow!("Unsupported Kubernetes kind '{}', expected 'Pod'", pod_yaml.kind));
+            return Err(anyhow!(
+                "Unsupported Kubernetes kind '{}', expected 'Pod'",
+                pod_yaml.kind
+            ));
         }
 
         println!("Playing Kubernetes Pod '{}'...", pod_yaml.metadata.name);
@@ -117,7 +120,11 @@ impl KubeManager {
             let _ = pod_store.add_container_to_pod(&pod.name, &container_name);
         }
 
-        println!("Pod '{}' started successfully with {} container(s)", pod.name, pod_yaml.spec.containers.len());
+        println!(
+            "Pod '{}' started successfully with {} container(s)",
+            pod.name,
+            pod_yaml.spec.containers.len()
+        );
         Ok(())
     }
 
@@ -153,7 +160,11 @@ impl KubeManager {
             kube_containers.push(KubeContainerSpec {
                 name: c.name.clone(),
                 image: c.image.clone(),
-                command: if c.command.is_empty() { None } else { Some(c.command.clone()) },
+                command: if c.command.is_empty() {
+                    None
+                } else {
+                    Some(c.command.clone())
+                },
                 ports: if ports.is_empty() { None } else { Some(ports) },
                 env: None,
             });
@@ -178,11 +189,15 @@ impl KubeManager {
     /// Run a command in a new user namespace (boxr unshare)
     pub fn unshare_command(command: &[String]) -> Result<i32> {
         let default_cmd = vec!["/bin/sh".to_string()];
-        let cmd = if command.is_empty() { &default_cmd } else { command };
+        let cmd = if command.is_empty() {
+            &default_cmd
+        } else {
+            command
+        };
 
         #[cfg(target_os = "linux")]
         {
-            use nix::sched::{unshare, CloneFlags};
+            use nix::sched::{CloneFlags, unshare};
             unshare(CloneFlags::CLONE_NEWUSER)?;
         }
 

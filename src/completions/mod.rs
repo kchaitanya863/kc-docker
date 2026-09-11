@@ -1,5 +1,5 @@
 use crate::storage::boxr_home;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -16,7 +16,10 @@ impl ShellType {
             "bash" => Ok(ShellType::Bash),
             "zsh" => Ok(ShellType::Zsh),
             "fish" => Ok(ShellType::Fish),
-            other => Err(anyhow!("Unsupported shell '{}', expected bash, zsh, or fish", other)),
+            other => Err(anyhow!(
+                "Unsupported shell '{}', expected bash, zsh, or fish",
+                other
+            )),
         }
     }
 }
@@ -168,10 +171,7 @@ complete -c boxr -n "__fish_use_subcommand" -a alias -d 'Docker drop-in alias'
         let current_exe = std::env::current_exe()?;
         let current_exe_str = current_exe.to_string_lossy();
 
-        let wrapper_script = format!(
-            "#!/bin/sh\nexec \"{}\" \"$@\"\n",
-            current_exe_str
-        );
+        let wrapper_script = format!("#!/bin/sh\nexec \"{}\" \"$@\"\n", current_exe_str);
 
         let wrapper_path = bin_dir.join("docker");
         fs::write(&wrapper_path, wrapper_script)?;

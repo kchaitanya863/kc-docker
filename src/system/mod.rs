@@ -1,6 +1,6 @@
 use crate::builder::BuildCache;
 use crate::network::NetworkStore;
-use crate::storage::{boxr_home, ContainerStatus, ContainerStore, ImageStore};
+use crate::storage::{ContainerStatus, ContainerStore, ImageStore, boxr_home};
 use crate::volume::VolumeStore;
 use anyhow::Result;
 use std::collections::HashSet;
@@ -30,7 +30,10 @@ impl SystemManager {
 
         // 1. Containers
         let total_containers = containers.len();
-        let active_containers = containers.iter().filter(|c| matches!(c.status, ContainerStatus::Running)).count();
+        let active_containers = containers
+            .iter()
+            .filter(|c| matches!(c.status, ContainerStatus::Running))
+            .count();
         let mut total_container_size = 0u64;
         let mut reclaimable_container_size = 0u64;
 
@@ -44,7 +47,8 @@ impl SystemManager {
         }
 
         // 2. Images
-        let used_image_names: HashSet<String> = containers.iter().map(|c| c.image.clone()).collect();
+        let used_image_names: HashSet<String> =
+            containers.iter().map(|c| c.image.clone()).collect();
         let total_images = images.len();
         let mut active_images = 0;
         let mut total_image_size = 0u64;
@@ -52,7 +56,9 @@ impl SystemManager {
 
         for img in &images {
             let tag = format!("{}:{}", img.reference, img.tag);
-            let is_used = used_image_names.contains(&tag) || used_image_names.contains(&img.reference) || used_image_names.contains(&img.id);
+            let is_used = used_image_names.contains(&tag)
+                || used_image_names.contains(&img.reference)
+                || used_image_names.contains(&img.id);
             total_image_size += img.size_bytes as u64;
 
             if is_used {
@@ -117,7 +123,10 @@ impl SystemManager {
 
     pub fn print_df() -> Result<()> {
         let rows = Self::df()?;
-        println!("{:<16} {:<10} {:<10} {:<16} {:<20}", "TYPE", "TOTAL", "ACTIVE", "SIZE", "RECLAIMABLE");
+        println!(
+            "{:<16} {:<10} {:<10} {:<16} {:<20}",
+            "TYPE", "TOTAL", "ACTIVE", "SIZE", "RECLAIMABLE"
+        );
 
         for r in rows {
             let size_str = format_bytes(r.size_bytes);
@@ -128,7 +137,8 @@ impl SystemManager {
                 format_bytes(r.reclaimable_bytes)
             };
 
-            println!("{:<16} {:<10} {:<10} {:<16} {:<20}",
+            println!(
+                "{:<16} {:<10} {:<10} {:<16} {:<20}",
                 r.item_type, r.total, r.active, size_str, reclaim_str
             );
         }
@@ -157,7 +167,10 @@ impl SystemManager {
             let i_store = ImageStore::new();
             let images = i_store.list();
             let remaining_containers = c_store.list();
-            let used_images: HashSet<String> = remaining_containers.iter().map(|c| c.image.clone()).collect();
+            let used_images: HashSet<String> = remaining_containers
+                .iter()
+                .map(|c| c.image.clone())
+                .collect();
 
             println!("Deleted Images:");
             for img in images {

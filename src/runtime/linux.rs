@@ -1,11 +1,11 @@
 use crate::network::PortMapping;
 use crate::oci::runtime::Spec;
 use crate::volume::MountSpec;
-use anyhow::{anyhow, Context, Result};
-use nix::mount::{mount, MsFlags};
-use nix::sched::{unshare, CloneFlags};
-use nix::sys::wait::{waitpid, WaitStatus};
-use nix::unistd::{chdir, fork, pivot_root, sethostname, ForkResult};
+use anyhow::{Context, Result, anyhow};
+use nix::mount::{MsFlags, mount};
+use nix::sched::{CloneFlags, unshare};
+use nix::sys::wait::{WaitStatus, waitpid};
+use nix::unistd::{ForkResult, chdir, fork, pivot_root, sethostname};
 use std::ffi::CString;
 use std::fs;
 use std::path::Path;
@@ -35,13 +35,11 @@ pub fn execute_bundle(
 
     // Fork: child will become PID 1 inside the new PID namespace
     match unsafe { fork() }? {
-        ForkResult::Parent { child } => {
-            match waitpid(child, None)? {
-                WaitStatus::Exited(_, code) => Ok(code),
-                WaitStatus::Signaled(_, sig, _) => Ok(128 + sig as i32),
-                _ => Ok(1),
-            }
-        }
+        ForkResult::Parent { child } => match waitpid(child, None)? {
+            WaitStatus::Exited(_, code) => Ok(code),
+            WaitStatus::Signaled(_, sig, _) => Ok(128 + sig as i32),
+            _ => Ok(1),
+        },
         ForkResult::Child => {
             if let Err(err) = run_container_child(&abs_rootfs, spec, mounts) {
                 eprintln!("Container child failed: {:?}", err);
@@ -61,7 +59,10 @@ pub fn exec_in_bundle(bundle_path: &Path, command: &[String], env: &[String]) ->
 
     let binary = &command[0];
     let binary_c = CString::new(binary.as_str())?;
-    let args_c: Vec<CString> = command.iter().map(|s| CString::new(s.as_str()).unwrap()).collect();
+    let args_c: Vec<CString> = command
+        .iter()
+        .map(|s| CString::new(s.as_str()).unwrap())
+        .collect();
 
     for e in env {
         if let Some((k, v)) = e.split_once('=') {

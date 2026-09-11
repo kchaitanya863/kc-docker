@@ -1,4 +1,4 @@
-use boxr::builder::{DockerfileParser, DockerIgnore, Instruction};
+use boxr::builder::{DockerIgnore, DockerfileParser, Instruction};
 use boxr::compose::{ComposeFile, ComposeProject};
 use std::path::{Path, PathBuf};
 use tempfile::tempdir;
@@ -117,7 +117,10 @@ services:
         compose_file_path: PathBuf::from("docker-compose.yml"),
         compose: compose2,
     };
-    assert!(proj2.dependency_order().is_err(), "Expected cyclic dependency error for 2-node cycle");
+    assert!(
+        proj2.dependency_order().is_err(),
+        "Expected cyclic dependency error for 2-node cycle"
+    );
 
     // 3-service cycle: a -> b -> c -> a
     let yaml_cycle_3 = r#"
@@ -138,7 +141,10 @@ services:
         compose_file_path: PathBuf::from("docker-compose.yml"),
         compose: compose3,
     };
-    assert!(proj3.dependency_order().is_err(), "Expected cyclic dependency error for 3-node cycle");
+    assert!(
+        proj3.dependency_order().is_err(),
+        "Expected cyclic dependency error for 3-node cycle"
+    );
 }
 
 #[test]
@@ -156,5 +162,8 @@ services:
         compose_file_path: PathBuf::from("docker-compose.yml"),
         compose,
     };
-    assert!(proj.dependency_order().is_err(), "Expected error for undefined service dependency");
+    assert!(
+        proj.dependency_order().is_err(),
+        "Expected error for undefined service dependency"
+    );
 }

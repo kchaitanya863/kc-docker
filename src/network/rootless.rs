@@ -2,8 +2,8 @@
 
 use anyhow::{Context, Result};
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::net::{TcpListener, TcpStream};
 
 /// A user-space TCP port forwarder proxy running in rootless user mode without requiring root/sudo privileges.
@@ -24,9 +24,12 @@ impl RootlessPortForwarder {
 
     /// Start the user-space TCP proxy forwarding traffic between host and container target
     pub async fn start(&self) -> Result<()> {
-        let listener = TcpListener::bind(self.host_addr)
-            .await
-            .with_context(|| format!("Failed to bind rootless port forwarder on {}", self.host_addr))?;
+        let listener = TcpListener::bind(self.host_addr).await.with_context(|| {
+            format!(
+                "Failed to bind rootless port forwarder on {}",
+                self.host_addr
+            )
+        })?;
 
         self.running.store(true, Ordering::SeqCst);
         let running_flag = self.running.clone();
@@ -37,7 +40,8 @@ impl RootlessPortForwarder {
                 if let Ok((mut inbound, _)) = listener.accept().await {
                     tokio::spawn(async move {
                         if let Ok(mut outbound) = TcpStream::connect(target).await {
-                            let _ = tokio::io::copy_bidirectional(&mut inbound, &mut outbound).await;
+                            let _ =
+                                tokio::io::copy_bidirectional(&mut inbound, &mut outbound).await;
                         }
                     });
                 }
@@ -56,7 +60,9 @@ pub struct PortForwardManager;
 
 impl PortForwardManager {
     /// Start forwarding for all requested port mappings
-    pub async fn start_forwarding(ports: &[crate::network::PortMapping]) -> Result<Vec<Arc<RootlessPortForwarder>>> {
+    pub async fn start_forwarding(
+        ports: &[crate::network::PortMapping],
+    ) -> Result<Vec<Arc<RootlessPortForwarder>>> {
         let mut forwarders = Vec::new();
         for p in ports {
             let host_ip_str = p.host_ip.as_deref().unwrap_or("0.0.0.0");

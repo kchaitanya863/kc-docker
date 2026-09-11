@@ -1,7 +1,7 @@
 pub mod rootless;
 
 use crate::storage::boxr_home;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -123,7 +123,11 @@ impl NetworkStore {
 
     fn ensure_default_network(&self) {
         let mut data = self.load();
-        if !data.networks.iter().any(|n| n.name == Self::DEFAULT_NETWORK) {
+        if !data
+            .networks
+            .iter()
+            .any(|n| n.name == Self::DEFAULT_NETWORK)
+        {
             let default_net = NetworkRecord {
                 id: "boxr00000000".to_string(),
                 name: Self::DEFAULT_NETWORK.to_string(),
@@ -145,10 +149,17 @@ impl NetworkStore {
 
     pub fn find(&self, query: &str) -> Option<NetworkRecord> {
         let data = self.load();
-        data.networks.into_iter().find(|n| n.id.starts_with(query) || n.name == query)
+        data.networks
+            .into_iter()
+            .find(|n| n.id.starts_with(query) || n.name == query)
     }
 
-    pub fn create(&self, name: &str, subnet: Option<&str>, gateway: Option<&str>) -> Result<NetworkRecord> {
+    pub fn create(
+        &self,
+        name: &str,
+        subnet: Option<&str>,
+        gateway: Option<&str>,
+    ) -> Result<NetworkRecord> {
         let mut data = self.load();
         if data.networks.iter().any(|n| n.name == name) {
             return Err(anyhow!("Network '{}' already exists", name));
@@ -185,7 +196,11 @@ impl NetworkStore {
             return Err(anyhow!("Cannot remove the default bridge network"));
         }
 
-        if let Some(pos) = data.networks.iter().position(|n| n.id.starts_with(query) || n.name == query) {
+        if let Some(pos) = data
+            .networks
+            .iter()
+            .position(|n| n.id.starts_with(query) || n.name == query)
+        {
             let removed = data.networks.remove(pos);
             self.save(&data)?;
             Ok(removed)
@@ -195,9 +210,17 @@ impl NetworkStore {
     }
 
     /// Allocate next available IP and attach container to network
-    pub fn connect_container(&self, network_name: &str, container_id: &str, container_name: &str) -> Result<NetworkEndpoint> {
+    pub fn connect_container(
+        &self,
+        network_name: &str,
+        container_id: &str,
+        container_name: &str,
+    ) -> Result<NetworkEndpoint> {
         let mut data = self.load();
-        let net = data.networks.iter_mut().find(|n| n.name == network_name || n.id.starts_with(network_name))
+        let net = data
+            .networks
+            .iter_mut()
+            .find(|n| n.name == network_name || n.id.starts_with(network_name))
             .ok_or_else(|| anyhow!("Network '{}' not found", network_name))?;
 
         if let Some(ep) = net.containers.get(container_id) {
@@ -206,8 +229,13 @@ impl NetworkStore {
 
         // Allocate next IP
         let ip = allocate_ip_in_subnet(&net.subnet, &net.gateway, &net.containers)?;
-        let mac = format!("02:42:{:02x}:{:02x}:{:02x}:{:02x}",
-            ip.octets()[0], ip.octets()[1], ip.octets()[2], ip.octets()[3]);
+        let mac = format!(
+            "02:42:{:02x}:{:02x}:{:02x}:{:02x}",
+            ip.octets()[0],
+            ip.octets()[1],
+            ip.octets()[2],
+            ip.octets()[3]
+        );
 
         let endpoint = NetworkEndpoint {
             container_id: container_id.to_string(),
@@ -216,7 +244,8 @@ impl NetworkStore {
             mac_address: mac,
         };
 
-        net.containers.insert(container_id.to_string(), endpoint.clone());
+        net.containers
+            .insert(container_id.to_string(), endpoint.clone());
         self.save(&data)?;
         Ok(endpoint)
     }
@@ -224,7 +253,10 @@ impl NetworkStore {
     /// Disconnect container from network
     pub fn disconnect_container(&self, network_name: &str, container_id: &str) -> Result<()> {
         let mut data = self.load();
-        let net = data.networks.iter_mut().find(|n| n.name == network_name || n.id.starts_with(network_name))
+        let net = data
+            .networks
+            .iter_mut()
+            .find(|n| n.name == network_name || n.id.starts_with(network_name))
             .ok_or_else(|| anyhow!("Network '{}' not found", network_name))?;
 
         net.containers.remove(container_id);
@@ -234,16 +266,29 @@ impl NetworkStore {
 
     /// Generate an /etc/hosts content for a container, mapping all other containers in this network
     #[allow(dead_code)]
-    pub fn generate_hosts_file(&self, network_name: &str, _current_container_id: &str) -> Result<String> {
+    pub fn generate_hosts_file(
+        &self,
+        network_name: &str,
+        _current_container_id: &str,
+    ) -> Result<String> {
         let mut lines = vec![
             "127.0.0.1\tlocalhost".to_string(),
             "::1\tlocalhost ip6-localhost ip6-loopback".to_string(),
         ];
 
         let data = self.load();
-        if let Some(net) = data.networks.iter().find(|n| n.name == network_name || n.id.starts_with(network_name)) {
+        if let Some(net) = data
+            .networks
+            .iter()
+            .find(|n| n.name == network_name || n.id.starts_with(network_name))
+        {
             for (cid, ep) in &net.containers {
-                lines.push(format!("{}\t{}\t{}", ep.ipv4_address, ep.container_name, &cid[..12.min(cid.len())]));
+                lines.push(format!(
+                    "{}\t{}\t{}",
+                    ep.ipv4_address,
+                    ep.container_name,
+                    &cid[..12.min(cid.len())]
+                ));
             }
         }
 
@@ -251,14 +296,20 @@ impl NetworkStore {
     }
 }
 
-fn allocate_ip_in_subnet(subnet_str: &str, gateway_str: &str, existing: &HashMap<String, NetworkEndpoint>) -> Result<Ipv4Addr> {
-    let (ip_part, _mask) = subnet_str.split_once('/')
+fn allocate_ip_in_subnet(
+    subnet_str: &str,
+    gateway_str: &str,
+    existing: &HashMap<String, NetworkEndpoint>,
+) -> Result<Ipv4Addr> {
+    let (ip_part, _mask) = subnet_str
+        .split_once('/')
         .ok_or_else(|| anyhow!("Invalid CIDR subnet {}", subnet_str))?;
 
     let base_ip: Ipv4Addr = ip_part.parse()?;
     let gateway: Ipv4Addr = gateway_str.parse()?;
 
-    let used_ips: Vec<Ipv4Addr> = existing.values()
+    let used_ips: Vec<Ipv4Addr> = existing
+        .values()
         .filter_map(|e| e.ipv4_address.parse().ok())
         .collect();
 
@@ -271,7 +322,10 @@ fn allocate_ip_in_subnet(subnet_str: &str, gateway_str: &str, existing: &HashMap
         }
     }
 
-    Err(anyhow!("No available IP addresses in subnet {}", subnet_str))
+    Err(anyhow!(
+        "No available IP addresses in subnet {}",
+        subnet_str
+    ))
 }
 
 #[cfg(test)]
@@ -310,7 +364,9 @@ mod tests {
         assert_eq!(custom.name, "custom-net");
 
         // Connect container
-        let ep = store.connect_container("custom-net", "c123456", "web-server").unwrap();
+        let ep = store
+            .connect_container("custom-net", "c123456", "web-server")
+            .unwrap();
         assert_eq!(ep.container_name, "web-server");
         assert!(ep.ipv4_address.starts_with("172."));
 

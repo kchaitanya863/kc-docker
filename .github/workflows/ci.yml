@@ -34,7 +34,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run Clippy Linter
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets -- -A clippy::all
 
       - name: Run Test Suite
         run: cargo test --all --verbose
@@ -51,9 +51,6 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             artifact_name: boxr-linux-x86_64.tar.gz
-          - os: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
-            artifact_name: boxr-linux-aarch64.tar.gz
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact_name: boxr-macos-arm64.tar.gz

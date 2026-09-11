@@ -1,5 +1,5 @@
 use crate::storage::ContainerStore;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -12,7 +12,8 @@ impl ContainerCopy {
 
         if let Some((container_query, container_path)) = src.split_once(':') {
             // Container to Host copy
-            let cont = store.find(container_query)
+            let cont = store
+                .find(container_query)
                 .ok_or_else(|| anyhow!("Container '{}' not found", container_query))?;
 
             let cont_rootfs = PathBuf::from(&cont.bundle_path).join("rootfs");
@@ -20,16 +21,24 @@ impl ContainerCopy {
             let source_abs = cont_rootfs.join(clean_cont_path);
 
             if !source_abs.exists() {
-                return Err(anyhow!("Path '{}' does not exist in container '{}'", container_path, container_query));
+                return Err(anyhow!(
+                    "Path '{}' does not exist in container '{}'",
+                    container_path,
+                    container_query
+                ));
             }
 
             let host_dest = PathBuf::from(dest);
             Self::copy_path(&source_abs, &host_dest)?;
-            println!("Successfully copied {}:{} to {:?}", container_query, container_path, host_dest);
+            println!(
+                "Successfully copied {}:{} to {:?}",
+                container_query, container_path, host_dest
+            );
             Ok(())
         } else if let Some((container_query, container_path)) = dest.split_once(':') {
             // Host to Container copy
-            let cont = store.find(container_query)
+            let cont = store
+                .find(container_query)
                 .ok_or_else(|| anyhow!("Container '{}' not found", container_query))?;
 
             let host_src = PathBuf::from(src);
@@ -42,10 +51,15 @@ impl ContainerCopy {
             let dest_abs = cont_rootfs.join(clean_cont_path);
 
             Self::copy_path(&host_src, &dest_abs)?;
-            println!("Successfully copied {:?} to {}:{}", host_src, container_query, container_path);
+            println!(
+                "Successfully copied {:?} to {}:{}",
+                host_src, container_query, container_path
+            );
             Ok(())
         } else {
-            Err(anyhow!("Invalid copy syntax: at least one of SRC or DEST must specify <container>:<path>"))
+            Err(anyhow!(
+                "Invalid copy syntax: at least one of SRC or DEST must specify <container>:<path>"
+            ))
         }
     }
 
@@ -111,6 +125,9 @@ mod tests {
 
         assert!(dst_dir.join("file.txt").exists());
         assert!(dst_dir.join("subdir").join("sub.txt").exists());
-        assert_eq!(fs::read_to_string(dst_dir.join("file.txt")).unwrap(), "test content");
+        assert_eq!(
+            fs::read_to_string(dst_dir.join("file.txt")).unwrap(),
+            "test content"
+        );
     }
 }

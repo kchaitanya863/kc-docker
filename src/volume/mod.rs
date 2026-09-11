@@ -1,5 +1,5 @@
 use crate::storage::boxr_home;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -67,11 +67,18 @@ impl VolumeStore {
         self.load().volumes.into_iter().find(|v| v.name == name)
     }
 
-    pub fn create(&self, name: Option<&str>, labels: Option<HashMap<String, String>>) -> Result<VolumeRecord> {
+    pub fn create(
+        &self,
+        name: Option<&str>,
+        labels: Option<HashMap<String, String>>,
+    ) -> Result<VolumeRecord> {
         let mut data = self.load();
         let vol_name = match name {
             Some(n) if !n.trim().is_empty() => n.trim().to_string(),
-            _ => format!("vol-{}", &hex::encode(crate::storage::container_store::rand_id())[..8]),
+            _ => format!(
+                "vol-{}",
+                &hex::encode(crate::storage::container_store::rand_id())[..8]
+            ),
         };
 
         if data.volumes.iter().any(|v| v.name == vol_name) {
@@ -135,7 +142,10 @@ impl VolumeStore {
 
         let parts: Vec<&str> = trimmed.split(':').collect();
         if parts.is_empty() || parts.len() > 3 {
-            return Err(anyhow!("Invalid volume format '{}', expected [source:]destination[:mode]", spec_str));
+            return Err(anyhow!(
+                "Invalid volume format '{}', expected [source:]destination[:mode]",
+                spec_str
+            ));
         }
 
         let (source_str, dest_str, read_only) = match parts.len() {
@@ -143,9 +153,7 @@ impl VolumeStore {
                 // Anonymous volume
                 ("", parts[0], false)
             }
-            2 => {
-                (parts[0], parts[1], false)
-            }
+            2 => (parts[0], parts[1], false),
             3 => {
                 let ro = parts[2] == "ro";
                 (parts[0], parts[1], ro)
@@ -168,7 +176,9 @@ impl VolumeStore {
             });
         }
 
-        let is_host_path = source_str.starts_with('/') || source_str.starts_with('.') || source_str.starts_with('~');
+        let is_host_path = source_str.starts_with('/')
+            || source_str.starts_with('.')
+            || source_str.starts_with('~');
 
         if is_host_path {
             let host_path = if source_str.starts_with('~') {

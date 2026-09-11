@@ -2,8 +2,8 @@ use crate::health::HealthConfig;
 use crate::oci::image::{ExecutionConfig, ImageConfig};
 use crate::oci::runtime::Spec;
 use crate::runtime::execute_bundle;
-use crate::storage::{boxr_home, ImageRecord, ImageStore};
-use anyhow::{anyhow, Context, Result};
+use crate::storage::{ImageRecord, ImageStore, boxr_home};
+use anyhow::{Context, Result, anyhow};
 use chrono::Utc;
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -11,16 +11,32 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Instruction {
-    From { image: String, as_stage: Option<String> },
+    From {
+        image: String,
+        as_stage: Option<String>,
+    },
     Run(String),
-    Copy { from_stage: Option<String>, src: Vec<String>, dest: String },
-    Add { src: Vec<String>, dest: String },
+    Copy {
+        from_stage: Option<String>,
+        src: Vec<String>,
+        dest: String,
+    },
+    Add {
+        src: Vec<String>,
+        dest: String,
+    },
     Workdir(String),
-    Env { key: String, value: String },
+    Env {
+        key: String,
+        value: String,
+    },
     Cmd(Vec<String>),
     Entrypoint(Vec<String>),
     Expose(u16),
-    Label { key: String, value: String },
+    Label {
+        key: String,
+        value: String,
+    },
     Healthcheck(HealthConfig),
 }
 
@@ -39,7 +55,9 @@ impl DockerIgnore {
                 .collect();
             Self { patterns }
         } else {
-            Self { patterns: Vec::new() }
+            Self {
+                patterns: Vec::new(),
+            }
         }
     }
 
@@ -66,7 +84,9 @@ fn pattern_matches(pattern: &str, path: &str) -> bool {
         if parts.len() == 2 {
             let prefix = parts[0];
             let suffix = parts[1];
-            return path.starts_with(prefix) && path.ends_with(suffix) && path.len() >= prefix.len() + suffix.len();
+            return path.starts_with(prefix)
+                && path.ends_with(suffix)
+                && path.len() >= prefix.len() + suffix.len();
         }
     }
     path == p || path.starts_with(&format!("{}/", p)) || path.ends_with(&format!("/{}", p))
@@ -111,7 +131,8 @@ impl DockerfileParser {
     }
 
     fn parse_line(line: &str) -> Result<Instruction> {
-        let (keyword, rest) = line.split_once(char::is_whitespace)
+        let (keyword, rest) = line
+            .split_once(char::is_whitespace)
             .ok_or_else(|| anyhow!("Invalid Dockerfile instruction: '{}'", line))?;
 
         let keyword_upper = keyword.to_uppercase();
@@ -146,16 +167,24 @@ impl DockerfileParser {
                 }
 
                 if filtered_parts.len() < 2 {
-                    return Err(anyhow!("COPY requires at least one source and one destination"));
+                    return Err(anyhow!(
+                        "COPY requires at least one source and one destination"
+                    ));
                 }
                 let dest = filtered_parts.last().unwrap().clone();
                 let src = filtered_parts[..filtered_parts.len() - 1].to_vec();
-                Ok(Instruction::Copy { from_stage, src, dest })
+                Ok(Instruction::Copy {
+                    from_stage,
+                    src,
+                    dest,
+                })
             }
             "ADD" => {
                 let parts = parse_words(rest);
                 if parts.len() < 2 {
-                    return Err(anyhow!("ADD requires at least one source and one destination"));
+                    return Err(anyhow!(
+                        "ADD requires at least one source and one destination"
+                    ));
                 }
                 let dest = parts.last().unwrap().clone();
                 let src = parts[..parts.len() - 1].to_vec();
@@ -186,7 +215,12 @@ impl DockerfileParser {
                 Ok(Instruction::Entrypoint(args))
             }
             "EXPOSE" => {
-                let port: u16 = rest.split('/').next().unwrap_or(rest).trim().parse()
+                let port: u16 = rest
+                    .split('/')
+                    .next()
+                    .unwrap_or(rest)
+                    .trim()
+                    .parse()
                     .with_context(|| format!("Invalid port in EXPOSE: {}", rest))?;
                 Ok(Instruction::Expose(port))
             }
@@ -228,11 +262,7 @@ impl BuildCache {
 
     pub fn get(key: &str) -> Option<PathBuf> {
         let dir = Self::cache_dir().join(key).join("rootfs");
-        if dir.exists() {
-            Some(dir)
-        } else {
-            None
-        }
+        if dir.exists() { Some(dir) } else { None }
     }
 
     pub fn put(key: &str, rootfs: &Path) -> Result<()> {
@@ -344,7 +374,10 @@ impl ImageBuilder {
                     let dest = if dir.starts_with('/') {
                         current_rootfs.join(dir.trim_start_matches('/'))
                     } else {
-                        let cur = current_config.working_dir.clone().unwrap_or_else(|| "/".to_string());
+                        let cur = current_config
+                            .working_dir
+                            .clone()
+                            .unwrap_or_else(|| "/".to_string());
                         current_rootfs.join(cur.trim_start_matches('/')).join(dir)
                     };
                     fs::create_dir_all(&dest)?;
@@ -363,7 +396,10 @@ impl ImageBuilder {
                     let target_dir = if dest.starts_with('/') {
                         current_rootfs.join(dest.trim_start_matches('/'))
                     } else {
-                        let cur = current_config.working_dir.clone().unwrap_or_else(|| "/".to_string());
+                        let cur = current_config
+                            .working_dir
+                            .clone()
+                            .unwrap_or_else(|| "/".to_string());
                         current_rootfs.join(cur.trim_start_matches('/')).join(dest)
                     };
 
@@ -394,29 +430,42 @@ impl ImageBuilder {
                     }
                     cache_key = format!("{}_add_{}_{:?}", cache_key, dest, src);
                 }
-                Instruction::Copy { from_stage, src, dest } => {
+                Instruction::Copy {
+                    from_stage,
+                    src,
+                    dest,
+                } => {
                     let target_dir = if dest.starts_with('/') {
                         current_rootfs.join(dest.trim_start_matches('/'))
                     } else {
-                        let cur = current_config.working_dir.clone().unwrap_or_else(|| "/".to_string());
+                        let cur = current_config
+                            .working_dir
+                            .clone()
+                            .unwrap_or_else(|| "/".to_string());
                         current_rootfs.join(cur.trim_start_matches('/')).join(dest)
                     };
 
                     let source_root: PathBuf = if let Some(from_s) = from_stage {
                         // Find matching stage by name or index
-                        let found_stage = stages.iter().find(|s| {
-                            s.name.as_deref() == Some(from_s.as_str())
-                        }).or_else(|| {
-                            if let Ok(idx) = from_s.parse::<usize>() {
-                                stages.get(idx)
-                            } else {
-                                None
-                            }
-                        });
+                        let found_stage = stages
+                            .iter()
+                            .find(|s| s.name.as_deref() == Some(from_s.as_str()))
+                            .or_else(|| {
+                                if let Ok(idx) = from_s.parse::<usize>() {
+                                    stages.get(idx)
+                                } else {
+                                    None
+                                }
+                            });
 
                         match found_stage {
                             Some(st) => st.rootfs.clone(),
-                            None => return Err(anyhow!("Stage '{}' not found for COPY --from", from_s)),
+                            None => {
+                                return Err(anyhow!(
+                                    "Stage '{}' not found for COPY --from",
+                                    from_s
+                                ));
+                            }
                         }
                     } else {
                         opts.context_dir.clone()
@@ -488,7 +537,11 @@ impl ImageBuilder {
 
                     let code = execute_bundle(&step_bundle, &spec, &[], &[], false)?;
                     if code != 0 {
-                        return Err(anyhow!("The command '{}' returned a non-zero code: {}", cmd, code));
+                        return Err(anyhow!(
+                            "The command '{}' returned a non-zero code: {}",
+                            cmd,
+                            code
+                        ));
                     }
 
                     let _ = fs::remove_dir_all(&current_rootfs);
@@ -526,7 +579,9 @@ impl ImageBuilder {
         fs::create_dir_all(&dest_rootfs)?;
         copy_dir_all(&current_rootfs, &dest_rootfs)?;
 
-        let full_tag = opts.tag.unwrap_or_else(|| format!("boxr-build:{}", &random_id[..8]));
+        let full_tag = opts
+            .tag
+            .unwrap_or_else(|| format!("boxr-build:{}", &random_id[..8]));
         let (repo, tag) = if let Some((r, t)) = full_tag.split_once(':') {
             (r.to_string(), t.to_string())
         } else {
@@ -551,13 +606,18 @@ impl ImageBuilder {
         };
 
         self.store.add(record.clone())?;
-        println!("Successfully built image {} ({}:{})", &record.id, record.reference, record.tag);
+        println!(
+            "Successfully built image {} ({}:{})",
+            &record.id, record.reference, record.tag
+        );
         Ok(record)
     }
 }
 
 fn parse_words(s: &str) -> Vec<String> {
-    s.split_whitespace().map(|w| w.trim_matches('"').to_string()).collect()
+    s.split_whitespace()
+        .map(|w| w.trim_matches('"').to_string())
+        .collect()
 }
 
 fn parse_array_or_words(s: &str) -> Vec<String> {
@@ -628,16 +688,21 @@ CMD ["/app/server"]
         let instructions = DockerfileParser::parse_str(df).unwrap();
         assert_eq!(instructions.len(), 9);
 
-        assert_eq!(instructions[0], Instruction::From {
-            image: "golang:1.22".to_string(),
-            as_stage: Some("builder".to_string()),
-        });
+        assert_eq!(
+            instructions[0],
+            Instruction::From {
+                image: "golang:1.22".to_string(),
+                as_stage: Some("builder".to_string()),
+            }
+        );
 
-        assert_eq!(instructions[6], Instruction::Copy {
-            from_stage: Some("builder".to_string()),
-            src: vec!["/app/server".to_string()],
-            dest: ".".to_string(),
-        });
+        assert_eq!(
+            instructions[6],
+            Instruction::Copy {
+                from_stage: Some("builder".to_string()),
+                src: vec!["/app/server".to_string()],
+                dest: ".".to_string(),
+            }
+        );
     }
 }
-

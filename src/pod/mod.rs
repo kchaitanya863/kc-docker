@@ -1,6 +1,6 @@
 use crate::network::PortMapping;
-use crate::storage::{boxr_home, ContainerStore};
-use anyhow::{anyhow, Result};
+use crate::storage::{ContainerStore, boxr_home};
+use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -54,13 +54,16 @@ impl PodStore {
 
     pub fn find(&self, query: &str) -> Option<PodRecord> {
         let data = self.load();
-        data.pods.into_iter().find(|p| p.id.starts_with(query) || p.name == query)
+        data.pods
+            .into_iter()
+            .find(|p| p.id.starts_with(query) || p.name == query)
     }
 
     pub fn create(&self, name: Option<&str>, ports: Vec<PortMapping>) -> Result<PodRecord> {
         let mut data = self.load();
         let random_id = hex::encode(crate::storage::container_store::rand_id());
-        let pod_name = name.map(|n| n.trim().to_string())
+        let pod_name = name
+            .map(|n| n.trim().to_string())
             .unwrap_or_else(|| format!("pod-{}", &random_id[..6]));
 
         if data.pods.iter().any(|p| p.name == pod_name) {
@@ -86,7 +89,11 @@ impl PodStore {
         let mut data = self.load();
         let c_store = ContainerStore::new();
 
-        if let Some(pos) = data.pods.iter().position(|p| p.id.starts_with(query) || p.name == query) {
+        if let Some(pos) = data
+            .pods
+            .iter()
+            .position(|p| p.id.starts_with(query) || p.name == query)
+        {
             let removed = data.pods.remove(pos);
             self.save(&data)?;
 
@@ -102,7 +109,11 @@ impl PodStore {
 
     pub fn add_container_to_pod(&self, pod_query: &str, container_id: &str) -> Result<()> {
         let mut data = self.load();
-        if let Some(p) = data.pods.iter_mut().find(|p| p.id.starts_with(pod_query) || p.name == pod_query) {
+        if let Some(p) = data
+            .pods
+            .iter_mut()
+            .find(|p| p.id.starts_with(pod_query) || p.name == pod_query)
+        {
             if !p.containers.contains(&container_id.to_string()) {
                 p.containers.push(container_id.to_string());
                 p.status = "Running".to_string();

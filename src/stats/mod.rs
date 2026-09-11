@@ -23,7 +23,11 @@ impl StatsCollector {
         let mut cpu_percentage = 0.0;
         let mut mem_usage_bytes = 0;
         let mut mem_limit_bytes = 1024 * 1024 * 1024; // 1 GB default limit
-        let mut pids = if matches!(c.status, ContainerStatus::Running) { 1 } else { 0 };
+        let mut pids = if matches!(c.status, ContainerStatus::Running) {
+            1
+        } else {
+            0
+        };
 
         // Attempt reading cgroup v2 stats if available
         let cgroup_dir = PathBuf::from("/sys/fs/cgroup/boxr").join(&c.id);
@@ -75,7 +79,10 @@ impl StatsCollector {
             if !targets.is_empty() {
                 containers.retain(|c| targets.iter().any(|t| c.id.starts_with(t) || &c.name == t));
             } else {
-                containers.retain(|c| matches!(c.status, ContainerStatus::Running) || matches!(c.status, ContainerStatus::Created));
+                containers.retain(|c| {
+                    matches!(c.status, ContainerStatus::Running)
+                        || matches!(c.status, ContainerStatus::Created)
+                });
             }
 
             if !no_stream {
@@ -83,18 +90,21 @@ impl StatsCollector {
                 print!("\x1B[2J\x1B[1;1H");
             }
 
-            println!("{:<14} {:<20} {:<10} {:<24} {:<10} {:<8}",
+            println!(
+                "{:<14} {:<20} {:<10} {:<24} {:<10} {:<8}",
                 "CONTAINER ID", "NAME", "CPU %", "MEM USAGE / LIMIT", "MEM %", "PIDS"
             );
 
             for c in &containers {
                 let s = Self::collect_for_container(c);
-                let mem_usage_str = format!("{:.2}MiB / {:.2}MiB",
+                let mem_usage_str = format!(
+                    "{:.2}MiB / {:.2}MiB",
                     s.mem_usage_bytes as f64 / (1024.0 * 1024.0),
                     s.mem_limit_bytes as f64 / (1024.0 * 1024.0)
                 );
 
-                println!("{:<14} {:<20} {:<10} {:<24} {:<10} {:<8}",
+                println!(
+                    "{:<14} {:<20} {:<10} {:<24} {:<10} {:<8}",
                     s.id,
                     s.name,
                     format!("{:.2}%", s.cpu_percentage),

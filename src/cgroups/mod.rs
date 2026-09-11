@@ -110,7 +110,11 @@ impl CgroupV2Manager {
 
         // Apply PID limits
         if let Some(pids) = limits.pids_max {
-            let val = if pids > 0 { pids.to_string() } else { "max".to_string() };
+            let val = if pids > 0 {
+                pids.to_string()
+            } else {
+                "max".to_string()
+            };
             let _ = fs::write(self.cgroup_path.join("pids.max"), val);
         }
 
@@ -169,8 +173,14 @@ mod tests {
 
     #[test]
     fn test_parse_memory_units() {
-        assert_eq!(ResourceLimits::parse_memory("512m").unwrap(), 512 * 1024 * 1024);
-        assert_eq!(ResourceLimits::parse_memory("2g").unwrap(), 2 * 1024 * 1024 * 1024);
+        assert_eq!(
+            ResourceLimits::parse_memory("512m").unwrap(),
+            512 * 1024 * 1024
+        );
+        assert_eq!(
+            ResourceLimits::parse_memory("2g").unwrap(),
+            2 * 1024 * 1024 * 1024
+        );
         assert_eq!(ResourceLimits::parse_memory("1024k").unwrap(), 1024 * 1024);
         assert_eq!(ResourceLimits::parse_memory("1000").unwrap(), 1000);
     }

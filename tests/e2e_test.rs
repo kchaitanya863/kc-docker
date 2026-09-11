@@ -6,12 +6,20 @@ use tempfile::tempdir;
 fn boxr_bin() -> PathBuf {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.push("target");
-    path.push(if cfg!(debug_assertions) { "debug" } else { "release" });
+    path.push(if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    });
     path.push("boxr");
     if !path.exists() {
         let alt = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("target")
-            .join(if cfg!(debug_assertions) { "release" } else { "debug" })
+            .join(if cfg!(debug_assertions) {
+                "release"
+            } else {
+                "debug"
+            })
             .join("boxr");
         if alt.exists() {
             return alt;
@@ -54,7 +62,10 @@ fn test_e2e_volume_lifecycle() {
     let run_id = hex::encode(boxr::storage::container_store::rand_id());
     let vol_name = format!("e2e-vol-{}", &run_id[..6]);
 
-    let output = boxr_cmd(&bin).args(["volume", "create", &vol_name]).output().unwrap();
+    let output = boxr_cmd(&bin)
+        .args(["volume", "create", &vol_name])
+        .output()
+        .unwrap();
     assert!(output.status.success());
 
     let output = boxr_cmd(&bin).args(["volume", "ls"]).output().unwrap();
@@ -62,12 +73,18 @@ fn test_e2e_volume_lifecycle() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains(&vol_name));
 
-    let output = boxr_cmd(&bin).args(["volume", "inspect", &vol_name]).output().unwrap();
+    let output = boxr_cmd(&bin)
+        .args(["volume", "inspect", &vol_name])
+        .output()
+        .unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains(&vol_name));
 
-    let output = boxr_cmd(&bin).args(["volume", "rm", &vol_name]).output().unwrap();
+    let output = boxr_cmd(&bin)
+        .args(["volume", "rm", &vol_name])
+        .output()
+        .unwrap();
     assert!(output.status.success());
 }
 
@@ -81,7 +98,10 @@ fn test_e2e_network_lifecycle() {
     let run_id = hex::encode(boxr::storage::container_store::rand_id());
     let net_name = format!("e2e-net-{}", &run_id[..6]);
 
-    let output = boxr_cmd(&bin).args(["network", "create", &net_name]).output().unwrap();
+    let output = boxr_cmd(&bin)
+        .args(["network", "create", &net_name])
+        .output()
+        .unwrap();
     assert!(output.status.success());
 
     let output = boxr_cmd(&bin).args(["network", "ls"]).output().unwrap();
@@ -89,12 +109,18 @@ fn test_e2e_network_lifecycle() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains(&net_name));
 
-    let output = boxr_cmd(&bin).args(["network", "inspect", &net_name]).output().unwrap();
+    let output = boxr_cmd(&bin)
+        .args(["network", "inspect", &net_name])
+        .output()
+        .unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains(&net_name));
 
-    let output = boxr_cmd(&bin).args(["network", "rm", &net_name]).output().unwrap();
+    let output = boxr_cmd(&bin)
+        .args(["network", "rm", &net_name])
+        .output()
+        .unwrap();
     assert!(output.status.success());
 }
 
@@ -176,7 +202,16 @@ fn test_e2e_container_lifecycle_pause_unpause_rename_commit_wait() {
     let snap_img = format!("e2e-snap-{}:v1", &run_id[..6]);
 
     let output = boxr_cmd(&bin)
-        .args(["run", "-d", "--name", &name, "alpine", "/bin/sh", "-c", "echo 'committed file' > /committed.txt; sleep 1"])
+        .args([
+            "run",
+            "-d",
+            "--name",
+            &name,
+            "alpine",
+            "/bin/sh",
+            "-c",
+            "echo 'committed file' > /committed.txt; sleep 1",
+        ])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -191,10 +226,16 @@ fn test_e2e_container_lifecycle_pause_unpause_rename_commit_wait() {
     let output = boxr_cmd(&bin).args(["unpause", &name]).output().unwrap();
     assert!(output.status.success());
 
-    let output = boxr_cmd(&bin).args(["rename", &name, &renamed]).output().unwrap();
+    let output = boxr_cmd(&bin)
+        .args(["rename", &name, &renamed])
+        .output()
+        .unwrap();
     assert!(output.status.success());
 
-    let output = boxr_cmd(&bin).args(["commit", &renamed, &snap_img]).output().unwrap();
+    let output = boxr_cmd(&bin)
+        .args(["commit", &renamed, &snap_img])
+        .output()
+        .unwrap();
     assert!(output.status.success());
 
     let output = boxr_cmd(&bin)
@@ -223,7 +264,15 @@ fn test_e2e_filesystem_diff_and_copy() {
     let cont_name = format!("e2e-diff-{}", &run_id[..6]);
 
     let output = boxr_cmd(&bin)
-        .args(["run", "--name", &cont_name, "alpine", "/bin/sh", "-c", "touch /e2e-added.txt; echo 'changed' >> /etc/hosts"])
+        .args([
+            "run",
+            "--name",
+            &cont_name,
+            "alpine",
+            "/bin/sh",
+            "-c",
+            "touch /e2e-added.txt; echo 'changed' >> /etc/hosts",
+        ])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -236,7 +285,11 @@ fn test_e2e_filesystem_diff_and_copy() {
     let temp = tempdir().unwrap();
     let local_dest = temp.path().join("copied-from-cont.txt");
     let output = boxr_cmd(&bin)
-        .args(["cp", &format!("{}:/e2e-added.txt", &cont_name), local_dest.to_str().unwrap()])
+        .args([
+            "cp",
+            &format!("{}:/e2e-added.txt", &cont_name),
+            local_dest.to_str().unwrap(),
+        ])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -245,18 +298,29 @@ fn test_e2e_filesystem_diff_and_copy() {
     let host_file = temp.path().join("host-src.txt");
     fs::write(&host_file, b"content from host").unwrap();
     let output = boxr_cmd(&bin)
-        .args(["cp", host_file.to_str().unwrap(), &format!("{}:/received-on-cont.txt", &cont_name)])
+        .args([
+            "cp",
+            host_file.to_str().unwrap(),
+            &format!("{}:/received-on-cont.txt", &cont_name),
+        ])
         .output()
         .unwrap();
     assert!(output.status.success());
 
     let dest_in_cont = temp.path().join("verify-back.txt");
     let output = boxr_cmd(&bin)
-        .args(["cp", &format!("{}:/received-on-cont.txt", &cont_name), dest_in_cont.to_str().unwrap()])
+        .args([
+            "cp",
+            &format!("{}:/received-on-cont.txt", &cont_name),
+            dest_in_cont.to_str().unwrap(),
+        ])
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert_eq!(fs::read_to_string(dest_in_cont).unwrap(), "content from host");
+    assert_eq!(
+        fs::read_to_string(dest_in_cont).unwrap(),
+        "content from host"
+    );
 
     let _ = boxr_cmd(&bin).args(["rm", &cont_name]).output();
 }
@@ -270,17 +334,30 @@ fn test_e2e_defensive_security_and_kill() {
 
     // 1. Path traversal in volume mount is rejected
     let output = boxr_cmd(&bin)
-        .args(["run", "--rm", "-v", "../../../etc:/data", "alpine", "/bin/echo", "test"])
+        .args([
+            "run",
+            "--rm",
+            "-v",
+            "../../../etc:/data",
+            "alpine",
+            "/bin/echo",
+            "test",
+        ])
         .output()
         .unwrap();
-    assert!(!output.status.success(), "Volume mount with path traversal must fail");
+    assert!(
+        !output.status.success(),
+        "Volume mount with path traversal must fail"
+    );
 
     // 2. Kill command delivers signal and terminates process
     let run_id = hex::encode(boxr::storage::container_store::rand_id());
     let cont_name = format!("e2e-kill-{}", &run_id[..6]);
 
     let output = boxr_cmd(&bin)
-        .args(["run", "-d", "--name", &cont_name, "alpine", "/bin/sh", "-c", "sleep 30"])
+        .args([
+            "run", "-d", "--name", &cont_name, "alpine", "/bin/sh", "-c", "sleep 30",
+        ])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -312,7 +389,15 @@ fn test_e2e_concurrent_load_test() {
 
     for w in &workers {
         let output = boxr_cmd(&bin)
-            .args(["run", "-d", "--name", w, "alpine", "/bin/echo", "result=465"])
+            .args([
+                "run",
+                "-d",
+                "--name",
+                w,
+                "alpine",
+                "/bin/echo",
+                "result=465",
+            ])
             .output()
             .unwrap();
         assert!(output.status.success());
@@ -342,7 +427,16 @@ fn test_e2e_real_service_workload_redis() {
     let cont_name = format!("e2e-redis-{}", &run_id[..6]);
 
     let output = boxr_cmd(&bin)
-        .args(["run", "-d", "--name", &cont_name, "redis:alpine", "redis-server", "--protected-mode", "no"])
+        .args([
+            "run",
+            "-d",
+            "--name",
+            &cont_name,
+            "redis:alpine",
+            "redis-server",
+            "--protected-mode",
+            "no",
+        ])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -358,7 +452,14 @@ fn test_e2e_real_service_workload_redis() {
     assert!(stdout.contains("PONG"));
 
     let output = boxr_cmd(&bin)
-        .args(["exec", &cont_name, "redis-cli", "set", "e2e_key", "BoxrWorks"])
+        .args([
+            "exec",
+            &cont_name,
+            "redis-cli",
+            "set",
+            "e2e_key",
+            "BoxrWorks",
+        ])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -404,7 +505,13 @@ fn test_e2e_fullstack_compose_orchestration() {
     assert!(output.status.success());
 
     let output = boxr_cmd(&bin)
-        .args(["compose", "-f", compose_file.to_str().unwrap(), "down", "-v"])
+        .args([
+            "compose",
+            "-f",
+            compose_file.to_str().unwrap(),
+            "down",
+            "-v",
+        ])
         .output()
         .unwrap();
     assert!(output.status.success());
