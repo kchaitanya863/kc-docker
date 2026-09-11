@@ -1,6 +1,6 @@
-#![allow(dead_code)]
+#![allow(dead_code, unused_imports)]
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 

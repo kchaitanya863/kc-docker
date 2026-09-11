@@ -28,6 +28,29 @@ fn boxr_bin() -> PathBuf {
     path
 }
 
+fn has_container_runtime() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        // On macOS, container execution requires Docker Desktop or Colima running
+        let docker_bin = boxr::runtime::darwin::find_real_docker_bin();
+        std::process::Command::new(&docker_bin)
+            .args(["info"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        true
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        false
+    }
+}
+
 fn boxr_cmd(bin: &PathBuf) -> Command {
     let mut cmd = Command::new(bin);
     cmd.env_remove("DOCKER_HOST");
@@ -153,7 +176,7 @@ fn test_e2e_system_df_and_completions() {
 #[test]
 fn test_e2e_dockerfile_multi_stage_build() {
     let bin = boxr_bin();
-    if !bin.exists() {
+    if !bin.exists() || !has_container_runtime() {
         return;
     }
 
@@ -192,7 +215,7 @@ CMD ["/bin/cat", "/app/app.bin"]
 #[test]
 fn test_e2e_container_lifecycle_pause_unpause_rename_commit_wait() {
     let bin = boxr_bin();
-    if !bin.exists() {
+    if !bin.exists() || !has_container_runtime() {
         return;
     }
 
@@ -256,7 +279,7 @@ fn test_e2e_container_lifecycle_pause_unpause_rename_commit_wait() {
 #[test]
 fn test_e2e_filesystem_diff_and_copy() {
     let bin = boxr_bin();
-    if !bin.exists() {
+    if !bin.exists() || !has_container_runtime() {
         return;
     }
 
@@ -328,7 +351,7 @@ fn test_e2e_filesystem_diff_and_copy() {
 #[test]
 fn test_e2e_defensive_security_and_kill() {
     let bin = boxr_bin();
-    if !bin.exists() {
+    if !bin.exists() || !has_container_runtime() {
         return;
     }
 
@@ -377,7 +400,7 @@ fn test_e2e_defensive_security_and_kill() {
 #[test]
 fn test_e2e_concurrent_load_test() {
     let bin = boxr_bin();
-    if !bin.exists() {
+    if !bin.exists() || !has_container_runtime() {
         return;
     }
 
@@ -419,7 +442,7 @@ fn test_e2e_concurrent_load_test() {
 #[test]
 fn test_e2e_real_service_workload_redis() {
     let bin = boxr_bin();
-    if !bin.exists() {
+    if !bin.exists() || !has_container_runtime() {
         return;
     }
 
@@ -479,7 +502,7 @@ fn test_e2e_real_service_workload_redis() {
 #[test]
 fn test_e2e_fullstack_compose_orchestration() {
     let bin = boxr_bin();
-    if !bin.exists() {
+    if !bin.exists() || !has_container_runtime() {
         return;
     }
 
