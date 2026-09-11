@@ -374,8 +374,8 @@ pub async fn pull_image(image_str: &str) -> Result<ImageRecord> {
 pub async fn run_container(args: RunArgs) -> Result<i32> {
     let image_store = ImageStore::new();
     let image_record = match image_store.find(&args.image) {
-        Some(record) => record,
-        None => {
+        Some(record) if Path::new(&record.rootfs_path).exists() => record,
+        _ => {
             println!("Unable to find image '{}' locally", args.image);
             pull_image(&args.image).await?
         }
@@ -550,6 +550,13 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
 
 pub fn stop_container(container: &str) -> Result<()> {
     let store = ContainerStore::new();
+    if let Some(c) = store.find(container) {
+        #[cfg(target_os = "macos")]
+        {
+            let runner_name = format!("boxr-runner-{}", c.id);
+            let _ = std::process::Command::new("docker").args(["kill", &runner_name]).output();
+        }
+    }
     store.update_status(container, ContainerStatus::Exited(0))?;
     println!("{}", container);
     Ok(())
@@ -1076,6 +1083,11 @@ pub fn list_containers(args: PsArgs) -> Result<()> {
 pub fn remove_container(container: &str) -> Result<()> {
     let store = ContainerStore::new();
     let removed = store.remove(container)?;
+    #[cfg(target_os = "macos")]
+    {
+        let runner_name = format!("boxr-runner-{}", removed.id);
+        let _ = std::process::Command::new("docker").args(["rm", "-f", &runner_name]).output();
+    }
     println!("{}", removed.id);
     Ok(())
 }
@@ -1091,8 +1103,8 @@ pub fn remove_image(image: &str) -> Result<()> {
 pub async fn create_only_container(args: RunArgs) -> Result<String> {
     let image_store = ImageStore::new();
     let image_record = match image_store.find(&args.image) {
-        Some(record) => record,
-        None => {
+        Some(record) if Path::new(&record.rootfs_path).exists() => record,
+        _ => {
             println!("Unable to find image '{}' locally", args.image);
             pull_image(&args.image).await?
         }

@@ -117,10 +117,13 @@ impl ImageStore {
             let removed = data.images.remove(index);
             self.save(&data)?;
 
-            // Clean up rootfs directory
-            let rootfs = PathBuf::from(&removed.rootfs_path);
-            if rootfs.exists() {
-                let _ = fs::remove_dir_all(rootfs);
+            // Only clean up rootfs directory if NO OTHER image shares this rootfs_path
+            let is_shared = data.images.iter().any(|img| img.rootfs_path == removed.rootfs_path || img.manifest_digest == removed.manifest_digest);
+            if !is_shared {
+                let rootfs = PathBuf::from(&removed.rootfs_path);
+                if rootfs.exists() {
+                    let _ = fs::remove_dir_all(rootfs);
+                }
             }
 
             Ok(removed)

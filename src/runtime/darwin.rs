@@ -38,7 +38,8 @@ pub fn execute_bundle(
 
     // Build the shell setup script inside the container runner
     let mut shell_script = String::new();
-    shell_script.push_str("mkdir -p /boxr-rootfs/proc /boxr-rootfs/sys /boxr-rootfs/dev 2>/dev/null || true; ");
+    shell_script.push_str("mkdir -p /boxr-rootfs/proc /boxr-rootfs/sys /boxr-rootfs/dev /boxr-rootfs/tmp /boxr-rootfs/data 2>/dev/null || true; ");
+    shell_script.push_str("chmod 1777 /boxr-rootfs/tmp /boxr-rootfs/data 2>/dev/null || true; ");
     shell_script.push_str("mount -t proc proc /boxr-rootfs/proc 2>/dev/null || true; ");
     shell_script.push_str("mount -t sysfs sysfs /boxr-rootfs/sys 2>/dev/null || true; ");
     shell_script.push_str("mount --bind /dev /boxr-rootfs/dev 2>/dev/null || true; ");
@@ -59,15 +60,27 @@ pub fn execute_bundle(
     ));
 
     // Construct command invocation
-    let mut exec_line = format!("chroot /boxr-rootfs {}", cmd_binary);
-    for arg in cmd_args {
-        exec_line.push_str(&format!(" \"{}\"", arg.replace('"', "\\\"")));
-    }
+    let exec_line = if rootfs_path.join("bin/sh").exists() {
+        let mut inner = format!("exec {}", cmd_binary);
+        for arg in cmd_args {
+            inner.push_str(&format!(" \\\"{}\\\"", arg.replace('\\', "\\\\").replace('"', "\\\"")));
+        }
+        format!("chroot /boxr-rootfs /bin/sh -c \"{}\"", inner)
+    } else {
+        let mut inner = format!("chroot /boxr-rootfs {}", cmd_binary);
+        for arg in cmd_args {
+            inner.push_str(&format!(" \"{}\"", arg.replace('"', "\\\"")));
+        }
+        inner
+    };
     shell_script.push_str(&exec_line);
 
     // Build docker runner command
     let mut cmd = Command::new("docker");
     cmd.arg("run");
+
+    let runner_name = format!("boxr-runner-{}", bundle_path.file_name().and_then(|n| n.to_str()).unwrap_or("run"));
+    cmd.arg("--name").arg(&runner_name);
 
     if detach {
         cmd.arg("-d");
@@ -147,17 +160,59 @@ pub fn execute_bundle(
 
 /// Execute a command in an existing container bundle
 pub fn exec_in_bundle(bundle_path: &Path, command: &[String], env: &[String]) -> Result<i32> {
-    let rootfs_path = bundle_path.join("rootfs");
-    let abs_rootfs = rootfs_path.canonicalize()?;
-    let rootfs_str = abs_rootfs.to_str().ok_or_else(|| anyhow!("Invalid path"))?;
-
+    let runner_name = format!("boxr-runner-{}", bundle_path.file_name().and_then(|n| n.to_str()).unwrap_or("run"));
     let binary = &command[0];
     let args = &command[1..];
 
-    let mut shell_script = format!("chroot /boxr-rootfs {}", binary);
-    for a in args {
-        shell_script.push_str(&format!(" \"{}\"", a.replace('"', "\\\"")));
+    // Try executing directly in running container runner first
+    let rootfs_path = bundle_path.join("rootfs");
+    let has_sh = rootfs_path.join("bin/sh").exists();
+
+    let mut check_cmd = Command::new("docker");
+    check_cmd.args(["ps", "-q", "-f", &format!("name={}", runner_name)]);
+    if let Ok(output) = check_cmd.output() {
+        if !output.stdout.is_empty() {
+            let mut exec_cmd = Command::new("docker");
+            exec_cmd.args(["exec", "-i"]);
+            for e in env {
+                exec_cmd.arg("-e").arg(e);
+            }
+            exec_cmd.arg(&runner_name);
+            if has_sh {
+                let mut inner = format!("exec {}", binary);
+                for a in args {
+                    inner.push_str(&format!(" \\\"{}\\\"", a.replace('\\', "\\\\").replace('"', "\\\"")));
+                }
+                exec_cmd.args(["chroot", "/boxr-rootfs", "/bin/sh", "-c", &inner]);
+            } else {
+                exec_cmd.arg("chroot").arg("/boxr-rootfs").arg(binary);
+                for a in args {
+                    exec_cmd.arg(a);
+                }
+            }
+            if let Ok(status) = exec_cmd.status() {
+                return Ok(status.code().unwrap_or(0));
+            }
+        }
     }
+
+    // Fallback: spawn standalone runner
+    let abs_rootfs = rootfs_path.canonicalize()?;
+    let rootfs_str = abs_rootfs.to_str().ok_or_else(|| anyhow!("Invalid path"))?;
+
+    let shell_script = if has_sh {
+        let mut inner = format!("exec {}", binary);
+        for a in args {
+            inner.push_str(&format!(" \\\"{}\\\"", a.replace('\\', "\\\\").replace('"', "\\\"")));
+        }
+        format!("mkdir -p /boxr-rootfs/proc /boxr-rootfs/dev; mount -t proc proc /boxr-rootfs/proc 2>/dev/null || true; mount --bind /dev /boxr-rootfs/dev 2>/dev/null || true; chroot /boxr-rootfs /bin/sh -c \"{}\"", inner)
+    } else {
+        let mut inner = format!("chroot /boxr-rootfs {}", binary);
+        for a in args {
+            inner.push_str(&format!(" \"{}\"", a.replace('"', "\\\"")));
+        }
+        inner
+    };
 
     let mut cmd = Command::new("docker");
     cmd.arg("run").arg("--rm").arg("-i").arg("--privileged")
