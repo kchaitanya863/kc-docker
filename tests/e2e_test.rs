@@ -4,6 +4,9 @@ use std::process::Command;
 use tempfile::tempdir;
 
 fn boxr_bin() -> PathBuf {
+    if let Ok(bin) = std::env::var("BOXR_BIN") {
+        return PathBuf::from(bin);
+    }
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.push("target");
     path.push(if cfg!(debug_assertions) {
