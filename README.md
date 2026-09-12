@@ -1,5 +1,7 @@
 # boxr 📦
 
+[![CI & Automated Release](https://github.com/kchaitanya863/kc-docker/actions/workflows/ci.yml/badge.svg)](https://github.com/kchaitanya863/kc-docker/actions/workflows/ci.yml)
+
 A fast, lightweight, production-grade **Open Container Initiative (OCI)** compliant container engine, image builder, compose orchestrator, and runtime written in **Rust**.
 
 `boxr` is designed to be **rootless by default** and built from scratch with custom implementations:
