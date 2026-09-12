@@ -88,20 +88,6 @@ boxr/
 
 ### Installation
 
-#### Precompiled Release (v0.1.2)
-
-./
-./completions/
-./completions/_boxr
-./completions/boxr.bash
-./completions/boxr.fish
-./install.sh
-./README.md
-./bin/
-./bin/boxr
-
-The resulting binary will be at .
-
 #### Automated Installer (Recommended)
 
 ```bash
@@ -111,6 +97,15 @@ The resulting binary will be at .
 # Or install from GitHub:
 curl -fsSL https://raw.githubusercontent.com/kchaitanya863/kc-docker/main/install.sh | sh
 ```
+
+#### Precompiled Release (v0.1.2)
+
+```bash
+# Download and extract the precompiled release tarball
+tar -xzvf boxr-linux-x86_64.tar.gz
+```
+
+The resulting binary will be at `bin/boxr`.
 
 #### Manual Build
 
@@ -128,168 +123,168 @@ The resulting binary will be at `target/release/boxr`.
 
 ```bash
 # Run hello-world
-./target/release/boxr run hello-world
+./bin/boxr run hello-world
 
 # Run with resource constraints and rootless mode
-./target/release/boxr run --memory 512m --cpus 1.5 --pids-limit 100 --rm alpine /bin/echo "Resource limits enforced"
+./bin/boxr run --memory 512m --cpus 1.5 --pids-limit 100 --rm alpine /bin/echo "Resource limits enforced"
 
 # Run in background with port forwarding, volumes, and auto-cleanup
-./target/release/boxr run -d --name web -p 8080:80 -v my-data:/data alpine /bin/sh -c "echo 'ready' > /data/status.txt; sleep 60"
+./bin/boxr run -d --name web -p 8080:80 -v my-data:/data alpine /bin/sh -c "echo 'ready' > /data/status.txt; sleep 60"
 
 # View logs (with live following, timestamps, and line tailing)
-./target/release/boxr logs -f -t -n 50 web
+./bin/boxr logs -f -t -n 50 web
 
 # Send Unix signals to container process (default: SIGKILL)
-./target/release/boxr kill -s SIGHUP web
-./target/release/boxr kill web
+./bin/boxr kill -s SIGHUP web
+./bin/boxr kill web
 
 # Execute command inside running container
-./target/release/boxr exec web /bin/cat /data/status.txt
+./bin/boxr exec web /bin/cat /data/status.txt
 
 # Inspect container metadata
-./target/release/boxr inspect web
+./bin/boxr inspect web
 
 # Inspect container filesystem diff (Added, Changed, Deleted files)
-./target/release/boxr diff web
+./bin/boxr diff web
 
 # View running container processes
-./target/release/boxr top web
+./bin/boxr top web
 
 # Pause and unpause container
-./target/release/boxr pause web
-./target/release/boxr unpause web
+./bin/boxr pause web
+./bin/boxr unpause web
 
 # Rename container
-./target/release/boxr rename web production-web
+./bin/boxr rename web production-web
 
 # Wait for container to exit and print exit code
-./target/release/boxr wait production-web
+./bin/boxr wait production-web
 
 # Copy files between host and container
-./target/release/boxr cp web:/app/config.json ./local-config.json
-./target/release/boxr cp ./updated-config.json web:/app/config.json
+./bin/boxr cp web:/app/config.json ./local-config.json
+./bin/boxr cp ./updated-config.json web:/app/config.json
 
 # Dynamically update container resource limits without restarting
-./target/release/boxr update --memory 1g --cpus 2.0 --pids-limit 200 web
+./bin/boxr update --memory 1g --cpus 2.0 --pids-limit 200 web
 
 # Attach local terminal streams to running container
-./target/release/boxr attach web
+./bin/boxr attach web
 
 # Stop, start, and remove
-./target/release/boxr stop production-web
-./target/release/boxr start production-web
-./target/release/boxr rm production-web
+./bin/boxr stop production-web
+./bin/boxr start production-web
+./bin/boxr rm production-web
 ```
 
 ### Images, Commit & Registry Auth
 
 ```bash
 # Pull image
-./target/release/boxr pull alpine:latest
+./bin/boxr pull alpine:latest
 
 # Build image from Dockerfile
-./target/release/boxr build -t my-app:v1 .
+./bin/boxr build -t my-app:v1 .
 
 # Commit container changes into a new image
-./target/release/boxr commit -m "added custom configs" my-container new-app:v1
+./bin/boxr commit -m "added custom configs" my-container new-app:v1
 
 # Save image to tar archive
-./target/release/boxr save -o my-app.tar my-app:v1
+./bin/boxr save -o my-app.tar my-app:v1
 
 # Load image from tar archive
-./target/release/boxr load -i my-app.tar
+./bin/boxr load -i my-app.tar
 
 # Log in to registry
-./target/release/boxr login -u myuser -p mysecret
+./bin/boxr login -u myuser -p mysecret
 
 # Push image
-./target/release/boxr push my-app:v1
+./bin/boxr push my-app:v1
 
 # Log out
-./target/release/boxr logout
+./bin/boxr logout
 ```
 
 ### Volumes
 
 ```bash
 # Create named volume
-./target/release/boxr volume create app-db
+./bin/boxr volume create app-db
 
 # List volumes
-./target/release/boxr volume ls
+./bin/boxr volume ls
 
 # Inspect volume
-./target/release/boxr volume inspect app-db
+./bin/boxr volume inspect app-db
 
 # Remove volume
-./target/release/boxr volume rm app-db
+./bin/boxr volume rm app-db
 ```
 
 ### Networks
 
 ```bash
 # Create custom bridge network
-./target/release/boxr network create my-net --subnet 172.30.0.0/16
+./bin/boxr network create my-net --subnet 172.30.0.0/16
 
 # List networks
-./target/release/boxr network ls
+./bin/boxr network ls
 
 # Inspect network and attached endpoints
-./target/release/boxr network inspect my-net
+./bin/boxr network inspect my-net
 
 # Connect container to network
-./target/release/boxr network connect my-net my-container
+./bin/boxr network connect my-net my-container
 
 # Remove network
-./target/release/boxr network rm my-net
+./bin/boxr network rm my-net
 ```
 
 ### Compose
 
 ```bash
 # Start multi-container application
-./target/release/boxr compose -f docker-compose.yml up -d
+./bin/boxr compose -f docker-compose.yml up -d
 
 # Check service status
-./target/release/boxr compose ps
+./bin/boxr compose ps
 
 # Stream logs
-./target/release/boxr compose logs
+./bin/boxr compose logs
 
 # Stop and remove containers and networks
-./target/release/boxr compose down
+./bin/boxr compose down
 ```
 
 ### Podman Pods & Kubernetes Workloads
 
 ```bash
 # Create a multi-container pod sharing network/IPC
-./target/release/boxr pod create --name web-pod -p 8080:80
+./bin/boxr pod create --name web-pod -p 8080:80
 
 # List pods
-./target/release/boxr pod ps
+./bin/boxr pod ps
 
 # Inspect pod configuration
-./target/release/boxr pod inspect web-pod
+./bin/boxr pod inspect web-pod
 
 # Play a Kubernetes Pod YAML directly
-./target/release/boxr play kube pod.yaml
+./bin/boxr play kube pod.yaml
 
 # Generate a Kubernetes Pod YAML from an existing container or pod
-./target/release/boxr generate kube my-container
+./bin/boxr generate kube my-container
 
 # Run a command inside a new user namespace
-./target/release/boxr unshare whoami
+./bin/boxr unshare whoami
 
 # Remove pod and member containers
-./target/release/boxr pod rm web-pod
+./bin/boxr pod rm web-pod
 ```
 
 ### Daemon REST API
 
 ```bash
 # Start daemon listening on Unix domain socket
-./target/release/boxr daemon --socket ~/.boxr/boxr.sock
+./bin/boxr daemon --socket ~/.boxr/boxr.sock
 
 # Query Docker Engine API
 curl --unix-socket ~/.boxr/boxr.sock http://localhost/_ping
@@ -301,40 +296,40 @@ curl --unix-socket ~/.boxr/boxr.sock http://localhost/containers/json
 
 ```bash
 # Display live streaming container resource stats (CPU, Memory, PIDs)
-./target/release/boxr stats
+./bin/boxr stats
 
 # Snapshot stats without streaming
-./target/release/boxr stats --no-stream
+./bin/boxr stats --no-stream
 
 # Stream real-time container lifecycle events (create, start, die, stop)
-./target/release/boxr events
+./bin/boxr events
 ```
 
 ### System & Disk Usage
 
 ```bash
 # Show disk space used by containers, images, volumes, and build cache
-./target/release/boxr system df
+./bin/boxr system df
 
 # Reclaim space by removing stopped containers, unused networks, and build cache
-./target/release/boxr system prune
+./bin/boxr system prune
 
 # Comprehensive prune (including all unused images and volumes)
-./target/release/boxr system prune --all --volumes
+./bin/boxr system prune --all --volumes
 ```
 
 ### Shell Completions & Docker Drop-in Alias
 
 ```bash
 # Generate shell autocompletion script (bash, zsh, fish)
-./target/release/boxr completion zsh > ~/.zfunc/_boxr
-./target/release/boxr completion bash > /etc/bash_completion.d/boxr
+./bin/boxr completion zsh > ~/.zfunc/_boxr
+./bin/boxr completion bash > /etc/bash_completion.d/boxr
 
 # Generate shell alias command
-./target/release/boxr alias
+./bin/boxr alias
 
 # Install Docker drop-in wrapper script in ~/.boxr/bin/docker
-./target/release/boxr alias --install
+./bin/boxr alias --install
 ```
 
 ---
