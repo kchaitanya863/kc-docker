@@ -1,0 +1,45 @@
+#compdef boxr
+
+_boxr() {
+    local -a commands
+    commands=(
+        'run:Run a command in a new container'
+        'pull:Pull an image from an OCI registry'
+        'stop:Stop a running container'
+        'start:Start a stopped container'
+        'logs:Fetch container logs'
+        'exec:Execute command in a container'
+        'inspect:Return low-level information on Boxr objects'
+        'build:Build an image from a Dockerfile'
+        'compose:Multi-container orchestration'
+        'volume:Manage volumes'
+        'network:Manage networks'
+        'daemon:Run background REST API daemon'
+        'stats:Display live container resource statistics'
+        'events:Stream container lifecycle events'
+        'save:Save image to tar archive'
+        'load:Load image from tar archive'
+        'login:Log in to registry'
+        'logout:Log out from registry'
+        'images:List local images'
+        'ps:List containers'
+        'rm:Remove containers'
+        'rmi:Remove images'
+        'spec:Generate OCI runtime spec'
+        'completion:Generate shell autocompletions'
+        'alias:Install Docker drop-in alias'
+    )
+
+    _arguments -C \
+        '1: :->command' \
+        '*:: :->args'
+
+    case $state in
+        command)
+            _describe -t commands 'boxr commands' commands
+            ;;
+    esac
+}
+
+_boxr "$@"
+

@@ -88,6 +88,20 @@ boxr/
 
 ### Installation
 
+#### Precompiled Release (v0.1.2)
+
+./
+./completions/
+./completions/_boxr
+./completions/boxr.bash
+./completions/boxr.fish
+./install.sh
+./README.md
+./bin/
+./bin/boxr
+
+The resulting binary will be at .
+
 #### Automated Installer (Recommended)
 
 ```bash
