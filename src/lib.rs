@@ -81,7 +81,7 @@ pub async fn run_cli(cli: Cli) -> Result<i32> {
 
     match cli.command {
         Commands::Pull(args) => {
-            pull_image(&args.image).await?;
+            pull_image_with_platform(&args.image, args.platform.as_deref()).await?;
             Ok(0)
         }
         Commands::Run(args) => {
@@ -334,12 +334,29 @@ pub async fn run_cli(cli: Cli) -> Result<i32> {
 }
 
 pub async fn pull_image(image_str: &str) -> Result<ImageRecord> {
+    pull_image_with_platform(image_str, None).await
+}
+
+pub async fn pull_image_with_platform(
+    image_str: &str,
+    target_platform: Option<&str>,
+) -> Result<ImageRecord> {
     let reference = ImageReference::parse(image_str)?;
     let mut client = RegistryClient::new();
 
-    println!("Pulling from {}", reference.display_name());
+    if let Some(plat) = target_platform {
+        println!(
+            "Pulling from {} (platform: {})",
+            reference.display_name(),
+            plat
+        );
+    } else {
+        println!("Pulling from {}", reference.display_name());
+    }
 
-    let (manifest, manifest_digest) = client.fetch_manifest(&reference).await?;
+    let (manifest, manifest_digest) = client
+        .fetch_manifest_with_platform(&reference, target_platform)
+        .await?;
     let short_digest = if manifest_digest.len() > 19 {
         &manifest_digest[..19]
     } else {
@@ -410,11 +427,15 @@ pub async fn pull_image(image_str: &str) -> Result<ImageRecord> {
 
 pub async fn run_container(args: RunArgs) -> Result<i32> {
     let image_store = ImageStore::new();
-    let image_record = match image_store.find(&args.image) {
+    let image_record = match image_store.find_with_platform(&args.image, args.platform.as_deref()) {
         Some(record) if Path::new(&record.rootfs_path).exists() => record,
         _ => {
-            println!("Unable to find image '{}' locally", args.image);
-            pull_image(&args.image).await?
+            if let Some(plat) = &args.platform {
+                println!("Unable to find image '{}' ({}) locally", args.image, plat);
+            } else {
+                println!("Unable to find image '{}' locally", args.image);
+            }
+            pull_image_with_platform(&args.image, args.platform.as_deref()).await?
         }
     };
 
@@ -488,6 +509,19 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
         cmd_override,
         env_override,
     );
+
+    let mut annotations = HashMap::new();
+    annotations.insert(
+        "org.opencontainers.image.architecture".to_string(),
+        image_record.config.architecture.clone(),
+    );
+    if let Some(p) = &args.platform {
+        annotations.insert("boxr.platform".to_string(), p.clone());
+    }
+    if let Some(g) = &args.gpus {
+        annotations.insert("boxr.gpus".to_string(), g.clone());
+    }
+    spec.annotations = Some(annotations);
 
     if is_fast_ephemeral {
         spec.root.path = base_rootfs.to_string_lossy().to_string();
@@ -1333,11 +1367,15 @@ pub fn remove_image(image: &str) -> Result<()> {
 
 pub async fn create_only_container(args: RunArgs) -> Result<String> {
     let image_store = ImageStore::new();
-    let image_record = match image_store.find(&args.image) {
+    let image_record = match image_store.find_with_platform(&args.image, args.platform.as_deref()) {
         Some(record) if Path::new(&record.rootfs_path).exists() => record,
         _ => {
-            println!("Unable to find image '{}' locally", args.image);
-            pull_image(&args.image).await?
+            if let Some(plat) = &args.platform {
+                println!("Unable to find image '{}' ({}) locally", args.image, plat);
+            } else {
+                println!("Unable to find image '{}' locally", args.image);
+            }
+            pull_image_with_platform(&args.image, args.platform.as_deref()).await?
         }
     };
 
@@ -1377,11 +1415,24 @@ pub async fn create_only_container(args: RunArgs) -> Result<String> {
         None
     };
 
-    let spec = Spec::new_default(
+    let mut spec = Spec::new_default(
         image_record.config.config.as_ref(),
         cmd_override,
         env_override,
     );
+
+    let mut annotations = HashMap::new();
+    annotations.insert(
+        "org.opencontainers.image.architecture".to_string(),
+        image_record.config.architecture.clone(),
+    );
+    if let Some(p) = &args.platform {
+        annotations.insert("boxr.platform".to_string(), p.clone());
+    }
+    if let Some(g) = &args.gpus {
+        annotations.insert("boxr.gpus".to_string(), g.clone());
+    }
+    spec.annotations = Some(annotations);
 
     spec.save_to_bundle(&bundle_dir)?;
 

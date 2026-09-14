@@ -263,6 +263,8 @@ impl ComposeProject {
                 rootless: true,
                 restart: "no".to_string(),
                 health_cmd: None,
+                platform: None,
+                gpus: None,
                 image: image_name,
                 command: cmd_vec,
             };

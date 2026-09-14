@@ -9,16 +9,18 @@ use std::process::{Command, Stdio};
 
 pub fn find_real_docker_bin() -> String {
     // Check known Docker binary locations avoiding ~/.boxr/bin/docker loop
-    let known_paths = [
-        "/usr/local/bin/docker",
-        "/opt/homebrew/bin/docker",
-        "/Applications/Docker.app/Contents/Resources/bin/docker",
-        "/Users/knaragam/.docker/bin/docker",
+    let mut known_paths = vec![
+        "/usr/local/bin/docker".to_string(),
+        "/opt/homebrew/bin/docker".to_string(),
+        "/Applications/Docker.app/Contents/Resources/bin/docker".to_string(),
     ];
-    for p in known_paths {
+    if let Ok(home) = std::env::var("HOME") {
+        known_paths.push(format!("{}/.docker/bin/docker", home));
+    }
+    for p in &known_paths {
         if let Ok(meta) = std::fs::metadata(p) {
             if meta.is_file() {
-                return p.to_string();
+                return p.clone();
             }
         }
     }
@@ -158,6 +160,45 @@ pub fn execute_bundle(
 
     if let Some(hostname) = &spec.hostname {
         cmd.arg("-h").arg(hostname);
+    }
+
+    // Handle platform and GPU device sharing
+    let mut platform_arg = None;
+    let mut is_windows_container = false;
+
+    if let Some(ann) = &spec.annotations {
+        if let Some(platform) = ann.get("boxr.platform") {
+            if platform.starts_with("windows") {
+                is_windows_container = true;
+            }
+            platform_arg = Some(platform.clone());
+        } else if let Some(arch) = ann.get("org.opencontainers.image.architecture") {
+            let plat = match arch.as_str() {
+                "amd64" | "x86_64" => "linux/amd64",
+                "arm64" | "aarch64" => "linux/arm64",
+                other => other,
+            };
+            platform_arg = Some(plat.to_string());
+        }
+
+        if let Some(gpus) = ann.get("boxr.gpus") {
+            if gpus == "all" || gpus == "webgpu" {
+                // On macOS Docker Desktop, use WebGPU CDI device passthrough
+                cmd.arg("--device").arg("docker.com/gpu=webgpu");
+            } else {
+                cmd.arg("--gpus").arg(gpus);
+            }
+        }
+    }
+
+    if is_windows_container {
+        return Err(anyhow!(
+            "Windows container execution requires a native Windows host (Windows Server or Windows 10/11 with Containers feature enabled). The OCI image was successfully downloaded and stored locally."
+        ));
+    }
+
+    if let Some(ref p) = platform_arg {
+        cmd.arg("--platform").arg(p);
     }
 
     cmd.arg("alpine").arg("/bin/sh").arg("-c").arg(shell_script);

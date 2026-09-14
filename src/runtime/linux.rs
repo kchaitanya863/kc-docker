@@ -18,14 +18,33 @@ pub fn execute_bundle(
     _ports: &[PortMapping],
     _detach: bool,
 ) -> Result<i32> {
-    let rootfs = bundle_path.join(&spec.root.path);
+    let raw_rootfs = std::path::PathBuf::from(&spec.root.path);
+    let rootfs = if raw_rootfs.is_absolute() {
+        raw_rootfs
+    } else {
+        bundle_path.join(&spec.root.path)
+    };
+
     if !rootfs.exists() {
         return Err(anyhow!("Rootfs does not exist at {:?}", rootfs));
     }
 
     let abs_rootfs = rootfs.canonicalize()?;
 
-    // Unshare namespaces
+    // Check if we are non-root (unprivileged rootless mode)
+    let is_rootless = unsafe { libc::getuid() != 0 };
+
+    if is_rootless {
+        // In rootless mode, CLONE_NEWUSER must be unshared first
+        unshare(CloneFlags::CLONE_NEWUSER)
+            .context("Failed to unshare user namespace (CLONE_NEWUSER)")?;
+
+        // Write UID and GID mappings to become root inside the user namespace
+        let user_cfg = crate::security::RootlessUserConfig::default();
+        user_cfg.write_proc_mappings(unsafe { libc::getpid() })?;
+    }
+
+    // Unshare remaining namespaces: PID, Mount, UTS, IPC
     let flags = CloneFlags::CLONE_NEWPID
         | CloneFlags::CLONE_NEWNS
         | CloneFlags::CLONE_NEWUTS

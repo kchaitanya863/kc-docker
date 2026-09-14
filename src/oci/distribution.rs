@@ -113,6 +113,15 @@ impl RegistryClient {
         &mut self,
         reference: &ImageReference,
     ) -> Result<(ImageManifest, String)> {
+        self.fetch_manifest_with_platform(reference, None).await
+    }
+
+    /// Fetch manifest for the reference with explicit target platform architecture.
+    pub async fn fetch_manifest_with_platform(
+        &mut self,
+        reference: &ImageReference,
+        target_platform: Option<&str>,
+    ) -> Result<(ImageManifest, String)> {
         self.authenticate(reference).await?;
 
         let tag_or_digest = reference.digest.as_deref().unwrap_or(&reference.tag);
@@ -156,11 +165,20 @@ impl RegistryClient {
             || serde_json::from_slice::<ManifestListOrIndex>(&body_bytes).is_ok()
         {
             if let Ok(index) = serde_json::from_slice::<ManifestListOrIndex>(&body_bytes) {
-                // Determine target architecture (default to matching current host: aarch64 -> arm64, x86_64 -> amd64)
-                let host_arch = match env::consts::ARCH {
-                    "aarch64" => "arm64",
-                    "x86_64" => "amd64",
-                    other => other,
+                // Determine target architecture
+                let (target_os, target_arch) = if let Some(plat) = target_platform {
+                    if let Some((os_p, arch_p)) = plat.split_once('/') {
+                        (os_p, arch_p)
+                    } else {
+                        ("linux", plat)
+                    }
+                } else {
+                    let host_arch = match env::consts::ARCH {
+                        "aarch64" => "arm64",
+                        "x86_64" => "amd64",
+                        other => other,
+                    };
+                    ("linux", host_arch)
                 };
 
                 let chosen_descriptor = index
@@ -168,7 +186,7 @@ impl RegistryClient {
                     .iter()
                     .find(|desc| {
                         if let Some(p) = &desc.platform {
-                            p.os == "linux" && p.architecture == host_arch
+                            p.os == target_os && p.architecture == target_arch
                         } else {
                             false
                         }
@@ -191,7 +209,8 @@ impl RegistryClient {
                 // Recursively fetch platform manifest by digest
                 let mut platform_ref = reference.clone();
                 platform_ref.digest = Some(chosen_descriptor.digest.clone());
-                return Box::pin(self.fetch_manifest(&platform_ref)).await;
+                return Box::pin(self.fetch_manifest_with_platform(&platform_ref, target_platform))
+                    .await;
             }
         }
 

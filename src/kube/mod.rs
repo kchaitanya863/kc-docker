@@ -112,6 +112,8 @@ impl KubeManager {
                 rootless: true,
                 restart: "no".to_string(),
                 health_cmd: None,
+                platform: None,
+                gpus: None,
                 image: c_spec.image.clone(),
                 command: c_spec.command.clone().unwrap_or_default(),
             };

@@ -161,12 +161,25 @@ pub fn unpack_layer(layer_archive_path: &Path, target_dir: &Path) -> Result<()> 
 
         // Normal file unpacking
         let dest = target_dir.join(&entry_path);
-        // Ensure parent directory exists
+        // Ensure parent directory exists and has write permissions
         if let Some(p) = dest.parent() {
             fs::create_dir_all(p)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if let Ok(meta) = fs::metadata(p) {
+                    let mut perms = meta.permissions();
+                    let mode = perms.mode();
+                    if mode & 0o700 != 0o700 {
+                        perms.set_mode(mode | 0o755);
+                        let _ = fs::set_permissions(p, perms);
+                    }
+                }
+            }
         }
 
         // Unpack entry safely
+        let is_dir = entry.header().entry_type().is_dir();
         if let Err(e) = entry.unpack_in(target_dir) {
             // On non-root platforms (like macOS), some chown/mknod operations in tar might fail.
             // In that case, fallback to manually extracting content.
@@ -175,6 +188,21 @@ pub fn unpack_layer(layer_archive_path: &Path, target_dir: &Path) -> Result<()> 
                     "Direct unpack warning ({}), attempting fallback: {:?}",
                     e, dest
                 );
+            }
+        }
+
+        // If a directory was created with restrictive permissions (common in Windows layer archives),
+        // ensure owner write/execute is maintained so subsequent files can be extracted into it.
+        #[cfg(unix)]
+        if is_dir && dest.exists() {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(meta) = fs::metadata(&dest) {
+                let mut perms = meta.permissions();
+                let mode = perms.mode();
+                if mode & 0o700 != 0o700 {
+                    perms.set_mode(mode | 0o755);
+                    let _ = fs::set_permissions(&dest, perms);
+                }
             }
         }
     }

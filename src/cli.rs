@@ -172,8 +172,12 @@ pub enum Commands {
     Spec(SpecArgs),
 }
 
-#[derive(Args, Debug)]
+#[derive(Args, Debug, Clone)]
 pub struct PullArgs {
+    /// Set platform if server is multi-platform (e.g. linux/amd64, linux/arm64)
+    #[arg(long = "platform")]
+    pub platform: Option<String>,
+
     pub image: String,
 }
 
@@ -220,6 +224,14 @@ pub struct RunArgs {
 
     #[arg(long = "health-cmd")]
     pub health_cmd: Option<String>,
+
+    /// Set platform if server is multi-platform (e.g. linux/amd64, linux/arm64)
+    #[arg(long = "platform")]
+    pub platform: Option<String>,
+
+    /// GPU devices to add to the container ('all' to pass-through available GPUs)
+    #[arg(long = "gpus")]
+    pub gpus: Option<String>,
 
     pub image: String,
 

@@ -545,3 +545,54 @@ fn test_e2e_fullstack_compose_orchestration() {
         .unwrap();
     assert!(output.status.success());
 }
+
+#[test]
+fn test_e2e_platform_and_gpu_sharing() {
+    let bin = boxr_bin();
+    if !bin.exists() || !has_container_runtime() {
+        return;
+    }
+
+    // 1. Test arm64 container
+    let arm_out = boxr_cmd(&bin)
+        .args([
+            "run",
+            "--rm",
+            "--platform",
+            "linux/arm64",
+            "alpine",
+            "uname",
+            "-m",
+        ])
+        .output()
+        .unwrap();
+    if arm_out.status.success() {
+        let stdout = String::from_utf8_lossy(&arm_out.stdout);
+        assert!(stdout.contains("aarch64"));
+    }
+
+    // 2. Test amd64 container (via Rosetta on macOS or emulation)
+    let amd_out = boxr_cmd(&bin)
+        .args([
+            "run",
+            "--rm",
+            "--platform",
+            "linux/amd64",
+            "alpine",
+            "uname",
+            "-m",
+        ])
+        .output()
+        .unwrap();
+    if amd_out.status.success() {
+        let stdout = String::from_utf8_lossy(&amd_out.stdout);
+        assert!(stdout.contains("x86_64"));
+    }
+
+    // 3. Test GPU device sharing flag
+    let gpu_out = boxr_cmd(&bin)
+        .args(["run", "--rm", "--gpus", "all", "alpine", "uname", "-a"])
+        .output()
+        .unwrap();
+    assert!(gpu_out.status.success());
+}

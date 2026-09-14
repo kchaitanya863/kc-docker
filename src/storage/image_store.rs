@@ -55,6 +55,10 @@ impl ImageStore {
     }
 
     pub fn find(&self, query: &str) -> Option<ImageRecord> {
+        self.find_with_platform(query, None)
+    }
+
+    pub fn find_with_platform(&self, query: &str, platform: Option<&str>) -> Option<ImageRecord> {
         let data = self.load();
         let query_trimmed = query.trim();
 
@@ -66,29 +70,66 @@ impl ImageStore {
         };
 
         data.images.into_iter().find(|img| {
-            if img.id.starts_with(query_trimmed) {
-                return true;
-            }
-
+            let id_matches = img.id.starts_with(query_trimmed);
             let img_short = img
                 .reference
                 .strip_prefix("library/")
                 .unwrap_or(&img.reference);
             let name_matches = img.reference == q_name || img_short == q_name;
 
-            if let Some(tag) = q_tag {
+            let matches = if id_matches {
+                true
+            } else if let Some(tag) = q_tag {
                 name_matches && img.tag == tag
             } else {
                 name_matches && (img.tag == "latest" || img.tag == query_trimmed)
+            };
+
+            if !matches {
+                return false;
+            }
+
+            if let Some(target_plat) = platform {
+                let (target_os, target_arch) = if let Some((os, arch)) = target_plat.split_once('/')
+                {
+                    (Some(os), arch)
+                } else {
+                    (None, target_plat)
+                };
+                let norm_arch = match target_arch {
+                    "x86_64" => "amd64",
+                    "aarch64" => "arm64",
+                    other => other,
+                };
+                let img_arch = match img.config.architecture.as_str() {
+                    "x86_64" => "amd64",
+                    "aarch64" => "arm64",
+                    other => other,
+                };
+
+                let arch_matches = img_arch == norm_arch;
+                let os_matches = if let Some(tos) = target_os {
+                    img.config.os.eq_ignore_ascii_case(tos)
+                } else {
+                    true
+                };
+
+                arch_matches && os_matches
+            } else {
+                true
             }
         })
     }
 
     pub fn add(&self, record: ImageRecord) -> Result<()> {
         let mut data = self.load();
-        // Remove previous entry with same reference/tag if present
-        data.images
-            .retain(|img| !(img.reference == record.reference && img.tag == record.tag));
+        // Remove previous entry with same reference, tag, architecture, and os if present
+        data.images.retain(|img| {
+            !(img.reference == record.reference
+                && img.tag == record.tag
+                && img.config.architecture == record.config.architecture
+                && img.config.os == record.config.os)
+        });
         data.images.push(record);
         self.save(&data)
     }
