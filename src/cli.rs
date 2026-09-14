@@ -48,6 +48,9 @@ pub enum Commands {
     /// Display system-wide information
     Info,
 
+    /// Show the boxr version information
+    Version,
+
     /// Stop a running container
     Stop(StopArgs),
 
@@ -273,6 +276,10 @@ pub struct LogoutArgs {
 
 #[derive(Args, Debug)]
 pub struct StopArgs {
+    /// Seconds to wait before killing the container
+    #[arg(short = 't', long = "time")]
+    pub time: Option<i32>,
+
     pub container: String,
 }
 
@@ -439,10 +446,26 @@ pub struct PsArgs {
     /// Show all containers (default shows just running)
     #[arg(short = 'a', long = "all")]
     pub all: bool,
+
+    /// Only display numeric IDs
+    #[arg(short = 'q', long = "quiet")]
+    pub quiet: bool,
+
+    /// Don't truncate output
+    #[arg(long = "no-trunc")]
+    pub no_trunc: bool,
 }
 
 #[derive(Args, Debug)]
 pub struct RmArgs {
+    /// Force the removal of a running container
+    #[arg(short = 'f', long = "force")]
+    pub force: bool,
+
+    /// Remove anonymous volumes associated with the container
+    #[arg(short = 'v', long = "volumes")]
+    pub volumes: bool,
+
     /// Container ID or name to remove
     pub container: String,
 }

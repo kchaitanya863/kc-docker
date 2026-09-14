@@ -34,7 +34,7 @@ fn test_qa_cli_negative_inspect_nonexistent() {
     }
 
     let output = Command::new(&bin)
-        .args(["inspect", "non_existent_target_12345"])
+        .args(["inspect", "non_existent_target_123456789_xyz"])
         .output()
         .unwrap();
 

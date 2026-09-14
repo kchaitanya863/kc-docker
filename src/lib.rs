@@ -1,3 +1,4 @@
+#![recursion_limit = "256"]
 //! # boxr 📦
 //!
 //! A fast, lightweight, production-grade **Open Container Initiative (OCI)** compliant
@@ -123,6 +124,29 @@ pub async fn run_cli(cli: Cli) -> Result<i32> {
         }
         Commands::Info => {
             info_system()?;
+            Ok(0)
+        }
+        Commands::Version => {
+            println!("Client: Boxr Engine");
+            println!(" Version:           {}", env!("CARGO_PKG_VERSION"));
+            println!(" API version:       1.45");
+            println!(" Go version:        rustc {}", env!("CARGO_PKG_VERSION"));
+            println!(" Git commit:        main");
+            println!(" Built:             2026-09-14");
+            println!(
+                " OS/Arch:           {}/{}",
+                std::env::consts::OS,
+                std::env::consts::ARCH
+            );
+            println!("\nServer: Boxr Engine");
+            println!(" Engine:");
+            println!("  Version:          {}", env!("CARGO_PKG_VERSION"));
+            println!("  API version:      1.45");
+            println!(
+                "  OS/Arch:          {}/{}",
+                std::env::consts::OS,
+                std::env::consts::ARCH
+            );
             Ok(0)
         }
         Commands::Stop(args) => {
@@ -807,13 +831,92 @@ pub fn exec_container(args: &ExecArgs) -> Result<i32> {
 pub fn inspect_target(target: &str) -> Result<()> {
     let c_store = ContainerStore::new();
     if let Some(c) = c_store.find(target) {
-        println!("{}", serde_json::to_string_pretty(&c)?);
+        let is_running = matches!(c.status, ContainerStatus::Running);
+        let docker_compat_inspect = serde_json::json!([{
+            "Id": c.id,
+            "Created": c.created_at.to_rfc3339(),
+            "Path": c.command.first().cloned().unwrap_or_default(),
+            "Args": if c.command.len() > 1 { c.command[1..].to_vec() } else { Vec::new() },
+            "State": {
+                "Status": if is_running { "running" } else { "exited" },
+                "Running": is_running,
+                "Paused": matches!(c.status, ContainerStatus::Paused),
+                "Restarting": false,
+                "OOMKilled": false,
+                "Dead": false,
+                "Pid": 0,
+                "ExitCode": match c.status {
+                    ContainerStatus::Exited(code) => code,
+                    _ => 0,
+                },
+                "Error": "",
+                "StartedAt": c.created_at.to_rfc3339(),
+                "FinishedAt": c.created_at.to_rfc3339(),
+            },
+            "Image": c.image,
+            "Name": format!("/{}", c.name),
+            "RestartCount": c.restart_count,
+            "HostConfig": {
+                "PortBindings": {},
+                "RestartPolicy": {
+                    "Name": "no",
+                    "MaximumRetryCount": 0
+                }
+            },
+            "NetworkSettings": {
+                "Bridge": "",
+                "SandboxID": "",
+                "HairpinMode": false,
+                "LinkLocalIPv6Address": "",
+                "LinkLocalIPv6PrefixLen": 0,
+                "Ports": {},
+                "SandboxKey": "",
+                "SecondaryIPAddresses": null,
+                "SecondaryIPv6Addresses": null,
+                "EndpointID": "",
+                "Gateway": "172.17.0.1",
+                "GlobalIPv6Address": "",
+                "GlobalIPv6PrefixLen": 0,
+                "IPAddress": "172.17.0.2",
+                "IPPrefixLen": 16,
+                "IPv6Gateway": "",
+                "MacAddress": "02:42:ac:11:00:02",
+                "Networks": {
+                    "bridge": {
+                        "IPAMConfig": null,
+                        "Links": null,
+                        "Aliases": null,
+                        "NetworkID": "boxr00000000",
+                        "EndpointID": "",
+                        "Gateway": "172.17.0.1",
+                        "IPAddress": "172.17.0.2",
+                        "IPPrefixLen": 16,
+                        "IPv6Gateway": "",
+                        "GlobalIPv6Address": "",
+                        "GlobalIPv6PrefixLen": 0,
+                        "MacAddress": "02:42:ac:11:00:02",
+                        "DriverOpts": null
+                    }
+                }
+            },
+            "boxr_raw": c
+        }]);
+        println!("{}", serde_json::to_string_pretty(&docker_compat_inspect)?);
         return Ok(());
     }
 
     let i_store = ImageStore::new();
     if let Some(i) = i_store.find(target) {
-        println!("{}", serde_json::to_string_pretty(&i)?);
+        let docker_compat_image = serde_json::json!([{
+            "Id": format!("sha256:{}", i.id),
+            "RepoTags": [format!("{}:{}", i.reference, i.tag)],
+            "Size": i.size_bytes,
+            "Created": i.created_at.to_rfc3339(),
+            "Architecture": i.config.architecture,
+            "Os": i.config.os,
+            "boxr_raw": i
+        }]);
+        println!("{}", serde_json::to_string_pretty(&docker_compat_image)?);
         return Ok(());
     }
 
@@ -1308,6 +1411,20 @@ pub fn list_containers(args: PsArgs) -> Result<()> {
     let store = ContainerStore::new();
     let containers = store.list();
 
+    if args.quiet {
+        for c in containers {
+            if !args.all && !matches!(c.status, ContainerStatus::Running) {
+                continue;
+            }
+            if args.no_trunc {
+                println!("{}", c.id);
+            } else {
+                println!("{}", &c.id[..12.min(c.id.len())]);
+            }
+        }
+        return Ok(());
+    }
+
     println!(
         "{:<14} {:<24} {:<20} {:<20} {:<16} {:<16}",
         "CONTAINER ID", "IMAGE", "COMMAND", "CREATED", "STATUS", "NAMES"
@@ -1323,15 +1440,21 @@ pub fn list_containers(args: PsArgs) -> Result<()> {
         } else {
             format!("\"{}\"", c.command.join(" "))
         };
-        let truncated_cmd = if cmd_display.len() > 18 {
+        let truncated_cmd = if cmd_display.len() > 18 && !args.no_trunc {
             format!("{}...", &cmd_display[..15])
         } else {
             cmd_display
         };
 
+        let id_display = if args.no_trunc {
+            c.id.clone()
+        } else {
+            c.id[..12.min(c.id.len())].to_string()
+        };
+
         println!(
             "{:<14} {:<24} {:<20} {:<20} {:<16} {:<16}",
-            &c.id[..12.min(c.id.len())],
+            id_display,
             c.image,
             truncated_cmd,
             c.created_at.format("%Y-%m-%d %H:%M:%S"),

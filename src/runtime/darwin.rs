@@ -279,16 +279,17 @@ pub fn exec_in_bundle(bundle_path: &Path, command: &[String], env: &[String]) ->
             if has_sh {
                 let mut inner = format!("exec {}", binary);
                 for a in args {
+                    let cleaned = a.trim_matches('"');
                     inner.push_str(&format!(
-                        " \\\"{}\\\"",
-                        a.replace('\\', "\\\\").replace('"', "\\\"")
+                        " \"{}\"",
+                        cleaned.replace('\\', "\\\\").replace('"', "\\\"")
                     ));
                 }
                 exec_cmd.args(["chroot", "/boxr-rootfs", "/bin/sh", "-c", &inner]);
             } else {
                 exec_cmd.arg("chroot").arg("/boxr-rootfs").arg(binary);
                 for a in args {
-                    exec_cmd.arg(a);
+                    exec_cmd.arg(a.trim_matches('"'));
                 }
             }
             if let Ok(status) = exec_cmd.status() {
@@ -304,9 +305,10 @@ pub fn exec_in_bundle(bundle_path: &Path, command: &[String], env: &[String]) ->
     let shell_script = if has_sh {
         let mut inner = format!("exec {}", binary);
         for a in args {
+            let cleaned = a.trim_matches('"');
             inner.push_str(&format!(
-                " \\\"{}\\\"",
-                a.replace('\\', "\\\\").replace('"', "\\\"")
+                " \"{}\"",
+                cleaned.replace('\\', "\\\\").replace('"', "\\\"")
             ));
         }
         format!(
@@ -316,7 +318,8 @@ pub fn exec_in_bundle(bundle_path: &Path, command: &[String], env: &[String]) ->
     } else {
         let mut inner = format!("chroot /boxr-rootfs {}", binary);
         for a in args {
-            inner.push_str(&format!(" \"{}\"", a.replace('"', "\\\"")));
+            let cleaned = a.trim_matches('"');
+            inner.push_str(&format!(" \"{}\"", cleaned.replace('"', "\\\"")));
         }
         inner
     };
