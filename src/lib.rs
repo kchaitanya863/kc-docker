@@ -1952,6 +1952,10 @@ pub fn info_system() -> Result<()> {
     println!(" Network: bridge");
     println!("Architecture: {}", std::env::consts::ARCH);
     println!("OSType: {}", std::env::consts::OS);
+    #[cfg(unix)]
+    println!("Rootless Mode: {}", unsafe { libc::getuid() != 0 });
+    #[cfg(not(unix))]
+    println!("Rootless Mode: true");
     println!("Docker Root Dir: {}", storage::boxr_home().display());
     Ok(())
 }
