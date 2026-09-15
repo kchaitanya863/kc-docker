@@ -92,14 +92,56 @@ boxr/
 # Add the official tap (central hub for all formulae)
 brew tap kchaitanya863/tap
 
-# Install boxr (installs binary + bash/zsh/fish completions)
+# Install boxr (installs precompiled binary + bash/zsh/fish completions)
 brew install boxr
 
 # (Optional) Run daemon as an always-on background service with autostart on login:
 brew services start boxr
 ```
 
-#### Automated Installer (Recommended)
+#### Debian / Ubuntu (`.deb`)
+
+Download and install the native `.deb` package from the [latest release](https://github.com/kchaitanya863/homebrew-tap/releases):
+
+```bash
+# x86_64 / amd64:
+curl -fsSLO https://github.com/kchaitanya863/homebrew-tap/releases/latest/download/boxr_0.1.18_amd64.deb
+sudo dpkg -i boxr_*_amd64.deb
+
+# ARM64 / aarch64:
+curl -fsSLO https://github.com/kchaitanya863/homebrew-tap/releases/latest/download/boxr_0.1.18_arm64.deb
+sudo dpkg -i boxr_*_arm64.deb
+```
+
+#### Fedora / RHEL / CentOS (`.rpm` / YUM / DNF)
+
+Download and install the native `.rpm` package from the [latest release](https://github.com/kchaitanya863/homebrew-tap/releases):
+
+```bash
+# Install via dnf or rpm:
+sudo dnf install https://github.com/kchaitanya863/homebrew-tap/releases/latest/download/boxr-0.1.18-1.x86_64.rpm
+
+# Or via rpm directly:
+sudo rpm -ivh boxr-*.rpm
+```
+
+#### Windows (Chocolatey & Winget)
+
+Install via Chocolatey:
+
+```powershell
+choco install boxr
+```
+
+Or extract the precompiled Windows `.zip` package from the [latest release](https://github.com/kchaitanya863/homebrew-tap/releases):
+
+```powershell
+Invoke-WebRequest -Uri https://github.com/kchaitanya863/homebrew-tap/releases/latest/download/boxr-windows-x86_64.zip -OutFile boxr.zip
+Expand-Archive boxr.zip -DestinationPath C:\ProgramData\boxr
+[Environment]::SetEnvironmentVariable("Path", $env:Path + ";C:\ProgramData\boxr\bin", "Machine")
+```
+
+#### Automated Shell Installer (curl | sh)
 
 ```bash
 # Build & install boxr, Docker drop-in wrapper, and completions

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>boxr</id>
+    <version>__VERSION__</version>
+    <packageSourceUrl>https://github.com/kchaitanya863/kc-docker</packageSourceUrl>
+    <owners>kchaitanya863</owners>
+    <title>Boxr (Install)</title>
+    <authors>Boxr Contributors</authors>
+    <projectUrl>https://github.com/kchaitanya863/kc-docker</projectUrl>
+    <licenseUrl>https://github.com/kchaitanya863/kc-docker/blob/main/LICENSE</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <projectSourceUrl>https://github.com/kchaitanya863/kc-docker</projectSourceUrl>
+    <docsUrl>https://github.com/kchaitanya863/kc-docker/blob/main/README.md</docsUrl>
+    <bugTrackerUrl>https://github.com/kchaitanya863/kc-docker/issues</bugTrackerUrl>
+    <tags>boxr docker container oci podman rust runtime</tags>
+    <summary>Fast, lightweight OCI container engine and runtime in Rust</summary>
+    <description>
+      Boxr is a rootless-by-default, zero-overhead Open Container Initiative (OCI) container engine, image builder, compose orchestrator, and runtime written in pure Rust.
+    </description>
+    <releaseNotes>https://github.com/kchaitanya863/homebrew-tap/releases</releaseNotes>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>
