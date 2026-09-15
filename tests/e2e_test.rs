@@ -37,15 +37,8 @@ fn has_container_runtime() -> bool {
 
     #[cfg(target_os = "macos")]
     {
-        // On macOS, container execution requires Docker Desktop or Colima running
-        let docker_bin = boxr::runtime::darwin::find_real_docker_bin();
-        std::process::Command::new(&docker_bin)
-            .args(["info"])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
+        // On macOS, container execution uses native Apple Virtualization.framework
+        true
     }
     #[cfg(target_os = "linux")]
     {
@@ -244,6 +237,7 @@ fn test_e2e_container_lifecycle_pause_unpause_rename_commit_wait() {
         .output()
         .unwrap();
     assert!(output.status.success());
+    std::thread::sleep(std::time::Duration::from_millis(300));
 
     let output = boxr_cmd(&bin).args(["pause", &name]).output().unwrap();
     assert!(output.status.success());
@@ -470,15 +464,20 @@ fn test_e2e_real_service_workload_redis() {
         .unwrap();
     assert!(output.status.success());
 
-    std::thread::sleep(std::time::Duration::from_secs(3));
-
-    let output = boxr_cmd(&bin)
-        .args(["exec", &cont_name, "redis-cli", "ping"])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("PONG"));
+    let mut ping_success = false;
+    for _ in 0..15 {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let output = boxr_cmd(&bin)
+            .args(["exec", &cont_name, "redis-cli", "ping"])
+            .output()
+            .unwrap();
+        let out_str = String::from_utf8_lossy(&output.stdout);
+        if output.status.success() && out_str.contains("PONG") {
+            ping_success = true;
+            break;
+        }
+    }
+    assert!(ping_success, "Redis did not respond with PONG in time");
 
     let output = boxr_cmd(&bin)
         .args([

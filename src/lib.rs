@@ -697,10 +697,15 @@ pub fn stop_container(container: &str) -> Result<()> {
     if let Some(c) = store.find(container) {
         #[cfg(target_os = "macos")]
         {
-            let runner_name = format!("boxr-runner-{}", c.id);
-            let _ = std::process::Command::new("docker")
-                .args(["kill", &runner_name])
-                .output();
+            let bundle_path = std::path::PathBuf::from(&c.bundle_path);
+            let pid_file = bundle_path.join("vm.pid");
+            if let Ok(pid_str) = std::fs::read_to_string(pid_file) {
+                if let Ok(pid) = pid_str.trim().parse::<i32>() {
+                    unsafe {
+                        libc::kill(pid, libc::SIGTERM);
+                    }
+                }
+            }
         }
     }
     store.update_status(container, ContainerStatus::Exited(0))?;
@@ -732,6 +737,9 @@ pub fn container_logs(args: &LogsArgs) -> Result<()> {
         .ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
 
     let log_path = PathBuf::from(&rec.bundle_path).join("logs.txt");
+    let rootfs_log = PathBuf::from(&rec.bundle_path)
+        .join("rootfs")
+        .join("logs.txt");
 
     let print_line = |line: &str| {
         if args.timestamps {
@@ -741,31 +749,14 @@ pub fn container_logs(args: &LogsArgs) -> Result<()> {
         }
     };
 
-    #[cfg(target_os = "macos")]
-    let runner_output = {
-        let docker_bin = runtime::darwin::find_real_docker_bin();
-        let runner_name = format!("boxr-runner-{}", rec.id);
-        if let Ok(out) = std::process::Command::new(&docker_bin)
-            .args(["logs", &runner_name])
-            .output()
-        {
-            let combined = String::from_utf8_lossy(&out.stdout).to_string()
-                + &String::from_utf8_lossy(&out.stderr);
-            if !combined.trim().is_empty() {
-                Some(combined)
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    };
-
-    #[cfg(not(target_os = "macos"))]
-    let runner_output: Option<String> = None;
-
-    let content = if let Some(out) = runner_output {
-        out
+    let content = if log_path.exists()
+        && fs::metadata(&log_path)
+            .map(|m| m.len() > 0)
+            .unwrap_or(false)
+    {
+        fs::read_to_string(&log_path)?
+    } else if rootfs_log.exists() {
+        fs::read_to_string(&rootfs_log)?
     } else if log_path.exists() {
         fs::read_to_string(&log_path)?
     } else {
@@ -1072,20 +1063,18 @@ pub fn wait_container(args: &cli::WaitArgs) -> Result<i32> {
             ContainerStatus::Running | ContainerStatus::Created | ContainerStatus::Paused => {
                 #[cfg(target_os = "macos")]
                 {
-                    let docker_bin = runtime::darwin::find_real_docker_bin();
-                    let runner_name = format!("boxr-runner-{}", cont.id);
-                    if let Ok(output) = std::process::Command::new(&docker_bin)
-                        .args(["inspect", "-f", "{{.State.Running}}", &runner_name])
-                        .output()
-                    {
-                        let s = String::from_utf8_lossy(&output.stdout);
-                        let s_trim = s.trim();
-                        if s_trim == "false" || s_trim.is_empty() {
-                            let _ = c_store.update_status(&cont.id, ContainerStatus::Exited(0));
-                            println!("0");
-                            return Ok(0);
+                    let bundle_path = std::path::PathBuf::from(&cont.bundle_path);
+                    let pid_file = bundle_path.join("vm.pid");
+                    let is_running = if let Ok(pid_str) = std::fs::read_to_string(pid_file) {
+                        if let Ok(pid) = pid_str.trim().parse::<i32>() {
+                            unsafe { libc::kill(pid, 0) == 0 }
+                        } else {
+                            false
                         }
                     } else {
+                        false
+                    };
+                    if !is_running {
                         let _ = c_store.update_status(&cont.id, ContainerStatus::Exited(0));
                         println!("0");
                         return Ok(0);
@@ -1471,10 +1460,15 @@ pub fn remove_container(container: &str) -> Result<()> {
     let removed = store.remove(container)?;
     #[cfg(target_os = "macos")]
     {
-        let runner_name = format!("boxr-runner-{}", removed.id);
-        let _ = std::process::Command::new("docker")
-            .args(["rm", "-f", &runner_name])
-            .output();
+        let bundle_path = std::path::PathBuf::from(&removed.bundle_path);
+        let pid_file = bundle_path.join("vm.pid");
+        if let Ok(pid_str) = std::fs::read_to_string(pid_file) {
+            if let Ok(pid) = pid_str.trim().parse::<i32>() {
+                unsafe {
+                    libc::kill(pid, libc::SIGKILL);
+                }
+            }
+        }
     }
     println!("{}", removed.id);
     Ok(())

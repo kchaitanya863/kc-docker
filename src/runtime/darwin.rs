@@ -1,38 +1,139 @@
 use crate::network::PortMapping;
 use crate::oci::runtime::Spec;
+use crate::storage::boxr_home;
 use crate::volume::MountSpec;
 use anyhow::{Context, Result, anyhow};
-use std::fs::File;
-use std::io::{BufRead, BufReader, Write};
+use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 
-pub fn find_real_docker_bin() -> String {
-    // Check known Docker binary locations avoiding ~/.boxr/bin/docker loop
-    let mut known_paths = vec![
-        "/usr/local/bin/docker".to_string(),
-        "/opt/homebrew/bin/docker".to_string(),
-        "/Applications/Docker.app/Contents/Resources/bin/docker".to_string(),
-    ];
-    if let Ok(home) = std::env::var("HOME") {
-        known_paths.push(format!("{}/.docker/bin/docker", home));
+/// Ensure native Apple Virtualization runner binary is compiled and codesigned
+pub fn ensure_vz_runner() -> Result<PathBuf> {
+    let home = boxr_home();
+    let bin_dir = home.join("bin");
+    let runner_bin = bin_dir.join("boxr-vz");
+
+    if runner_bin.exists() {
+        return Ok(runner_bin);
     }
-    for p in &known_paths {
-        if let Ok(meta) = std::fs::metadata(p) {
-            if meta.is_file() {
-                return p.clone();
-            }
-        }
+
+    fs::create_dir_all(&bin_dir)?;
+
+    let vz_source = include_str!("boxr-vz.m");
+    let entitlements = include_str!("boxr-vz.entitlements");
+
+    let temp_dir = tempfile::tempdir()?;
+    let m_file = temp_dir.path().join("boxr-vz.m");
+    let ent_file = temp_dir.path().join("boxr-vz.entitlements");
+
+    fs::write(&m_file, vz_source)?;
+    fs::write(&ent_file, entitlements)?;
+
+    let status = Command::new("clang")
+        .args([
+            "-O3",
+            "-fobjc-arc",
+            "-framework",
+            "Foundation",
+            "-framework",
+            "Virtualization",
+            m_file.to_str().unwrap(),
+            "-o",
+            runner_bin.to_str().unwrap(),
+        ])
+        .status()
+        .context("Failed to compile native Apple Virtualization runner (clang required)")?;
+
+    if !status.success() {
+        return Err(anyhow!("clang failed to compile native boxr-vz runner"));
     }
-    "docker".to_string()
+
+    let sign_status = Command::new("codesign")
+        .args([
+            "-s",
+            "-",
+            "--entitlements",
+            ent_file.to_str().unwrap(),
+            "-f",
+            runner_bin.to_str().unwrap(),
+        ])
+        .status()
+        .context("Failed to codesign boxr-vz with virtualization entitlement")?;
+
+    if !sign_status.success() {
+        return Err(anyhow!("codesign failed for boxr-vz"));
+    }
+
+    Ok(runner_bin)
 }
 
-/// Execute an OCI container bundle on macOS using the Linux VM execution bridge.
+/// Ensure Linux kernel and initrd exist in ~/.boxr/vm/
+pub fn ensure_vm_assets() -> Result<(PathBuf, PathBuf)> {
+    let vm_dir = boxr_home().join("vm");
+    let kernel_path = vm_dir.join("vmlinux");
+    let initrd_path = vm_dir.join("initrd.cpio.gz");
+
+    if kernel_path.exists() && initrd_path.exists() {
+        return Ok((kernel_path, initrd_path));
+    }
+
+    fs::create_dir_all(&vm_dir)?;
+
+    println!(
+        "Initializing native Apple Silicon Linux kernel and micro-VM initrd in ~/.boxr/vm/..."
+    );
+
+    let kernel_url =
+        "https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/aarch64/netboot/vmlinuz-virt";
+    let initrd_url =
+        "https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/aarch64/netboot/initramfs-virt";
+
+    let temp_kernel = vm_dir.join("vmlinuz-virt.tmp");
+    let status_k = Command::new("curl")
+        .args(["-fsSL", kernel_url, "-o", temp_kernel.to_str().unwrap()])
+        .status()
+        .context("Failed to download Linux kernel via curl")?;
+
+    if !status_k.success() {
+        return Err(anyhow!("curl failed downloading Linux kernel"));
+    }
+
+    let k_bytes = fs::read(&temp_kernel)?;
+    let _ = fs::remove_file(&temp_kernel);
+
+    // Decompress zimg payload (gzip starting at offset 51568 or search for gzip magic)
+    let gz_magic = [0x1fu8, 0x8bu8];
+    let gz_offset = k_bytes
+        .windows(2)
+        .position(|w| w == gz_magic)
+        .ok_or_else(|| anyhow!("Could not find gzip payload in kernel"))?;
+
+    use flate2::read::GzDecoder;
+    use std::io::Read;
+    let mut decoder = GzDecoder::new(&k_bytes[gz_offset..]);
+    let mut decompressed_kernel = Vec::new();
+    decoder.read_to_end(&mut decompressed_kernel)?;
+    fs::write(&kernel_path, decompressed_kernel)?;
+
+    let status_i = Command::new("curl")
+        .args(["-fsSL", initrd_url, "-o", initrd_path.to_str().unwrap()])
+        .status()
+        .context("Failed to download initramfs via curl")?;
+
+    if !status_i.success() {
+        return Err(anyhow!("curl failed downloading initramfs"));
+    }
+
+    println!("✓ Native Linux micro-VM assets successfully installed.");
+    Ok((kernel_path, initrd_path))
+}
+
+/// Execute an OCI container bundle on macOS using Apple's native Virtualization.framework.
 pub fn execute_bundle(
     bundle_path: &Path,
     spec: &Spec,
     mounts: &[MountSpec],
-    ports: &[PortMapping],
+    _ports: &[PortMapping],
     detach: bool,
 ) -> Result<i32> {
     let raw_rootfs = PathBuf::from(&spec.root.path);
@@ -50,10 +151,6 @@ pub fn execute_bundle(
         .canonicalize()
         .context("Failed to canonicalize rootfs path")?;
 
-    let rootfs_str = abs_rootfs
-        .to_str()
-        .ok_or_else(|| anyhow!("Invalid rootfs path"))?;
-
     let cmd_binary = spec
         .process
         .args
@@ -62,281 +159,239 @@ pub fn execute_bundle(
 
     let cmd_args = &spec.process.args[1..];
 
-    // Build the shell setup script inside the container runner
-    let mut shell_script = String::new();
-    shell_script.push_str("mkdir -p /boxr-rootfs/proc /boxr-rootfs/sys /boxr-rootfs/dev /boxr-rootfs/tmp /boxr-rootfs/data 2>/dev/null || true; ");
-    shell_script.push_str("chmod 1777 /boxr-rootfs/tmp /boxr-rootfs/data 2>/dev/null || true; ");
-    shell_script.push_str("mount -t proc proc /boxr-rootfs/proc 2>/dev/null || true; ");
-    shell_script.push_str("mount -t sysfs sysfs /boxr-rootfs/sys 2>/dev/null || true; ");
-    shell_script.push_str("mount --bind /dev /boxr-rootfs/dev 2>/dev/null || true; ");
+    let runner_bin = ensure_vz_runner()?;
+    let (kernel_path, initrd_path) = ensure_vm_assets()?;
 
-    // Prepare mounts inside /boxr-rootfs
+    let mut cmd = Command::new(&runner_bin);
+    cmd.arg("--bundle").arg(bundle_path);
+    cmd.arg("--rootfs").arg(&abs_rootfs);
+    cmd.arg("--kernel").arg(&kernel_path);
+    cmd.arg("--initrd").arg(&initrd_path);
+
+    // Build the runner script inside the container's rootfs
+    let mut run_script = String::new();
+    run_script.push_str("#!/bin/sh\n");
+    run_script.push_str("mount -t proc proc /proc 2>/dev/null || true\n");
+    run_script.push_str("mount -t sysfs sysfs /sys 2>/dev/null || true\n");
+    run_script.push_str("mount -t devtmpfs devtmpfs /dev 2>/dev/null || true\n");
+    run_script.push_str("ip link set lo up 2>/dev/null || ifconfig lo up 2>/dev/null || true\n");
+    run_script
+        .push_str("mkdir -p /tmp /data 2>/dev/null; chmod 1777 /tmp /data 2>/dev/null || true\n");
+
+    // Volume mounts
     for (idx, m) in mounts.iter().enumerate() {
-        let container_mount = format!("/boxr-rootfs{}", m.destination);
-        let host_mount_in_runner = format!("/boxr-mounts/m{}", idx);
-        shell_script.push_str(&format!(
-            "mkdir -p \"{}\" 2>/dev/null || true; mount --bind \"{}\" \"{}\" 2>/dev/null || true; ",
-            container_mount, host_mount_in_runner, container_mount
+        let tag = format!("m{}", idx);
+        cmd.arg("--mount")
+            .arg(format!("{}={}", tag, m.source.display()));
+        run_script.push_str(&format!(
+            "mkdir -p \"{}\" 2>/dev/null; mount -t virtiofs \"{}\" \"{}\" 2>/dev/null || true\n",
+            m.destination, tag, m.destination
         ));
-    }
-
-    shell_script.push_str(&format!(
-        "cd \"/boxr-rootfs{}\" 2>/dev/null || cd /boxr-rootfs; ",
-        spec.process.cwd
-    ));
-
-    // Construct command invocation
-    let exec_line = if rootfs_path.join("bin/sh").exists() {
-        let mut inner = format!("exec {}", cmd_binary);
-        for arg in cmd_args {
-            inner.push_str(&format!(
-                " \\\"{}\\\"",
-                arg.replace('\\', "\\\\").replace('"', "\\\"")
-            ));
-        }
-        format!("chroot /boxr-rootfs /bin/sh -c \"{}\"", inner)
-    } else {
-        let mut inner = format!("chroot /boxr-rootfs {}", cmd_binary);
-        for arg in cmd_args {
-            inner.push_str(&format!(" \"{}\"", arg.replace('"', "\\\"")));
-        }
-        inner
-    };
-    shell_script.push_str(&exec_line);
-
-    // Build docker runner command
-    let docker_bin = find_real_docker_bin();
-    let mut cmd = Command::new(&docker_bin);
-    cmd.arg("run");
-
-    let runner_name = format!(
-        "boxr-runner-{}",
-        bundle_path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("run")
-    );
-    cmd.arg("--name").arg(&runner_name);
-
-    if detach {
-        cmd.arg("-d");
-    } else {
-        cmd.arg("--rm").arg("-i");
-    }
-
-    cmd.arg("--privileged");
-    cmd.arg("-v").arg(format!("{}:/boxr-rootfs", rootfs_str));
-
-    // Bind mount volume specs into runner
-    for (idx, m) in mounts.iter().enumerate() {
-        let src = m.source.to_string_lossy();
-        cmd.arg("-v").arg(format!(
-            "{}:/boxr-mounts/m{}{}",
-            src,
-            idx,
-            if m.read_only { ":ro" } else { "" }
-        ));
-    }
-
-    // Port forwardings
-    for p in ports {
-        if let Some(ip) = &p.host_ip {
-            cmd.arg("-p").arg(format!(
-                "{}:{}:{}/{}",
-                ip, p.host_port, p.container_port, p.protocol
-            ));
-        } else {
-            cmd.arg("-p").arg(format!(
-                "{}:{}/{}",
-                p.host_port, p.container_port, p.protocol
-            ));
-        }
     }
 
     // Environment variables
     for env_var in &spec.process.env {
-        cmd.arg("-e").arg(env_var);
+        if let Some((k, v)) = env_var.split_once('=') {
+            run_script.push_str(&format!(
+                "export {}=\"{}\"\n",
+                k,
+                v.replace('\\', "\\\\").replace('"', "\\\"")
+            ));
+        }
     }
 
     if let Some(hostname) = &spec.hostname {
-        cmd.arg("-h").arg(hostname);
+        run_script.push_str(&format!("hostname \"{}\" 2>/dev/null || true\n", hostname));
     }
 
-    // Handle platform and GPU device sharing
-    let mut platform_arg = None;
-    let mut is_windows_container = false;
+    // Working directory
+    let cwd = if spec.process.cwd.is_empty() {
+        "/"
+    } else {
+        &spec.process.cwd
+    };
+    run_script.push_str(&format!("cd \"{}\" 2>/dev/null || cd /\n", cwd));
 
-    if let Some(ann) = &spec.annotations {
-        if let Some(platform) = ann.get("boxr.platform") {
-            if platform.starts_with("windows") {
-                is_windows_container = true;
-            }
-            platform_arg = Some(platform.clone());
-        } else if let Some(arch) = ann.get("org.opencontainers.image.architecture") {
-            let plat = match arch.as_str() {
-                "amd64" | "x86_64" => "linux/amd64",
-                "arm64" | "aarch64" => "linux/arm64",
-                other => other,
-            };
-            platform_arg = Some(plat.to_string());
-        }
+    fs::create_dir_all(bundle_path)?;
 
-        if let Some(gpus) = ann.get("boxr.gpus") {
-            if gpus == "all" || gpus == "webgpu" {
-                // On macOS Docker Desktop, use WebGPU CDI device passthrough
-                cmd.arg("--device").arg("docker.com/gpu=webgpu");
-            } else {
-                cmd.arg("--gpus").arg(gpus);
-            }
-        }
-    }
-
-    if is_windows_container {
-        return Err(anyhow!(
-            "Windows container execution requires a native Windows host (Windows Server or Windows 10/11 with Containers feature enabled). The OCI image was successfully downloaded and stored locally."
+    // Construct command invocation
+    let mut cmd_line = format!("{}", cmd_binary);
+    for arg in cmd_args {
+        let cleaned = arg.trim_matches('"');
+        cmd_line.push_str(&format!(
+            " \"{}\"",
+            cleaned.replace('\\', "\\\\").replace('"', "\\\"")
         ));
     }
 
-    if let Some(ref p) = platform_arg {
-        cmd.arg("--platform").arg(p);
+    if detach {
+        run_script.push_str(&format!("{} 2>&1 | tee /logs.txt &\n", cmd_line));
+        run_script.push_str("sleep 0.1\n");
+        run_script.push_str("MAIN_PID=$!\n");
+        run_script.push_str("while kill -0 $MAIN_PID 2>/dev/null; do\n");
+        run_script.push_str("  for f in /boxr-exec-*.sh; do\n");
+        run_script.push_str("    [ -f \"$f\" ] || continue\n");
+        run_script.push_str("    ID=$(echo \"$f\" | sed 's/.*boxr-exec-//; s/\\.sh//')\n");
+        run_script.push_str("    /bin/sh \"$f\" > \"/boxr-exec-${ID}.log\" 2>&1\n");
+        run_script.push_str("    echo $? > \"/boxr-exec-${ID}.done\"\n");
+        run_script.push_str("    rm -f \"$f\"\n");
+        run_script.push_str("  done\n");
+        run_script.push_str("  sleep 0.05 2>/dev/null || sleep 1\n");
+        run_script.push_str("done\n");
+        run_script.push_str("wait $MAIN_PID 2>/dev/null\n");
+        run_script.push_str("exit $?\n");
+    } else {
+        run_script.push_str(&format!("exec {}\n", cmd_line));
     }
 
-    cmd.arg("alpine").arg("/bin/sh").arg("-c").arg(shell_script);
-
-    let log_path = bundle_path.join("logs.txt");
+    let run_script_path = rootfs_path.join("boxr-run.sh");
+    fs::write(&run_script_path, run_script)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&run_script_path, fs::Permissions::from_mode(0o777));
+    }
 
     if detach {
-        let output = cmd.output()?;
-        let mut log_file = File::create(log_path)?;
-        log_file.write_all(&output.stdout)?;
-        log_file.write_all(&output.stderr)?;
-        return Ok(if output.status.success() { 0 } else { 1 });
+        cmd.arg("--detach");
+        cmd.stdin(std::process::Stdio::null());
+        cmd.stdout(std::process::Stdio::null());
+        cmd.stderr(std::process::Stdio::null());
+        let _child = cmd.spawn()?;
+        // Give background VM a brief moment to boot
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        return Ok(0);
     }
 
-    if spec.root.readonly {
-        let status = cmd.status()?;
-        return Ok(status.code().unwrap_or(0));
-    }
-
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let mut child = cmd.spawn()?;
-
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-    let mut log_file = File::create(log_path)?;
-
-    if let Some(out) = stdout {
-        let reader = BufReader::new(out);
-        for line in reader.lines() {
-            if let Ok(l) = line {
-                println!("{}", l);
-                let _ = writeln!(log_file, "{}", l);
-            }
-        }
-    }
-
-    if let Some(err) = stderr {
-        let reader = BufReader::new(err);
-        for line in reader.lines() {
-            if let Ok(l) = line {
-                eprintln!("{}", l);
-                let _ = writeln!(log_file, "{}", l);
-            }
-        }
-    }
-
-    let status = child.wait()?;
+    let status = cmd.status()?;
     Ok(status.code().unwrap_or(0))
 }
 
 /// Execute a command in an existing container bundle
 pub fn exec_in_bundle(bundle_path: &Path, command: &[String], env: &[String]) -> Result<i32> {
-    let docker_bin = find_real_docker_bin();
-    let runner_name = format!(
-        "boxr-runner-{}",
-        bundle_path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("run")
-    );
-    let binary = &command[0];
-    let args = &command[1..];
-
-    // Try executing directly in running container runner first
     let rootfs_path = bundle_path.join("rootfs");
-    let has_sh = rootfs_path.join("bin/sh").exists();
+    let pid_file = bundle_path.join("vm.pid");
 
-    let mut check_cmd = Command::new(&docker_bin);
-    check_cmd.args(["ps", "-q", "-f", &format!("name={}", runner_name)]);
-    if let Ok(output) = check_cmd.output() {
-        if !output.stdout.is_empty() {
-            let mut exec_cmd = Command::new(&docker_bin);
-            exec_cmd.args(["exec", "-i"]);
-            for e in env {
-                exec_cmd.arg("-e").arg(e);
-            }
-            exec_cmd.arg(&runner_name);
-            if has_sh {
-                let mut inner = format!("exec {}", binary);
-                for a in args {
-                    let cleaned = a.trim_matches('"');
-                    inner.push_str(&format!(
-                        " \"{}\"",
-                        cleaned.replace('\\', "\\\\").replace('"', "\\\"")
-                    ));
-                }
-                exec_cmd.args(["chroot", "/boxr-rootfs", "/bin/sh", "-c", &inner]);
-            } else {
-                exec_cmd.arg("chroot").arg("/boxr-rootfs").arg(binary);
-                for a in args {
-                    exec_cmd.arg(a.trim_matches('"'));
-                }
-            }
-            if let Ok(status) = exec_cmd.status() {
-                return Ok(status.code().unwrap_or(0));
+    let is_running = if let Ok(pid_str) = fs::read_to_string(&pid_file) {
+        if let Ok(pid) = pid_str.trim().parse::<i32>() {
+            unsafe { libc::kill(pid, 0) == 0 }
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    if is_running {
+        let mut exec_script = String::new();
+        exec_script.push_str("#!/bin/sh\n");
+        exec_script.push_str(
+            "export PATH=\"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH\"\n",
+        );
+        for e in env {
+            if let Some((k, v)) = e.split_once('=') {
+                exec_script.push_str(&format!(
+                    "export {}=\"{}\"\n",
+                    k,
+                    v.replace('\\', "\\\\").replace('"', "\\\"")
+                ));
             }
         }
-    }
-
-    // Fallback: spawn standalone runner
-    let abs_rootfs = rootfs_path.canonicalize()?;
-    let rootfs_str = abs_rootfs.to_str().ok_or_else(|| anyhow!("Invalid path"))?;
-
-    let shell_script = if has_sh {
-        let mut inner = format!("exec {}", binary);
+        let binary = &command[0];
+        let args = &command[1..];
+        let mut cmd_line = format!("exec {}", binary);
         for a in args {
             let cleaned = a.trim_matches('"');
-            inner.push_str(&format!(
+            cmd_line.push_str(&format!(
                 " \"{}\"",
                 cleaned.replace('\\', "\\\\").replace('"', "\\\"")
             ));
         }
-        format!(
-            "mkdir -p /boxr-rootfs/proc /boxr-rootfs/dev; mount -t proc proc /boxr-rootfs/proc 2>/dev/null || true; mount --bind /dev /boxr-rootfs/dev 2>/dev/null || true; chroot /boxr-rootfs /bin/sh -c \"{}\"",
-            inner
-        )
-    } else {
-        let mut inner = format!("chroot /boxr-rootfs {}", binary);
-        for a in args {
-            let cleaned = a.trim_matches('"');
-            inner.push_str(&format!(" \"{}\"", cleaned.replace('"', "\\\"")));
+        exec_script.push_str(&format!("{}\n", cmd_line));
+
+        let exec_id = hex::encode(crate::storage::container_store::rand_id());
+        let exec_script_path = rootfs_path.join(format!("boxr-exec-{}.sh", exec_id));
+        let exec_done_path = rootfs_path.join(format!("boxr-exec-{}.done", exec_id));
+        let exec_log_path = rootfs_path.join(format!("boxr-exec-{}.log", exec_id));
+
+        let _ = fs::remove_file(&exec_done_path);
+        let _ = fs::remove_file(&exec_log_path);
+        fs::write(&exec_script_path, &exec_script)?;
+
+        let start = std::time::Instant::now();
+        while !exec_done_path.exists() {
+            if start.elapsed() > std::time::Duration::from_secs(30) {
+                let _ = fs::remove_file(&exec_script_path);
+                return Err(anyhow!("Exec timed out after 30 seconds"));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(30));
         }
-        inner
-    };
 
-    let mut cmd = Command::new(&docker_bin);
-    cmd.arg("run")
-        .arg("--rm")
-        .arg("-i")
-        .arg("--privileged")
-        .arg("-v")
-        .arg(format!("{}:/boxr-rootfs", rootfs_str));
+        if exec_log_path.exists() {
+            let out = fs::read_to_string(&exec_log_path)?;
+            print!("{}", out);
+            let _ = fs::remove_file(&exec_log_path);
+        }
 
-    for e in env {
-        cmd.arg("-e").arg(e);
+        let exit_code = if let Ok(c) = fs::read_to_string(&exec_done_path) {
+            c.trim().parse::<i32>().unwrap_or(0)
+        } else {
+            0
+        };
+        let _ = fs::remove_file(&exec_done_path);
+        return Ok(exit_code);
     }
 
-    cmd.arg("alpine").arg("/bin/sh").arg("-c").arg(shell_script);
-    let status = cmd.status()?;
+    let runner_bin = ensure_vz_runner()?;
+    let (kernel_path, initrd_path) = ensure_vm_assets()?;
+
+    let binary = &command[0];
+    let args = &command[1..];
+
+    let mut run_script = String::new();
+    run_script.push_str("#!/bin/sh\n");
+    run_script.push_str("mount -t proc proc /proc 2>/dev/null || true\n");
+    run_script.push_str("mount -t sysfs sysfs /sys 2>/dev/null || true\n");
+    run_script.push_str("mount -t devtmpfs devtmpfs /dev 2>/dev/null || true\n");
+
+    for e in env {
+        if let Some((k, v)) = e.split_once('=') {
+            run_script.push_str(&format!(
+                "export {}=\"{}\"\n",
+                k,
+                v.replace('\\', "\\\\").replace('"', "\\\"")
+            ));
+        }
+    }
+
+    let mut cmd_line = format!("exec {}", binary);
+    for a in args {
+        let cleaned = a.trim_matches('"');
+        cmd_line.push_str(&format!(
+            " \"{}\"",
+            cleaned.replace('\\', "\\\\").replace('"', "\\\"")
+        ));
+    }
+    run_script.push_str(&format!("{}\n", cmd_line));
+
+    let run_script_path = rootfs_path.join("boxr-run.sh");
+    fs::write(&run_script_path, run_script)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&run_script_path, fs::Permissions::from_mode(0o777));
+    }
+
+    let status = Command::new(&runner_bin)
+        .arg("--bundle")
+        .arg(bundle_path)
+        .arg("--rootfs")
+        .arg(&rootfs_path)
+        .arg("--kernel")
+        .arg(&kernel_path)
+        .arg("--initrd")
+        .arg(&initrd_path)
+        .status()?;
+
     Ok(status.code().unwrap_or(0))
 }

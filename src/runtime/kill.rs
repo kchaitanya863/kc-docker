@@ -35,12 +35,15 @@ impl ContainerKiller {
 
         #[cfg(target_os = "macos")]
         {
-            let docker_bin = crate::runtime::darwin::find_real_docker_bin();
-            let sig_name = format!("{}", sig);
-            let runner_name = format!("boxr-runner-{}", container.id);
-            let _ = std::process::Command::new(&docker_bin)
-                .args(["kill", "-s", &sig_name, &runner_name])
-                .output();
+            let bundle_path = std::path::PathBuf::from(&container.bundle_path);
+            let pid_file = bundle_path.join("vm.pid");
+            if let Ok(pid_str) = std::fs::read_to_string(pid_file) {
+                if let Ok(pid) = pid_str.trim().parse::<i32>() {
+                    unsafe {
+                        libc::kill(pid, sig);
+                    }
+                }
+            }
         }
 
         #[cfg(target_os = "linux")]

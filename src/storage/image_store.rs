@@ -206,6 +206,15 @@ impl ImageStore {
             &dest_rootfs,
         )?;
 
+        let _ = fs::remove_file(dest_rootfs.join("boxr-run.sh"));
+        let _ = fs::remove_file(dest_rootfs.join("boxr-exitcode"));
+        let _ = fs::remove_file(dest_rootfs.join("logs.txt"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&dest_rootfs, fs::Permissions::from_mode(0o755));
+        }
+
         let full_tag = repo_tag.unwrap_or_else(|| &container.name);
         let (repo, tag) = if let Some((r, t)) = full_tag.split_once(':') {
             (r.to_string(), t.to_string())
