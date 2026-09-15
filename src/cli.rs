@@ -530,7 +530,12 @@ pub struct EventsArgs {
 #[derive(Args, Debug)]
 pub struct CompletionArgs {
     /// Target shell (bash, zsh, fish)
+    #[arg(default_value = "zsh")]
     pub shell: String,
+
+    /// Install completion script automatically into user shell directory
+    #[arg(long = "install")]
+    pub install: bool,
 }
 
 #[derive(Args, Debug)]

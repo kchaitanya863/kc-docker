@@ -306,8 +306,14 @@ pub async fn run_cli(cli: Cli) -> Result<i32> {
             Ok(0)
         }
         Commands::Completion(args) => {
-            let shell = completions::ShellType::parse(&args.shell)?;
-            println!("{}", completions::CompletionGenerator::generate(shell));
+            let shell = completions::ShellType::parse(&args.shell)
+                .unwrap_or_else(|_| completions::ShellType::detect());
+
+            if args.install {
+                completions::CompletionGenerator::install(shell)?;
+            } else {
+                println!("{}", completions::CompletionGenerator::generate(shell));
+            }
             Ok(0)
         }
         Commands::Pod(args) => {
