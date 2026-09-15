@@ -129,6 +129,7 @@ jobs:
     steps:
       - name: Determine Target Tag
         id: tag_info
+        shell: bash
         run: |
           if [ -n "${{ needs.bump-and-tag.outputs.new_tag }}" ]; then
             TAG="${{ needs.bump-and-tag.outputs.new_tag }}"
