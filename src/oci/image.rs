@@ -179,7 +179,7 @@ pub fn unpack_layer(layer_archive_path: &Path, target_dir: &Path) -> Result<()> 
         }
 
         // Unpack entry safely
-        let is_dir = entry.header().entry_type().is_dir();
+        let _is_dir = entry.header().entry_type().is_dir();
         if let Err(e) = entry.unpack_in(target_dir) {
             // On non-root platforms (like macOS), some chown/mknod operations in tar might fail.
             // In that case, fallback to manually extracting content.
@@ -194,7 +194,7 @@ pub fn unpack_layer(layer_archive_path: &Path, target_dir: &Path) -> Result<()> 
         // If a directory was created with restrictive permissions (common in Windows layer archives),
         // ensure owner write/execute is maintained so subsequent files can be extracted into it.
         #[cfg(unix)]
-        if is_dir && dest.exists() {
+        if _is_dir && dest.exists() {
             use std::os::unix::fs::PermissionsExt;
             if let Ok(meta) = fs::metadata(&dest) {
                 let mut perms = meta.permissions();

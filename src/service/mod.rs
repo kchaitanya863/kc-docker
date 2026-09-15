@@ -6,9 +6,12 @@
 //! - **Linux**: `systemd` user service (`~/.config/systemd/user/boxr.service`).
 
 use crate::storage::boxr_home;
-use anyhow::{Context, Result, anyhow};
+#[cfg(not(target_os = "windows"))]
+use anyhow::Context;
+use anyhow::{Result, anyhow};
 use std::fs;
 use std::path::PathBuf;
+#[cfg(not(target_os = "windows"))]
 use std::process::Command;
 
 /// Locate current boxr binary on disk
@@ -49,12 +52,18 @@ impl ServiceManager {
 
     /// Install autostart service definition
     pub fn install() -> Result<()> {
-        let exe = find_boxr_executable();
+        let _exe = find_boxr_executable();
         let home = boxr_home();
         fs::create_dir_all(&home)?;
 
+        #[cfg(target_os = "windows")]
+        {
+            println!("Service autostart is managed via Windows Service Manager or Startup task.");
+        }
+
         #[cfg(target_os = "macos")]
         {
+            let exe = find_boxr_executable();
             let plist_path = Self::plist_path()?;
             if let Some(parent) = plist_path.parent() {
                 fs::create_dir_all(parent)?;
@@ -102,6 +111,7 @@ impl ServiceManager {
 
         #[cfg(target_os = "linux")]
         {
+            let exe = find_boxr_executable();
             let s_path = Self::service_path()?;
             if let Some(parent) = s_path.parent() {
                 fs::create_dir_all(parent)?;
@@ -150,6 +160,11 @@ WantedBy=default.target
 
     /// Start the background service
     pub fn start() -> Result<()> {
+        #[cfg(target_os = "windows")]
+        {
+            println!("To start daemon on Windows, run 'boxr daemon'");
+        }
+
         #[cfg(target_os = "macos")]
         {
             let plist_path = Self::plist_path()?;
@@ -204,6 +219,11 @@ WantedBy=default.target
 
     /// Stop the background service
     pub fn stop() -> Result<()> {
+        #[cfg(target_os = "windows")]
+        {
+            println!("To stop daemon on Windows, stop the running boxr process");
+        }
+
         #[cfg(target_os = "macos")]
         {
             let plist_path = Self::plist_path()?;

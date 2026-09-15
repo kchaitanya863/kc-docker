@@ -11,6 +11,9 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+#[cfg(windows)]
+use tokio::net::TcpListener;
+#[cfg(unix)]
 use tokio::net::UnixListener;
 
 #[allow(dead_code)]
@@ -97,26 +100,46 @@ pub fn create_router(state: DaemonState) -> Router {
 
 pub async fn start_daemon(socket_path: Option<&str>) -> Result<()> {
     let home = boxr_home();
-    let sock = socket_path
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join("boxr.sock"));
 
-    if sock.exists() {
-        let _ = fs::remove_file(&sock);
+    #[cfg(unix)]
+    {
+        let sock = socket_path
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join("boxr.sock"));
+
+        if sock.exists() {
+            let _ = fs::remove_file(&sock);
+        }
+        if let Some(parent) = sock.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+
+        let listener = UnixListener::bind(&sock)
+            .with_context(|| format!("Failed to bind Unix domain socket at {:?}", sock))?;
+
+        println!("boxr daemon listening on unix://{:?}", sock);
+
+        let state = DaemonState { home };
+        let app = create_router(state);
+
+        axum::serve(listener, app).await?;
     }
-    if let Some(parent) = sock.parent() {
-        let _ = fs::create_dir_all(parent);
+
+    #[cfg(windows)]
+    {
+        let addr = socket_path.unwrap_or("127.0.0.1:2375");
+        let listener = TcpListener::bind(addr)
+            .await
+            .with_context(|| format!("Failed to bind TCP listener at {}", addr))?;
+
+        println!("boxr daemon listening on tcp://{}", addr);
+
+        let state = DaemonState { home };
+        let app = create_router(state);
+
+        axum::serve(listener, app).await?;
     }
 
-    let listener = UnixListener::bind(&sock)
-        .with_context(|| format!("Failed to bind Unix domain socket at {:?}", sock))?;
-
-    println!("boxr daemon listening on unix://{:?}", sock);
-
-    let state = DaemonState { home };
-    let app = create_router(state);
-
-    axum::serve(listener, app).await?;
     Ok(())
 }
 

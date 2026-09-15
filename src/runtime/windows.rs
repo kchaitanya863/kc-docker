@@ -6,7 +6,7 @@
 use crate::network::PortMapping;
 use crate::oci::runtime::Spec;
 use crate::volume::MountSpec;
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Result, anyhow};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
