@@ -491,6 +491,7 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
     for p in &args.ports {
         parsed_ports.push(PortMapping::parse(p)?);
     }
+    guardrails::PortCollisionGuard::ensure_no_conflicts(&parsed_ports)?;
 
     // Resolve volume mounts
     let vol_store = VolumeStore::new();

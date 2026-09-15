@@ -2,6 +2,7 @@
 //!
 //! Provides operational guardrails for robust, leak-free, long-running operation:
 //! - **Log Rotation**: Automatic size-based rotation of container logs and system event streams.
+//! - **Port Collision Protection**: Prevents multiple running containers from binding the same host port.
 //! - **Disk Space Protection**: Proactive checks to prevent out-of-disk failures during image pulls.
 //! - **Orphan & Zombie Reaper**: Self-healing detection and recovery from unclean host reboots.
 //! - **Graceful Termination**: Supervisor managing SIGTERM with fallback to SIGKILL on timeout.
@@ -139,6 +140,47 @@ impl DiskGuard {
     }
 }
 
+/// Host Port Collision Guard
+pub struct PortCollisionGuard;
+
+impl PortCollisionGuard {
+    /// Ensure none of the requested host ports are already bound by other running containers
+    pub fn ensure_no_conflicts(requested_ports: &[crate::network::PortMapping]) -> Result<()> {
+        let store = ContainerStore::new();
+        let containers = store.list();
+
+        for req in requested_ports {
+            let req_ip = req.host_ip.as_deref().unwrap_or("0.0.0.0");
+
+            for c in &containers {
+                if !matches!(c.status, ContainerStatus::Running) {
+                    continue;
+                }
+
+                for p in &c.ports {
+                    if p.protocol == req.protocol && p.host_port == req.host_port {
+                        let running_ip = p.host_ip.as_deref().unwrap_or("0.0.0.0");
+                        let ips_overlap =
+                            req_ip == "0.0.0.0" || running_ip == "0.0.0.0" || req_ip == running_ip;
+
+                        if ips_overlap {
+                            return Err(anyhow!(
+                                "Port conflict: host port {}:{}/{} is already in use by running container '{}' ({})",
+                                req_ip,
+                                req.host_port,
+                                req.protocol,
+                                c.name,
+                                &c.id[..12.min(c.id.len())]
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Self-healing reaper for orphan and zombie container processes
 pub struct ProcessReaper;
 
@@ -268,5 +310,20 @@ mod tests {
         // Reaping non-existent or dead containers shouldn't crash
         let reaped = ProcessReaper::reap_stale_containers().unwrap();
         let _ = reaped;
+    }
+
+    #[test]
+    fn test_port_collision_guard_detects_conflicts() {
+        use crate::network::PortMapping;
+
+        let port_8080 = vec![PortMapping {
+            host_ip: None,
+            host_port: 8080,
+            container_port: 80,
+            protocol: "tcp".to_string(),
+        }];
+
+        // Querying non-conflicting ports passes
+        assert!(PortCollisionGuard::ensure_no_conflicts(&port_8080).is_ok());
     }
 }

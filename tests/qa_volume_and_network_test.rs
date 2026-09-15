@@ -110,3 +110,58 @@ fn test_qa_network_default_protection_and_ipam() {
     // Cleanup
     store.remove(&net_name).unwrap();
 }
+
+#[test]
+fn test_qa_port_collision_guard() {
+    use boxr::guardrails::PortCollisionGuard;
+    use boxr::storage::{ContainerRecord, ContainerStatus, ContainerStore};
+
+    let store = ContainerStore::new();
+
+    // Register dummy running container with port 9876
+    let test_cid = format!(
+        "qa-port-{}",
+        hex::encode(boxr::storage::container_store::rand_id())
+    );
+    let record = ContainerRecord {
+        id: test_cid.clone(),
+        name: format!("qa-port-cont-{}", &test_cid[..6]),
+        image: "alpine:latest".to_string(),
+        command: vec!["sleep".to_string()],
+        created_at: chrono::Utc::now(),
+        status: ContainerStatus::Running,
+        bundle_path: "/tmp".to_string(),
+        restart_policy: boxr::health::RestartPolicy::No,
+        health_status: boxr::health::HealthStatus::None,
+        restart_count: 0,
+        ports: vec![PortMapping {
+            host_ip: None,
+            host_port: 9876,
+            container_port: 80,
+            protocol: "tcp".to_string(),
+        }],
+    };
+    store.add(record).unwrap();
+
+    // Trying to bind conflicting port 9876 must fail
+    let conflict_port = vec![PortMapping {
+        host_ip: None,
+        host_port: 9876,
+        container_port: 8080,
+        protocol: "tcp".to_string(),
+    }];
+    let res = PortCollisionGuard::ensure_no_conflicts(&conflict_port);
+    assert!(res.is_err(), "Expected port collision error for port 9876");
+
+    // Non-conflicting port 9877 must pass
+    let non_conflict_port = vec![PortMapping {
+        host_ip: None,
+        host_port: 9877,
+        container_port: 80,
+        protocol: "tcp".to_string(),
+    }];
+    assert!(PortCollisionGuard::ensure_no_conflicts(&non_conflict_port).is_ok());
+
+    // Cleanup
+    let _ = store.remove(&test_cid);
+}

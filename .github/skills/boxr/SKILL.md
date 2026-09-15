@@ -51,11 +51,15 @@ Use this skill when developing, debugging, benchmarking, or packaging `boxr` (th
 
 1. **Log Rotation (`LogRotator`)**:
    - Size-based log rotation (`max-size`, `max-files`) for container `logs.txt` and system `events.jsonl` (e.g. 5MB/10MB limits with backup shifting `.1`, `.2`, `.3`).
-2. **Disk Space Protection (`DiskGuard`)**:
+2. **Host Port Collision Guard (`PortCollisionGuard`)**:
+   - Inspects existing running containers to prevent two containers from binding the same host IP/port and protocol.
+3. **Circular Dependency Detection (`ComposeProject::dependency_order`)**:
+   - Depth-first cycle detection in `docker-compose.yml` (`depends_on`), blocking circular service deadlock with descriptive error messages.
+4. **Disk Space Protection (`DiskGuard`)**:
    - Proactive `statvfs` check (`f_bavail * f_frsize`) ensuring available space + 100MB margin before downloading layers.
-3. **Orphan & Zombie Reaper (`ProcessReaper`)**:
+5. **Orphan & Zombie Reaper (`ProcessReaper`)**:
    - Self-healing recovery checking `vm.pid` via `libc::kill(pid, 0) == 0`. Transitions abandoned containers to `Status::Exited(137)`.
-4. **Graceful Stop Supervisor**:
+6. **Graceful Stop Supervisor**:
    - Sends `SIGTERM` first, polls for clean exit up to timeout, then escalates to `SIGKILL` to prevent unkillable hanging processes.
 
 ---
