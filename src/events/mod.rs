@@ -71,6 +71,8 @@ impl EventManager {
             let _ = fs::create_dir_all(parent);
         }
 
+        crate::guardrails::LogRotator::rotate_events_if_needed();
+
         if let Ok(mut file) = OpenOptions::new()
             .create(true)
             .append(true)

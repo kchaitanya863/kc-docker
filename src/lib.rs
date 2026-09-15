@@ -39,6 +39,7 @@ pub mod completions;
 pub mod compose;
 pub mod daemon;
 pub mod events;
+pub mod guardrails;
 pub mod health;
 pub mod kube;
 pub mod network;
@@ -392,6 +393,11 @@ pub async fn pull_image_with_platform(
 
     let home = storage::boxr_home();
     let layers_dir = home.join("layers");
+    fs::create_dir_all(&layers_dir)?;
+
+    let needed_size: u64 = manifest.layers.iter().map(|l| l.size.max(0) as u64).sum();
+    guardrails::DiskGuard::ensure_headroom(&layers_dir, needed_size)?;
+
     let mut total_size = 0i64;
 
     for layer_desc in &manifest.layers {
@@ -699,11 +705,23 @@ pub fn stop_container(container: &str) -> Result<()> {
         {
             let bundle_path = std::path::PathBuf::from(&c.bundle_path);
             let pid_file = bundle_path.join("vm.pid");
-            if let Ok(pid_str) = std::fs::read_to_string(pid_file) {
+            if let Ok(pid_str) = std::fs::read_to_string(&pid_file) {
                 if let Ok(pid) = pid_str.trim().parse::<i32>() {
                     unsafe {
                         libc::kill(pid, libc::SIGTERM);
                     }
+                    for _ in 0..15 {
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        if unsafe { libc::kill(pid, 0) != 0 } {
+                            break;
+                        }
+                    }
+                    if unsafe { libc::kill(pid, 0) == 0 } {
+                        unsafe {
+                            libc::kill(pid, libc::SIGKILL);
+                        }
+                    }
+                    let _ = std::fs::remove_file(&pid_file);
                 }
             }
         }
@@ -1397,6 +1415,7 @@ pub fn list_images() -> Result<()> {
 }
 
 pub fn list_containers(args: PsArgs) -> Result<()> {
+    let _ = guardrails::ProcessReaper::reap_stale_containers();
     let store = ContainerStore::new();
     let containers = store.list();
 
