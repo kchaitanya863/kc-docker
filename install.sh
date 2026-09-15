@@ -53,15 +53,6 @@ fi
 chmod +x "${BIN_DIR}/boxr"
 echo "✓ Installed boxr binary to ${BIN_DIR}/boxr"
 
-# Create Docker drop-in wrapper
-cat << 'EOF' > "${BIN_DIR}/docker"
-#!/bin/sh
-exec "$HOME/.boxr/bin/boxr" "$@"
-EOF
-
-chmod +x "${BIN_DIR}/docker"
-echo "✓ Installed Docker drop-in wrapper to ${BIN_DIR}/docker"
-
 # Generate shell completions
 "${BIN_DIR}/boxr" completion bash > "${COMPLETIONS_DIR}/boxr.bash" 2>/dev/null || true
 "${BIN_DIR}/boxr" completion zsh > "${COMPLETIONS_DIR}/_boxr" 2>/dev/null || true
@@ -107,7 +98,12 @@ echo "  export PATH=\"\$HOME/.boxr/bin:\$PATH\""
 echo ""
 echo "Verify installation:"
 echo "  boxr --version"
-echo "  docker --version"
+echo ""
+echo "(Optional) Docker Drop-in Alias:"
+echo "  If you want 'docker' commands to transparently use boxr:"
+echo "    boxr alias --install"
+echo "  Or simply add an alias to your shell profile (${RC_FILE}):"
+echo "    alias docker=boxr"
 echo ""
 echo "Run your first container:"
 echo "  boxr run hello-world"

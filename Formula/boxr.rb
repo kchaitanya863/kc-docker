@@ -47,10 +47,11 @@ class Boxr < Formula
 
   def caveats
     <<~EOS
-      To enable the docker drop-in alias wrapper:
+      (Optional) Docker Drop-in Alias:
+      If you want 'docker' commands to transparently invoke boxr:
         boxr alias --install
-      or add to your shell profile:
-        export PATH="$HOME/.boxr/bin:$PATH"
+      or add to your shell profile (~/.zshrc or ~/.bashrc):
+        alias docker="boxr"
     EOS
   end
 

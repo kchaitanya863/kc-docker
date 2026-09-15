@@ -144,12 +144,33 @@ Expand-Archive boxr.zip -DestinationPath C:\ProgramData\boxr
 #### Automated Shell Installer (curl | sh)
 
 ```bash
-# Build & install boxr, Docker drop-in wrapper, and completions
+# Build & install boxr binary and completions
 ./install.sh
 
 # Or install from GitHub:
 curl -fsSL https://raw.githubusercontent.com/kchaitanya863/kc-docker/main/install.sh | sh
 ```
+
+#### (Optional) Docker Drop-in Alias
+If you would like existing `docker` commands to transparently run with `boxr`, you can choose to configure an alias or wrapper:
+
+- **Option A (Recommended wrapper)**: Install a standalone wrapper binary at `~/.boxr/bin/docker`:
+  ```bash
+  boxr alias --install
+  ```
+- **Option B (Shell alias)**: Add an alias to your shell profile (`~/.zshrc`, `~/.bashrc`, or `~/.config/fish/config.fish`):
+  ```bash
+  # Bash / Zsh
+  alias docker="boxr"
+
+  # Fish
+  alias docker "boxr"
+  ```
+- **Option C (Windows PowerShell)**: Add an alias in your PowerShell profile:
+  ```powershell
+  Set-Alias -Name docker -Value boxr
+  ```
+*If you already have Docker installed side-by-side or prefer explicit names, simply invoke `boxr` directly without creating any alias.*
 
 #### Manual Build
 
