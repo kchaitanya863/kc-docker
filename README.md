@@ -324,15 +324,24 @@ The resulting binary will be at `target/release/boxr`.
 ./target/release/boxr pod rm web-pod
 ```
 
-### Daemon REST API
+### Daemon REST API & Background Service
 
 ```bash
-# Start daemon listening on Unix domain socket
+# Start daemon listening on Unix domain socket (or TCP on Windows)
 ./target/release/boxr daemon --socket ~/.boxr/boxr.sock
 
 # Query Docker Engine API
 curl --unix-socket ~/.boxr/boxr.sock http://localhost/_ping
 curl --unix-socket ~/.boxr/boxr.sock http://localhost/version
+curl --unix-socket ~/.boxr/boxr.sock http://localhost/containers/json
+
+# Manage as an always-on background service with autostart on login:
+boxr service install
+boxr service start
+boxr service status
+boxr service stop
+boxr service uninstall
+```
 curl --unix-socket ~/.boxr/boxr.sock http://localhost/containers/json
 ```
 

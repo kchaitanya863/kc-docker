@@ -4,6 +4,7 @@
 //! restart-on-boot and autostart on user login:
 //! - **macOS**: `launchd` user agent (`~/Library/LaunchAgents/com.boxr.daemon.plist`).
 //! - **Linux**: `systemd` user service (`~/.config/systemd/user/boxr.service`).
+//! - **Windows**: Windows Service via `sc.exe` / `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
 
 use crate::storage::boxr_home;
 #[cfg(not(target_os = "windows"))]
@@ -11,7 +12,6 @@ use anyhow::Context;
 use anyhow::{Result, anyhow};
 use std::fs;
 use std::path::PathBuf;
-#[cfg(not(target_os = "windows"))]
 use std::process::Command;
 
 /// Locate current boxr binary on disk
@@ -58,7 +58,45 @@ impl ServiceManager {
 
         #[cfg(target_os = "windows")]
         {
-            println!("Service autostart is managed via Windows Service Manager or Startup task.");
+            let exe = find_boxr_executable();
+            let binpath = format!("\"{}\" daemon", exe.display());
+            let status = Command::new("sc.exe")
+                .args([
+                    "create",
+                    "boxr",
+                    "binPath=",
+                    &binpath,
+                    "start=",
+                    "auto",
+                    "DisplayName=",
+                    "Boxr Container Engine Daemon",
+                ])
+                .status();
+
+            if let Ok(s) = status {
+                if s.success() {
+                    println!(
+                        "✓ Successfully registered Windows Service 'boxr' (Automatic startup)"
+                    );
+                    println!("\nTo start the service now, run:");
+                    println!("  boxr service start");
+                    return Ok(());
+                }
+            }
+
+            // Fallback: Register in Windows CurrentUser Run registry key for per-user autostart
+            let reg_cmd = format!(
+                "Add-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' -Name 'boxr' -Value '\"{}\" daemon' -Force",
+                exe.display()
+            );
+            let _ = Command::new("powershell")
+                .args(["-NoProfile", "-Command", &reg_cmd])
+                .status();
+
+            println!("✓ Registered boxr daemon autostart at user login");
+            println!("  Daemon binary: {}", exe.display());
+            println!("\nTo start the daemon now, run:");
+            println!("  boxr service start");
         }
 
         #[cfg(target_os = "macos")]
@@ -162,7 +200,31 @@ WantedBy=default.target
     pub fn start() -> Result<()> {
         #[cfg(target_os = "windows")]
         {
-            println!("To start daemon on Windows, run 'boxr daemon'");
+            let status = Command::new("net.exe").args(["start", "boxr"]).status();
+
+            if let Ok(s) = status {
+                if s.success() {
+                    println!("✓ Started Windows Service 'boxr'");
+                    println!("  Listening on tcp://127.0.0.1:2375");
+                    return Ok(());
+                }
+            }
+
+            // Fallback: spawn background boxr daemon process
+            let exe = find_boxr_executable();
+            let _ = Command::new("powershell")
+                .args([
+                    "-NoProfile",
+                    "-Command",
+                    &format!(
+                        "Start-Process -FilePath '{}' -ArgumentList 'daemon' -WindowStyle Hidden",
+                        exe.display()
+                    ),
+                ])
+                .spawn();
+
+            println!("✓ Started background boxr daemon process");
+            println!("  Listening on tcp://127.0.0.1:2375");
         }
 
         #[cfg(target_os = "macos")]
@@ -221,7 +283,11 @@ WantedBy=default.target
     pub fn stop() -> Result<()> {
         #[cfg(target_os = "windows")]
         {
-            println!("To stop daemon on Windows, stop the running boxr process");
+            let _ = Command::new("net.exe").args(["stop", "boxr"]).status();
+            let _ = Command::new("taskkill")
+                .args(["/F", "/IM", "boxr.exe"])
+                .output();
+            println!("✓ Stopped boxr daemon service");
         }
 
         #[cfg(target_os = "macos")]
@@ -321,6 +387,41 @@ WantedBy=default.target
             );
         }
 
+        #[cfg(target_os = "windows")]
+        {
+            let is_installed = Command::new("sc.exe")
+                .args(["query", "boxr"])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+
+            println!(
+                "{:<24} : {}",
+                "Configuration",
+                if is_installed {
+                    "Installed (Windows Service)"
+                } else {
+                    "Not installed / User Run Key"
+                }
+            );
+
+            let is_running = Command::new("tasklist")
+                .args(["/FI", "IMAGENAME eq boxr.exe"])
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).contains("boxr.exe"))
+                .unwrap_or(false);
+
+            println!(
+                "{:<24} : {}",
+                "Running State",
+                if is_running {
+                    "Active (Running)"
+                } else {
+                    "Inactive (Stopped)"
+                }
+            );
+        }
+
         let sock = boxr_home().join("boxr.sock");
         println!("{:<24} : {}", "Socket File", sock.display());
         println!(
@@ -340,6 +441,16 @@ WantedBy=default.target
     /// Uninstall service definition and remove autostart
     pub fn uninstall() -> Result<()> {
         Self::stop()?;
+
+        #[cfg(target_os = "windows")]
+        {
+            let _ = Command::new("sc.exe").args(["delete", "boxr"]).status();
+            let reg_del = "Remove-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' -Name 'boxr' -ErrorAction SilentlyContinue";
+            let _ = Command::new("powershell")
+                .args(["-NoProfile", "-Command", reg_del])
+                .status();
+            println!("✓ Uninstalled Windows service / autostart registration");
+        }
 
         #[cfg(target_os = "macos")]
         {

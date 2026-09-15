@@ -62,10 +62,11 @@ Use this skill when developing, debugging, benchmarking, or packaging `boxr` (th
 
 ## 4. Background Service Management (`src/service/mod.rs`)
 
-- **`boxr daemon`**: Unix domain socket server (`~/.boxr/boxr.sock`) implementing Docker Engine REST API (`/_ping`, `/version`, `/info`, `/containers`, `/images`).
+- **`boxr daemon`**: Unix domain socket server (`~/.boxr/boxr.sock`) on Unix, TCP socket (`127.0.0.1:2375`) on Windows implementing Docker Engine REST API (`/_ping`, `/version`, `/info`, `/containers`, `/images`).
 - **Autostart on Login / Boot**:
   - **macOS**: `~/Library/LaunchAgents/com.boxr.daemon.plist` managed via `launchctl` and `boxr service [install|start|stop|status|uninstall]`.
   - **Linux**: `~/.config/systemd/user/boxr.service` managed via `systemctl --user`.
+  - **Windows**: Windows Service via `sc.exe create boxr` or `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
   - **Homebrew Services**: `brew services start boxr` via native `service do ... end` block.
 
 ---
