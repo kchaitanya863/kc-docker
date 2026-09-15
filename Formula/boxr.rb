@@ -1,26 +1,26 @@
 class Boxr < Formula
   desc "Fast, lightweight OCI container engine and runtime written in Rust"
-  homepage "https://github.com/kchaitanya863/homebrew-boxr"
+  homepage "https://github.com/kchaitanya863/homebrew-tap"
   license "Apache-2.0"
   head "https://github.com/kchaitanya863/kc-docker.git", branch: "main"
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/kchaitanya863/homebrew-boxr/releases/download/v0.1.8/boxr-macos-arm64.tar.gz"
-      sha256 "4c0251534adec8e6ce1c6edf604dc2ea6dc2e1876d7309e86a8cce2470ae3361"
+      url "https://github.com/kchaitanya863/homebrew-tap/releases/download/v0.1.18/boxr-macos-arm64.tar.gz"
+      sha256 "73ffad31df982763fb77506cbed08fa6728642e65ad244c1c10c4d2aba8b2966"
     else
-      url "https://github.com/kchaitanya863/homebrew-boxr/releases/download/v0.1.8/boxr-macos-x86_64.tar.gz"
-      sha256 "09cba4337c73c5c70d3527670df7d7fad835282131e7101f186fe379292e06cc"
+      url "https://github.com/kchaitanya863/homebrew-tap/releases/download/v0.1.18/boxr-macos-x86_64.tar.gz"
+      sha256 "926825b73c156a455e588e8768fb6e562a21d86330e9a69898931db63b47fa72"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
-      url "https://github.com/kchaitanya863/homebrew-boxr/releases/download/v0.1.8/boxr-linux-arm64.tar.gz"
-      sha256 "6f02eec53b609ac9f361aa865e6c7501af5b3a2f992343a28dd533a89542e9e5"
+      url "https://github.com/kchaitanya863/homebrew-tap/releases/download/v0.1.18/boxr-linux-arm64.tar.gz"
+      sha256 "1554063cdcd474ded873d43c02b4b9f6f148d8dca00d389cf7463ea9aeea7695"
     else
-      url "https://github.com/kchaitanya863/homebrew-boxr/releases/download/v0.1.8/boxr-linux-x86_64.tar.gz"
-      sha256 "1ef4b94489b2c6618bcdb8e4b8ca48f6e193486fc7cb7207997054a99768027a"
+      url "https://github.com/kchaitanya863/homebrew-tap/releases/download/v0.1.18/boxr-linux-x86_64.tar.gz"
+      sha256 "b5f1a8ae904f43593f65a3a1752dfe40039ae696500e58efb1d1123192c886ac"
     end
   end
 
