@@ -1,7 +1,6 @@
 class Boxr < Formula
   desc "Fast, lightweight OCI container engine and runtime written in Rust"
   homepage "https://github.com/kchaitanya863/homebrew-boxr"
-  version "0.1.8"
   license "Apache-2.0"
   head "https://github.com/kchaitanya863/kc-docker.git", branch: "main"
 
@@ -36,6 +35,14 @@ class Boxr < Formula
     bash_completion.install "completions/boxr.bash" => "boxr" if File.exist?("completions/boxr.bash")
     zsh_completion.install "completions/_boxr" => "_boxr" if File.exist?("completions/_boxr")
     fish_completion.install "completions/boxr.fish" => "boxr.fish" if File.exist?("completions/boxr.fish")
+  end
+
+  service do
+    run [opt_bin/"boxr", "daemon"]
+    keep_alive true
+    log_path var/"log/boxr.log"
+    error_log_path var/"log/boxr.log"
+    working_dir var
   end
 
   def caveats

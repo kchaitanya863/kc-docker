@@ -173,6 +173,29 @@ pub enum Commands {
 
     /// Generate a standard OCI runtime specification (config.json)
     Spec(SpecArgs),
+
+    /// Manage the Boxr background daemon service (launchd on macOS, systemd on Linux)
+    Service(ServiceArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct ServiceArgs {
+    #[command(subcommand)]
+    pub action: ServiceAction,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ServiceAction {
+    /// Install daemon service with autostart at login / boot
+    Install,
+    /// Start the background service
+    Start,
+    /// Stop the background service
+    Stop,
+    /// View the live service status
+    Status,
+    /// Uninstall the service definition
+    Uninstall,
 }
 
 #[derive(Args, Debug, Clone)]

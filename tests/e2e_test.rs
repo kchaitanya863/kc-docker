@@ -237,7 +237,7 @@ fn test_e2e_container_lifecycle_pause_unpause_rename_commit_wait() {
         .output()
         .unwrap();
     assert!(output.status.success());
-    std::thread::sleep(std::time::Duration::from_millis(300));
+    std::thread::sleep(std::time::Duration::from_millis(600));
 
     let output = boxr_cmd(&bin).args(["pause", &name]).output().unwrap();
     assert!(output.status.success());

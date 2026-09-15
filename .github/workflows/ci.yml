@@ -182,3 +182,127 @@ jobs:
           draft: false
           prerelease: false
           generate_release_notes: true
+
+  update-brew-tap:
+    name: Publish Release & Update Homebrew Tap
+    needs: [bump-and-tag, release]
+    if: always() && needs.release.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Homebrew Tap repository
+        uses: actions/checkout@v4
+        with:
+          repository: kchaitanya863/homebrew-boxr
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN || secrets.GITHUB_TOKEN }}
+          path: homebrew-boxr
+
+      - name: Download Release Assets
+        id: dl
+        run: |
+          if [ -n "${{ needs.bump-and-tag.outputs.new_tag }}" ]; then
+            TAG="${{ needs.bump-and-tag.outputs.new_tag }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          mkdir -p assets
+          gh release download "$TAG" --repo ${{ github.repository }} --dir assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Assets to Homebrew Tap Release
+        run: |
+          TAG="${{ steps.dl.outputs.tag }}"
+          cd assets
+          gh release create "$TAG" --repo kchaitanya863/homebrew-boxr --title "Release $TAG" --notes "Release $TAG of Boxr container engine" boxr-*.tar.gz boxr-*.tar.gz.sha256 || \
+          gh release upload "$TAG" --repo kchaitanya863/homebrew-boxr boxr-*.tar.gz boxr-*.tar.gz.sha256 --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Update Formula/boxr.rb
+        run: |
+          TAG="${{ steps.dl.outputs.tag }}"
+
+          MACOS_ARM_SHA=$(awk '{print $1}' assets/boxr-macos-arm64.tar.gz.sha256)
+          MACOS_X86_SHA=$(awk '{print $1}' assets/boxr-macos-x86_64.tar.gz.sha256)
+          LINUX_ARM_SHA=$(awk '{print $1}' assets/boxr-linux-arm64.tar.gz.sha256)
+          LINUX_X86_SHA=$(awk '{print $1}' assets/boxr-linux-x86_64.tar.gz.sha256)
+
+          cat << 'EOF' > homebrew-boxr/Formula/boxr.rb
+          class Boxr < Formula
+            desc "Fast, lightweight OCI container engine and runtime written in Rust"
+            homepage "https://github.com/kchaitanya863/homebrew-boxr"
+            license "Apache-2.0"
+            head "https://github.com/kchaitanya863/kc-docker.git", branch: "main"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/kchaitanya863/homebrew-boxr/releases/download/__TAG__/boxr-macos-arm64.tar.gz"
+                sha256 "__MACOS_ARM_SHA__"
+              else
+                url "https://github.com/kchaitanya863/homebrew-boxr/releases/download/__TAG__/boxr-macos-x86_64.tar.gz"
+                sha256 "__MACOS_X86_SHA__"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.arm?
+                url "https://github.com/kchaitanya863/homebrew-boxr/releases/download/__TAG__/boxr-linux-arm64.tar.gz"
+                sha256 "__LINUX_ARM_SHA__"
+              else
+                url "https://github.com/kchaitanya863/homebrew-boxr/releases/download/__TAG__/boxr-linux-x86_64.tar.gz"
+                sha256 "__LINUX_X86_SHA__"
+              end
+            end
+
+            def install
+              if build.head?
+                system "cargo", "install", *std_cargo_args
+              else
+                bin.install "bin/boxr"
+              end
+
+              # Shell completions
+              bash_completion.install "completions/boxr.bash" => "boxr" if File.exist?("completions/boxr.bash")
+              zsh_completion.install "completions/_boxr" => "_boxr" if File.exist?("completions/_boxr")
+              fish_completion.install "completions/boxr.fish" => "boxr.fish" if File.exist?("completions/boxr.fish")
+            end
+
+            service do
+              run [opt_bin/"boxr", "daemon"]
+              keep_alive true
+              log_path var/"log/boxr.log"
+              error_log_path var/"log/boxr.log"
+              working_dir var
+            end
+
+            def caveats
+              <<~EOS
+                To enable the docker drop-in alias wrapper:
+                  boxr alias --install
+                or add to your shell profile:
+                  export PATH="$HOME/.boxr/bin:$PATH"
+              EOS
+            end
+
+            test do
+              assert_match "boxr", shell_output("#{bin}/boxr --version")
+              assert_match "Containers:", shell_output("#{bin}/boxr info")
+            end
+          end
+          EOF
+
+          sed -i "s/__TAG__/${TAG}/g" homebrew-boxr/Formula/boxr.rb
+          sed -i "s/__MACOS_ARM_SHA__/${MACOS_ARM_SHA}/g" homebrew-boxr/Formula/boxr.rb
+          sed -i "s/__MACOS_X86_SHA__/${MACOS_X86_SHA}/g" homebrew-boxr/Formula/boxr.rb
+          sed -i "s/__LINUX_ARM_SHA__/${LINUX_ARM_SHA}/g" homebrew-boxr/Formula/boxr.rb
+          sed -i "s/__LINUX_X86_SHA__/${LINUX_X86_SHA}/g" homebrew-boxr/Formula/boxr.rb
+
+          cd homebrew-boxr
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore(release): bump formula to ${TAG}" || true
+          git push origin main || true
+        env:
+          GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN || secrets.GITHUB_TOKEN }}
+

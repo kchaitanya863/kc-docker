@@ -47,6 +47,7 @@ pub mod oci;
 pub mod pod;
 pub mod runtime;
 pub mod security;
+pub mod service;
 pub mod stats;
 pub mod storage;
 pub mod system;
@@ -353,6 +354,16 @@ pub async fn run_cli(cli: Cli) -> Result<i32> {
         }
         Commands::Spec(args) => {
             generate_spec(args)?;
+            Ok(0)
+        }
+        Commands::Service(args) => {
+            match args.action {
+                cli::ServiceAction::Install => service::ServiceManager::install()?,
+                cli::ServiceAction::Start => service::ServiceManager::start()?,
+                cli::ServiceAction::Stop => service::ServiceManager::stop()?,
+                cli::ServiceAction::Status => service::ServiceManager::status()?,
+                cli::ServiceAction::Uninstall => service::ServiceManager::uninstall()?,
+            }
             Ok(0)
         }
     }
