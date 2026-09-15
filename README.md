@@ -89,11 +89,14 @@ boxr/
 #### Homebrew (macOS & Linux)
 
 ```bash
-# Add the boxr tap
-brew tap kchaitanya863/boxr
+# Add the official tap (central hub for all formulae)
+brew tap kchaitanya863/tap
 
-# Install boxr
+# Install boxr (installs binary + bash/zsh/fish completions)
 brew install boxr
+
+# (Optional) Run daemon as an always-on background service with autostart on login:
+brew services start boxr
 ```
 
 #### Automated Installer (Recommended)

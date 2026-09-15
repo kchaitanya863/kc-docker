@@ -192,9 +192,9 @@ jobs:
       - name: Checkout Homebrew Tap repository
         uses: actions/checkout@v4
         with:
-          repository: kchaitanya863/homebrew-boxr
+          repository: kchaitanya863/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN || secrets.GITHUB_TOKEN }}
-          path: homebrew-boxr
+          path: homebrew-tap
 
       - name: Download Release Assets
         id: dl
@@ -214,8 +214,8 @@ jobs:
         run: |
           TAG="${{ steps.dl.outputs.tag }}"
           cd assets
-          gh release create "$TAG" --repo kchaitanya863/homebrew-boxr --title "Release $TAG" --notes "Release $TAG of Boxr container engine" boxr-*.tar.gz boxr-*.tar.gz.sha256 || \
-          gh release upload "$TAG" --repo kchaitanya863/homebrew-boxr boxr-*.tar.gz boxr-*.tar.gz.sha256 --clobber
+          gh release create "$TAG" --repo kchaitanya863/homebrew-tap --title "Release $TAG" --notes "Release $TAG of Boxr container engine" boxr-*.tar.gz boxr-*.tar.gz.sha256 || \
+          gh release upload "$TAG" --repo kchaitanya863/homebrew-tap boxr-*.tar.gz boxr-*.tar.gz.sha256 --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN || secrets.GITHUB_TOKEN }}
 
@@ -228,29 +228,29 @@ jobs:
           LINUX_ARM_SHA=$(awk '{print $1}' assets/boxr-linux-arm64.tar.gz.sha256)
           LINUX_X86_SHA=$(awk '{print $1}' assets/boxr-linux-x86_64.tar.gz.sha256)
 
-          cat << 'EOF' > homebrew-boxr/Formula/boxr.rb
+          cat << 'EOF' > homebrew-tap/Formula/boxr.rb
           class Boxr < Formula
             desc "Fast, lightweight OCI container engine and runtime written in Rust"
-            homepage "https://github.com/kchaitanya863/homebrew-boxr"
+            homepage "https://github.com/kchaitanya863/homebrew-tap"
             license "Apache-2.0"
             head "https://github.com/kchaitanya863/kc-docker.git", branch: "main"
 
             on_macos do
               if Hardware::CPU.arm?
-                url "https://github.com/kchaitanya863/homebrew-boxr/releases/download/__TAG__/boxr-macos-arm64.tar.gz"
+                url "https://github.com/kchaitanya863/homebrew-tap/releases/download/__TAG__/boxr-macos-arm64.tar.gz"
                 sha256 "__MACOS_ARM_SHA__"
               else
-                url "https://github.com/kchaitanya863/homebrew-boxr/releases/download/__TAG__/boxr-macos-x86_64.tar.gz"
+                url "https://github.com/kchaitanya863/homebrew-tap/releases/download/__TAG__/boxr-macos-x86_64.tar.gz"
                 sha256 "__MACOS_X86_SHA__"
               end
             end
 
             on_linux do
               if Hardware::CPU.arm?
-                url "https://github.com/kchaitanya863/homebrew-boxr/releases/download/__TAG__/boxr-linux-arm64.tar.gz"
+                url "https://github.com/kchaitanya863/homebrew-tap/releases/download/__TAG__/boxr-linux-arm64.tar.gz"
                 sha256 "__LINUX_ARM_SHA__"
               else
-                url "https://github.com/kchaitanya863/homebrew-boxr/releases/download/__TAG__/boxr-linux-x86_64.tar.gz"
+                url "https://github.com/kchaitanya863/homebrew-tap/releases/download/__TAG__/boxr-linux-x86_64.tar.gz"
                 sha256 "__LINUX_X86_SHA__"
               end
             end
@@ -292,13 +292,13 @@ jobs:
           end
           EOF
 
-          sed -i "s/__TAG__/${TAG}/g" homebrew-boxr/Formula/boxr.rb
-          sed -i "s/__MACOS_ARM_SHA__/${MACOS_ARM_SHA}/g" homebrew-boxr/Formula/boxr.rb
-          sed -i "s/__MACOS_X86_SHA__/${MACOS_X86_SHA}/g" homebrew-boxr/Formula/boxr.rb
-          sed -i "s/__LINUX_ARM_SHA__/${LINUX_ARM_SHA}/g" homebrew-boxr/Formula/boxr.rb
-          sed -i "s/__LINUX_X86_SHA__/${LINUX_X86_SHA}/g" homebrew-boxr/Formula/boxr.rb
+          sed -i "s/__TAG__/${TAG}/g" homebrew-tap/Formula/boxr.rb
+          sed -i "s/__MACOS_ARM_SHA__/${MACOS_ARM_SHA}/g" homebrew-tap/Formula/boxr.rb
+          sed -i "s/__MACOS_X86_SHA__/${MACOS_X86_SHA}/g" homebrew-tap/Formula/boxr.rb
+          sed -i "s/__LINUX_ARM_SHA__/${LINUX_ARM_SHA}/g" homebrew-tap/Formula/boxr.rb
+          sed -i "s/__LINUX_X86_SHA__/${LINUX_X86_SHA}/g" homebrew-tap/Formula/boxr.rb
 
-          cd homebrew-boxr
+          cd homebrew-tap
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git commit -am "chore(release): bump formula to ${TAG}" || true
