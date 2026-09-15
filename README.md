@@ -86,6 +86,16 @@ boxr/
 
 ### Installation
 
+#### Homebrew (macOS & Linux)
+
+```bash
+# Add the boxr tap
+brew tap kchaitanya863/boxr
+
+# Install boxr
+brew install boxr
+```
+
 #### Automated Installer (Recommended)
 
 ```bash
