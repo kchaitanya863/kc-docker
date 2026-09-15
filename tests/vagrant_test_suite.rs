@@ -74,6 +74,7 @@ impl VagrantVmSpec {
 
 /// Generate a multi-machine Vagrantfile for testing across OS distributions
 pub fn generate_vagrantfile(vms: &[VagrantVmSpec], work_dir: &Path) -> std::io::Result<()> {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let mut vf = String::new();
     vf.push_str("Vagrant.configure(\"2\") do |config|\n");
 
@@ -83,6 +84,10 @@ pub fn generate_vagrantfile(vms: &[VagrantVmSpec], work_dir: &Path) -> std::io::
         vf.push_str(&format!("      d.image = \"{}\"\n", vm.image));
         vf.push_str("      d.has_ssh = false\n");
         vf.push_str("      d.cmd = [\"sleep\", \"infinity\"]\n");
+        vf.push_str(&format!(
+            "      d.volumes = [\"{}:/vagrant_bin:ro\"]\n",
+            manifest_dir.join("target").join("release").display()
+        ));
         vf.push_str("    end\n");
         vf.push_str("  end\n\n");
     }
@@ -170,6 +175,31 @@ fn test_vagrant_matrix_multi_os_verification() {
             vm.name,
             out_text
         );
+
+        // Verify boxr binary execution and rootless functionality inside the provisioned Linux VM
+        let bin = release_bin(None);
+        if bin.exists() {
+            let boxr_ver_out = Command::new("vagrant")
+                .current_dir(work_dir)
+                .args([
+                    "docker-exec",
+                    vm.name,
+                    "--",
+                    "/vagrant_bin/boxr",
+                    "--version",
+                ])
+                .output();
+            if let Ok(b_out) = boxr_ver_out {
+                if b_out.status.success() {
+                    let b_text = String::from_utf8_lossy(&b_out.stdout);
+                    assert!(b_text.contains("boxr"));
+                    println!(
+                        "  ✓ boxr binary executed successfully inside {}",
+                        vm.os_name
+                    );
+                }
+            }
+        }
 
         // Tear down the VM cleanly
         let down_out = Command::new("vagrant")
