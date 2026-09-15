@@ -265,6 +265,7 @@ impl ComposeProject {
                 health_cmd: None,
                 platform: None,
                 gpus: None,
+                workdir: None,
                 image: image_name,
                 command: cmd_vec,
             };

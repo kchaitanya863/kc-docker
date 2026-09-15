@@ -181,3 +181,42 @@ fn test_vagrant_matrix_multi_os_verification() {
         println!("✓ Verified and cleanly destroyed {}", vm.os_name);
     }
 }
+
+#[test]
+fn test_windows_container_image_and_runtime_guard() {
+    let bin = release_bin(None);
+    if !bin.exists() {
+        return;
+    }
+
+    // 1. Inspect Windows image architecture and OS metadata
+    let inspect_out = Command::new(&bin)
+        .args(["inspect", "windows/nanoserver:ltsc2022"])
+        .output()
+        .unwrap();
+    if inspect_out.status.success() {
+        let stdout = String::from_utf8_lossy(&inspect_out.stdout);
+        assert!(stdout.contains("\"Os\": \"windows\"") || stdout.contains("\"os\": \"windows\""));
+    }
+
+    // 2. On macOS/Linux, running Windows container should trigger clean host requirement error
+    #[cfg(not(target_os = "windows"))]
+    {
+        let run_out = Command::new(&bin)
+            .args([
+                "run",
+                "--rm",
+                "--platform",
+                "windows/amd64",
+                "windows/nanoserver:ltsc2022",
+                "cmd.exe",
+                "/c",
+                "ver",
+            ])
+            .output()
+            .unwrap();
+        assert!(!run_out.status.success());
+        let err = String::from_utf8_lossy(&run_out.stderr);
+        assert!(err.contains("Windows container execution requires a native Windows host"));
+    }
+}

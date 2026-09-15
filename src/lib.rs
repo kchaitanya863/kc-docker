@@ -557,6 +557,10 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
         env_override,
     );
 
+    if let Some(w) = &args.workdir {
+        spec.process.cwd = w.clone();
+    }
+
     let mut annotations = HashMap::new();
     annotations.insert(
         "org.opencontainers.image.architecture".to_string(),
@@ -739,6 +743,18 @@ pub fn stop_container(container: &str) -> Result<()> {
                         }
                     }
                     let _ = std::fs::remove_file(&pid_file);
+                }
+            }
+        }
+        #[cfg(target_os = "windows")]
+        {
+            let bundle_path = std::path::PathBuf::from(&c.bundle_path);
+            let pid_file = bundle_path.join("vm.pid");
+            if let Ok(pid_str) = std::fs::read_to_string(pid_file) {
+                if let Ok(pid) = pid_str.trim().parse::<u32>() {
+                    let _ = std::process::Command::new("taskkill")
+                        .args(["/F", "/PID", &pid.to_string()])
+                        .output();
                 }
             }
         }
@@ -1103,6 +1119,31 @@ pub fn wait_container(args: &cli::WaitArgs) -> Result<i32> {
                     let is_running = if let Ok(pid_str) = std::fs::read_to_string(pid_file) {
                         if let Ok(pid) = pid_str.trim().parse::<i32>() {
                             unsafe { libc::kill(pid, 0) == 0 }
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+                    if !is_running {
+                        let _ = c_store.update_status(&cont.id, ContainerStatus::Exited(0));
+                        println!("0");
+                        return Ok(0);
+                    }
+                }
+                #[cfg(target_os = "windows")]
+                {
+                    let bundle_path = std::path::PathBuf::from(&cont.bundle_path);
+                    let pid_file = bundle_path.join("vm.pid");
+                    let is_running = if let Ok(pid_str) = std::fs::read_to_string(pid_file) {
+                        if let Ok(pid) = pid_str.trim().parse::<u32>() {
+                            std::process::Command::new("tasklist")
+                                .args(["/FI", &format!("PID eq {}", pid)])
+                                .output()
+                                .map(|o| {
+                                    String::from_utf8_lossy(&o.stdout).contains(&pid.to_string())
+                                })
+                                .unwrap_or(false)
                         } else {
                             false
                         }
@@ -1506,6 +1547,18 @@ pub fn remove_container(container: &str) -> Result<()> {
             }
         }
     }
+    #[cfg(target_os = "windows")]
+    {
+        let bundle_path = std::path::PathBuf::from(&removed.bundle_path);
+        let pid_file = bundle_path.join("vm.pid");
+        if let Ok(pid_str) = std::fs::read_to_string(pid_file) {
+            if let Ok(pid) = pid_str.trim().parse::<u32>() {
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/F", "/PID", &pid.to_string()])
+                    .output();
+            }
+        }
+    }
     println!("{}", removed.id);
     Ok(())
 }
@@ -1573,6 +1626,10 @@ pub async fn create_only_container(args: RunArgs) -> Result<String> {
         cmd_override,
         env_override,
     );
+
+    if let Some(w) = &args.workdir {
+        spec.process.cwd = w.clone();
+    }
 
     let mut annotations = HashMap::new();
     annotations.insert(

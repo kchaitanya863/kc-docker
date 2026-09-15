@@ -114,6 +114,7 @@ impl KubeManager {
                 health_cmd: None,
                 platform: None,
                 gpus: None,
+                workdir: None,
                 image: c_spec.image.clone(),
                 command: c_spec.command.clone().unwrap_or_default(),
             };

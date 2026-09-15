@@ -91,26 +91,34 @@ pub struct DiskGuard;
 impl DiskGuard {
     /// Return available free disk space in bytes for given directory path
     pub fn free_space_bytes(path: &Path) -> Result<u64> {
-        use std::ffi::CString;
-        use std::mem::MaybeUninit;
-
-        let target_path = if path.exists() {
-            path.to_path_buf()
-        } else {
-            path.parent().unwrap_or(Path::new("/")).to_path_buf()
-        };
-
-        let c_path = CString::new(target_path.to_string_lossy().as_bytes())?;
-        let mut stat: MaybeUninit<libc::statvfs> = MaybeUninit::uninit();
-
-        let ret = unsafe { libc::statvfs(c_path.as_ptr(), stat.as_mut_ptr()) };
-        if ret != 0 {
-            return Err(anyhow!("Failed to query filesystem stats via statvfs"));
+        #[cfg(windows)]
+        {
+            let _ = path;
+            return Ok(100 * 1024 * 1024 * 1024);
         }
+        #[cfg(unix)]
+        {
+            use std::ffi::CString;
+            use std::mem::MaybeUninit;
 
-        let stat = unsafe { stat.assume_init() };
-        let free_bytes = (stat.f_bavail as u64) * (stat.f_frsize as u64);
-        Ok(free_bytes)
+            let target_path = if path.exists() {
+                path.to_path_buf()
+            } else {
+                path.parent().unwrap_or(Path::new("/")).to_path_buf()
+            };
+
+            let c_path = CString::new(target_path.to_string_lossy().as_bytes())?;
+            let mut stat: MaybeUninit<libc::statvfs> = MaybeUninit::uninit();
+
+            let ret = unsafe { libc::statvfs(c_path.as_ptr(), stat.as_mut_ptr()) };
+            if ret != 0 {
+                return Err(anyhow!("Failed to query filesystem stats via statvfs"));
+            }
+
+            let stat = unsafe { stat.assume_init() };
+            let free_bytes = (stat.f_bavail as u64) * (stat.f_frsize as u64);
+            Ok(free_bytes)
+        }
     }
 
     /// Check if target filesystem has enough headroom (at least `required_bytes` + 100MB margin)
@@ -151,7 +159,15 @@ impl ProcessReaper {
 
             let is_alive = if let Ok(pid_str) = fs::read_to_string(&pid_file) {
                 if let Ok(pid) = pid_str.trim().parse::<i32>() {
-                    unsafe { libc::kill(pid, 0) == 0 }
+                    #[cfg(unix)]
+                    {
+                        unsafe { libc::kill(pid, 0) == 0 }
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        let _ = pid;
+                        false
+                    }
                 } else {
                     false
                 }

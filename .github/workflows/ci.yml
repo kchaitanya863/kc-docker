@@ -23,7 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -37,6 +37,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Check code formatting
+        if: matrix.os != 'windows-latest'
         run: cargo fmt --all -- --check
 
       - name: Run Clippy Linter
@@ -120,6 +121,11 @@ jobs:
             target: x86_64-apple-darwin
             artifact_name: boxr-macos-x86_64.tar.gz
             use_musl: false
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: boxr-windows-x86_64.zip
+            use_musl: false
+            is_windows: true
     steps:
       - name: Determine Target Tag
         id: tag_info
@@ -150,7 +156,8 @@ jobs:
       - name: Build Release Binary
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Package Release Artifact
+      - name: Package Release Artifact (Unix)
+        if: "!matrix.is_windows"
         run: |
           mkdir -p package/bin package/completions
           cp target/${{ matrix.target }}/release/boxr package/bin/
@@ -164,13 +171,31 @@ jobs:
 
           tar -czvf ${{ matrix.artifact_name }} -C package .
 
-      - name: Generate SHA-256 Checksum
+      - name: Package Release Artifact (Windows)
+        if: matrix.is_windows
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path package/bin
+          Copy-Item target/${{ matrix.target }}/release/boxr.exe package/bin/
+          Copy-Item README.md package/
+          if (Test-Path LICENSE) { Copy-Item LICENSE package/ }
+          Compress-Archive -Path package/* -DestinationPath ${{ matrix.artifact_name }}
+
+      - name: Generate SHA-256 Checksum (Unix)
+        if: "!matrix.is_windows"
         run: |
           if command -v shasum >/dev/null 2>&1; then
             shasum -a 256 ${{ matrix.artifact_name }} > ${{ matrix.artifact_name }}.sha256
           else
             sha256sum ${{ matrix.artifact_name }} > ${{ matrix.artifact_name }}.sha256
           fi
+
+      - name: Generate SHA-256 Checksum (Windows)
+        if: matrix.is_windows
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash ${{ matrix.artifact_name }} -Algorithm SHA256).Hash.ToLower()
+          "$hash  ${{ matrix.artifact_name }}" | Out-File -Encoding ascii ${{ matrix.artifact_name }}.sha256
 
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v2
@@ -215,8 +240,8 @@ jobs:
         run: |
           TAG="${{ steps.dl.outputs.tag }}"
           cd assets
-          gh release create "$TAG" --repo kchaitanya863/homebrew-tap --title "Release $TAG" --notes "Release $TAG of Boxr container engine" boxr-*.tar.gz boxr-*.tar.gz.sha256 || \
-          gh release upload "$TAG" --repo kchaitanya863/homebrew-tap boxr-*.tar.gz boxr-*.tar.gz.sha256 --clobber
+          gh release create "$TAG" --repo kchaitanya863/homebrew-tap --title "Release $TAG" --notes "Release $TAG of Boxr container engine" boxr-* || \
+          gh release upload "$TAG" --repo kchaitanya863/homebrew-tap boxr-* --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN || secrets.GITHUB_TOKEN }}
 

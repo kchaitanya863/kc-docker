@@ -233,6 +233,10 @@ pub struct RunArgs {
     #[arg(short = 'v', long = "volume")]
     pub volumes: Vec<String>,
 
+    /// Working directory inside the container
+    #[arg(short = 'w', long = "workdir")]
+    pub workdir: Option<String>,
+
     #[arg(long = "memory")]
     pub memory: Option<String>,
 

@@ -159,6 +159,16 @@ pub fn execute_bundle(
 
     let cmd_args = &spec.process.args[1..];
 
+    if let Some(ann) = &spec.annotations {
+        if let Some(platform) = ann.get("boxr.platform") {
+            if platform.starts_with("windows") {
+                return Err(anyhow!(
+                    "Windows container execution requires a native Windows host (Windows Server or Windows 10/11 with Containers feature enabled). The OCI image was successfully downloaded and stored locally."
+                ));
+            }
+        }
+    }
+
     let runner_bin = ensure_vz_runner()?;
     let (kernel_path, initrd_path) = ensure_vm_assets()?;
 
@@ -175,6 +185,7 @@ pub fn execute_bundle(
     run_script.push_str("mount -t sysfs sysfs /sys 2>/dev/null || true\n");
     run_script.push_str("mount -t devtmpfs devtmpfs /dev 2>/dev/null || true\n");
     run_script.push_str("ip link set lo up 2>/dev/null || ifconfig lo up 2>/dev/null || true\n");
+    run_script.push_str("if [ ! -s /etc/resolv.conf ]; then printf 'nameserver 1.1.1.1\\nnameserver 8.8.8.8\\n' > /etc/resolv.conf 2>/dev/null || true; fi\n");
     run_script
         .push_str("mkdir -p /tmp /data 2>/dev/null; chmod 1777 /tmp /data 2>/dev/null || true\n");
 
