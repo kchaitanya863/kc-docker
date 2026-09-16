@@ -168,21 +168,10 @@ jobs:
             is_windows: true
             shell: cmd /C call {0}
     steps:
-      - name: Determine Target Tag
-        id: tag_info
-        shell: bash
-        run: |
-          if [ -n "${{ needs.bump-and-tag.outputs.new_tag }}" ]; then
-            TAG="${{ needs.bump-and-tag.outputs.new_tag }}"
-          else
-            TAG="${GITHUB_REF#refs/tags/}"
-          fi
-          echo "release_tag=$TAG" >> "$GITHUB_OUTPUT"
-
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ steps.tag_info.outputs.release_tag }}
+          ref: ${{ needs.bump-and-tag.outputs.new_tag || github.ref_name }}
           submodules: false
 
       - name: Install musl-tools (Linux)
@@ -256,7 +245,7 @@ jobs:
       - name: Build Debian Package (.deb)
         if: matrix.build_pkg
         run: |
-          TAG="${{ steps.tag_info.outputs.release_tag }}"
+          TAG="${{ needs.bump-and-tag.outputs.new_tag || github.ref_name }}"
           VER="${TAG#v}"
           chmod +x packaging/deb/build-deb.sh
           ./packaging/deb/build-deb.sh "target/${{ matrix.target }}/release/boxr" "$VER" "${{ matrix.deb_arch }}" .
@@ -265,7 +254,7 @@ jobs:
       - name: Build RPM Package (.rpm)
         if: matrix.build_pkg
         run: |
-          TAG="${{ steps.tag_info.outputs.release_tag }}"
+          TAG="${{ needs.bump-and-tag.outputs.new_tag || github.ref_name }}"
           VER="${TAG#v}"
           sudo apt-get install -y rpm
           mkdir -p rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
@@ -278,13 +267,13 @@ jobs:
         if: matrix.is_windows
         shell: cmd
         run: |
-          powershell -Command "$tag = '${{ steps.tag_info.outputs.release_tag }}'; $ver = $tag.TrimStart('v'); $hash = (Get-FileHash ${{ matrix.artifact_name }} -Algorithm SHA256).Hash.ToLower(); (Get-Content packaging/chocolatey/boxr.nuspec) -replace '__VERSION__', $ver | Set-Content packaging/chocolatey/boxr.nuspec; (Get-Content packaging/chocolatey/tools/chocolateyinstall.ps1) -replace '__TAG__', $tag -replace '__WINDOWS_SHA256__', $hash | Set-Content packaging/chocolatey/tools/chocolateyinstall.ps1; if (Get-Command choco -ErrorAction SilentlyContinue) { choco pack packaging/chocolatey/boxr.nuspec --outputdirectory . }"
+          powershell -Command "$tag = '${{ needs.bump-and-tag.outputs.new_tag || github.ref_name }}'; $ver = $tag.TrimStart('v'); $hash = (Get-FileHash ${{ matrix.artifact_name }} -Algorithm SHA256).Hash.ToLower(); (Get-Content packaging/chocolatey/boxr.nuspec) -replace '__VERSION__', $ver | Set-Content packaging/chocolatey/boxr.nuspec; (Get-Content packaging/chocolatey/tools/chocolateyinstall.ps1) -replace '__TAG__', $tag -replace '__WINDOWS_SHA256__', $hash | Set-Content packaging/chocolatey/tools/chocolateyinstall.ps1; if (Get-Command choco -ErrorAction SilentlyContinue) { choco pack packaging/chocolatey/boxr.nuspec --outputdirectory . }"
 
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.tag_info.outputs.release_tag }}
-          name: Release ${{ steps.tag_info.outputs.release_tag }}
+          tag_name: ${{ needs.bump-and-tag.outputs.new_tag || github.ref_name }}
+          name: Release ${{ needs.bump-and-tag.outputs.new_tag || github.ref_name }}
           files: |
             ${{ matrix.artifact_name }}
             ${{ matrix.artifact_name }}.sha256
@@ -341,10 +330,10 @@ jobs:
         run: |
           TAG="${{ steps.dl.outputs.tag }}"
 
-          MACOS_ARM_SHA=$(awk '{print $1}' assets/boxr-macos-arm64.tar.gz.sha256)
-          MACOS_X86_SHA=$(awk '{print $1}' assets/boxr-macos-x86_64.tar.gz.sha256)
-          LINUX_ARM_SHA=$(awk '{print $1}' assets/boxr-linux-arm64.tar.gz.sha256)
-          LINUX_X86_SHA=$(awk '{print $1}' assets/boxr-linux-x86_64.tar.gz.sha256)
+          MACOS_ARM_SHA=$(cat assets/boxr-macos-arm64.tar.gz.sha256 2>/dev/null | awk '{print $1}' || echo "")
+          MACOS_X86_SHA=$(cat assets/boxr-macos-x86_64.tar.gz.sha256 2>/dev/null | awk '{print $1}' || echo "$MACOS_ARM_SHA")
+          LINUX_ARM_SHA=$(cat assets/boxr-linux-arm64.tar.gz.sha256 2>/dev/null | awk '{print $1}' || echo "")
+          LINUX_X86_SHA=$(cat assets/boxr-linux-x86_64.tar.gz.sha256 2>/dev/null | awk '{print $1}' || echo "$LINUX_ARM_SHA")
 
           cat << 'EOF' > homebrew-tap/Formula/boxr.rb
           class Boxr < Formula
