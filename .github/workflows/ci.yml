@@ -103,6 +103,9 @@ jobs:
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !startsWith(github.event.head_commit.message, 'chore(release):')
     runs-on: [self-hosted, Linux]
+    defaults:
+      run:
+        shell: bash
     outputs:
       new_tag: ${{ steps.version.outputs.tag }}
       new_version: ${{ steps.version.outputs.version }}
@@ -151,6 +154,9 @@ jobs:
     needs: [test, bump-and-tag]
     if: always() && needs.test.result == 'success' && (needs.bump-and-tag.result == 'success' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ${{ matrix.runs-on }}
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
     strategy:
       fail-fast: false
       matrix:
@@ -162,15 +168,20 @@ jobs:
             build_pkg: true
             deb_arch: arm64
             rpm_arch: aarch64
+            is_windows: false
+            shell: bash
           - runs-on: [self-hosted, macOS]
             target: aarch64-apple-darwin
             artifact_name: boxr-macos-arm64.tar.gz
             use_musl: false
+            is_windows: false
+            shell: bash
           - runs-on: [self-hosted, Windows]
-            target: x86_64-pc-windows-msvc
+            target: x86_64-pc-windows-gnu
             artifact_name: boxr-windows-x86_64.zip
             use_musl: false
             is_windows: true
+            shell: cmd /C call {0}
     steps:
       - name: Determine Target Tag
         id: tag_info
@@ -323,6 +334,9 @@ jobs:
     needs: [bump-and-tag, release]
     if: always() && needs.release.result == 'success'
     runs-on: [self-hosted, Linux]
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Checkout Homebrew Tap repository
         uses: actions/checkout@v4
