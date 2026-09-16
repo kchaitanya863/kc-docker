@@ -265,6 +265,7 @@ impl ComposeProject {
                 health_cmd: None,
                 platform: None,
                 privileged: false,
+                network: "bridge".to_string(),
                 gpus: None,
                 workdir: None,
                 image: image_name,

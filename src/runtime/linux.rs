@@ -22,6 +22,10 @@ pub fn execute_bundle(
         let mounts_json = serde_json::to_string(mounts)?;
         let _ = fs::write(bundle_path.join("mounts.json"), mounts_json);
     }
+    if !_ports.is_empty() {
+        let ports_json = serde_json::to_string(_ports)?;
+        let _ = fs::write(bundle_path.join("ports.json"), ports_json);
+    }
 
     let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("boxr"));
 
@@ -74,6 +78,20 @@ pub fn run_trampoline(args: &[String]) -> Result<i32> {
         Vec::new()
     };
 
+    let ports: Vec<PortMapping> = if bundle_path.join("ports.json").exists() {
+        let content = fs::read_to_string(bundle_path.join("ports.json"))?;
+        serde_json::from_str(&content).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    let network_mode = spec
+        .annotations
+        .as_ref()
+        .and_then(|a| a.get("boxr.network"))
+        .map(|s| crate::network::pasta::NetworkMode::parse(s))
+        .unwrap_or_default();
+
     let raw_rootfs = std::path::PathBuf::from(&spec.root.path);
     let rootfs = if raw_rootfs.is_absolute() {
         raw_rootfs
@@ -93,6 +111,9 @@ pub fn run_trampoline(args: &[String]) -> Result<i32> {
     if is_rootless {
         use std::io::{Read, Write};
         use std::os::unix::net::UnixStream;
+
+        let use_pasta = network_mode.should_use_pasta();
+        let requires_netns = network_mode.requires_new_netns();
 
         let (mut parent_sock, mut child_sock) = UnixStream::pair()
             .context("Failed to create UnixStream pair for user namespace sync")?;
@@ -114,14 +135,36 @@ pub fn run_trampoline(args: &[String]) -> Result<i32> {
                 parent_sock
                     .write_all(b"done")
                     .context("Failed to write sync to container child")?;
+
+                // 4. If pasta is active, wait for child to unshare netns and setup pasta
+                let mut pasta_child: Option<std::process::Child> = None;
+                if use_pasta {
+                    let mut net_sync = [0u8; 5];
+                    if parent_sock.read_exact(&mut net_sync).is_ok() && &net_sync == b"netok" {
+                        let pasta_cfg = crate::network::pasta::PastaConfig::for_pid(
+                            child.as_raw(),
+                            &ports,
+                        );
+                        pasta_child = crate::network::pasta::PastaDriver::spawn(&pasta_cfg).ok().flatten();
+                        let _ = parent_sock.write_all(b"gofor");
+                    }
+                }
                 drop(parent_sock);
 
-                // 4. Wait for child container process
-                match waitpid(child, None)? {
+                // 5. Wait for child container process
+                let status = match waitpid(child, None)? {
                     WaitStatus::Exited(_, code) => Ok(code),
                     WaitStatus::Signaled(_, sig, _) => Ok(128 + sig as i32),
                     _ => Ok(1),
+                };
+
+                // 6. Clean up pasta process if running
+                if let Some(mut pc) = pasta_child {
+                    let _ = pc.kill();
+                    let _ = pc.wait();
                 }
+
+                status
             }
             ForkResult::Child => {
                 drop(parent_sock);
@@ -143,18 +186,29 @@ pub fn run_trampoline(args: &[String]) -> Result<i32> {
                     eprintln!("Failed to read mapping confirmation: {:?}", e);
                     std::process::exit(1);
                 }
-                drop(child_sock);
 
                 // 4. Child is now root in user namespace. Unshare remaining namespaces
-                let flags = CloneFlags::CLONE_NEWPID
+                let mut flags = CloneFlags::CLONE_NEWPID
                     | CloneFlags::CLONE_NEWNS
                     | CloneFlags::CLONE_NEWUTS
                     | CloneFlags::CLONE_NEWIPC;
+
+                if requires_netns {
+                    flags |= CloneFlags::CLONE_NEWNET;
+                }
 
                 if let Err(e) = unshare(flags) {
                     eprintln!("Failed to unshare container namespaces: {:?}", e);
                     std::process::exit(1);
                 }
+
+                // If using pasta, notify parent that netns has been unshared so pasta can attach
+                if use_pasta {
+                    let _ = child_sock.write_all(b"netok");
+                    let mut go_buf = [0u8; 5];
+                    let _ = child_sock.read_exact(&mut go_buf);
+                }
+                drop(child_sock);
 
                 // 5. Fork so grandchild becomes PID 1 inside new PID namespace
                 match unsafe { fork() } {
@@ -183,10 +237,14 @@ pub fn run_trampoline(args: &[String]) -> Result<i32> {
         }
     } else {
         // Unshare remaining namespaces: PID, Mount, UTS, IPC
-        let flags = CloneFlags::CLONE_NEWPID
+        let mut flags = CloneFlags::CLONE_NEWPID
             | CloneFlags::CLONE_NEWNS
             | CloneFlags::CLONE_NEWUTS
             | CloneFlags::CLONE_NEWIPC;
+
+        if network_mode.requires_new_netns() {
+            flags |= CloneFlags::CLONE_NEWNET;
+        }
 
         unshare(flags).context("Failed to unshare namespaces (requires root or CAP_SYS_ADMIN)")?;
 

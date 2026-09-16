@@ -259,6 +259,10 @@ pub struct RunArgs {
     #[arg(long = "platform")]
     pub platform: Option<String>,
 
+    /// Connect a container to a network (pasta, bridge, host, none)
+    #[arg(long = "network", alias = "net", default_value = "auto")]
+    pub network: String,
+
     /// Give extended privileges to this container
     #[arg(long = "privileged")]
     pub privileged: bool,
