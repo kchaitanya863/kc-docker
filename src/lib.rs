@@ -15,16 +15,18 @@
 //! - [`cgroups`]: Linux cgroups v2 resource controllers (memory, CPU quota, and PID limits).
 //! - [`cli`]: Command-line arguments and subcommands parsing via Clap.
 //! - [`completions`]: Shell auto-completion script generators (`bash`, `zsh`, `fish`) and drop-in aliases.
-//! - [`compose`]: `docker-compose.yml` parser with topological dependency ordering.
+//! - [`compose`]: `docker-compose.yml` parser with topological dependency ordering and DAG cycle detection.
 //! - [`daemon`]: Unix domain socket server with Docker-compatible REST API endpoints.
 //! - [`events`]: Real-time container lifecycle events stream with JSONL persistence.
+//! - [`guardrails`]: Defensive runtime protections (port collision rejection, log rotators, disk margins).
 //! - [`health`]: Container healthcheck probes and automatic restart policy supervisor.
 //! - [`kube`]: Kubernetes Pod YAML manifest generator and executor (`play kube` / `generate kube`).
-//! - [`network`]: Software bridge networks, sequential IPAM, and user-space rootless port forwarding.
+//! - [`network`]: Software bridge networks, pure-Rust embedded `usernet` TAP stack, and `pasta` integration.
 //! - [`oci`]: OCI spec definitions, image reference parsing, and registry distribution client.
 //! - [`pod`]: Podman-style pod abstractions for multi-container groups sharing namespaces.
 //! - [`runtime`]: Platform-specific container process execution engines (Linux & macOS).
-//! - [`security`]: Rootless user namespaces (`CLONE_NEWUSER`), UID/GID maps, capability whitelisting, and Seccomp filters.
+//! - [`security`]: Rootless single-threaded trampoline, user namespaces (`CLONE_NEWUSER`), UID/GID maps, capabilities, and Seccomp filters.
+//! - [`service`]: Native system service definitions (`launchd` on macOS, `systemd` on Linux, `sc.exe` on Windows).
 //! - [`stats`]: Real-time streaming container resource monitoring (CPU %, memory, PIDs).
 //! - [`storage`]: Content-addressable layer storage, image store, and Copy-on-Write overlay drivers.
 //! - [`system`]: System disk usage auditing (`system df`) and resource pruning (`system prune`).
