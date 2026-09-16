@@ -96,7 +96,7 @@ impl RootlessUserConfig {
             (u, name)
         };
         #[cfg(not(unix))]
-        let (id, user_name) = (1000, None);
+        let (id, user_name): (u32, Option<String>) = (1000, None);
 
         let file_path = if is_gid { "/etc/subgid" } else { "/etc/subuid" };
         if let Ok(content) = fs::read_to_string(file_path) {
