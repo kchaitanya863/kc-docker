@@ -185,7 +185,7 @@ pub fn execute_bundle(
     run_script.push_str("mount -t sysfs sysfs /sys 2>/dev/null || true\n");
     run_script.push_str("mount -t devtmpfs devtmpfs /dev 2>/dev/null || true\n");
     run_script.push_str("ip link set lo up 2>/dev/null || ifconfig lo up 2>/dev/null || true\n");
-    run_script.push_str("if [ ! -s /etc/resolv.conf ]; then printf 'nameserver 1.1.1.1\\nnameserver 8.8.8.8\\n' > /etc/resolv.conf 2>/dev/null || true; fi\n");
+    run_script.push_str("printf 'nameserver 192.168.64.1\\nnameserver 1.1.1.1\\nnameserver 8.8.8.8\\n' > /etc/resolv.conf 2>/dev/null || true\n");
     run_script
         .push_str("mkdir -p /tmp /data 2>/dev/null; chmod 1777 /tmp /data 2>/dev/null || true\n");
 

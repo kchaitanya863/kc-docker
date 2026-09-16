@@ -114,6 +114,7 @@ impl KubeManager {
                 health_cmd: None,
                 platform: None,
                 privileged: false,
+                network: "auto".to_string(),
                 gpus: None,
                 workdir: None,
                 image: c_spec.image.clone(),

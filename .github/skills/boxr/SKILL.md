@@ -13,12 +13,14 @@ Use this skill when developing, debugging, benchmarking, or packaging `boxr` (th
 
 ### Linux Execution (`src/runtime/linux.rs`)
 - **100% Native Kernel Syscalls**: Operates directly with no daemon or hypervisor layer.
-- **Rootless by Default**:
-  - Unshares `CLONE_NEWUSER` first when running as an unprivileged user (`libc::getuid() != 0`).
-  - Writes single-entry UID/GID mappings (`uid_map`, `gid_map`) mapping unprivileged user to container root (UID 0).
+- **Rootless by Default & Single-Threaded Trampoline**:
+  - Intercepts `__internal-trampoline`, `__internal-trampoline-exec`, and `unshare` before Tokio multi-thread runtime initialization, eliminating Linux kernel `EINVAL` when unsharing `CLONE_NEWUSER`.
+  - Supports `/etc/subuid` and `/etc/subgid` subordinate mapping using `newuidmap`/`newgidmap` when available, falling back to `/proc/<pid>/uid_map` for single UID mapping.
+  - Synchronizes parent and child via `UnixStream` socket pair to write UID/GID mappings prior to namespace isolation.
   - Unshares `CLONE_NEWNS`, `CLONE_NEWPID`, `CLONE_NEWIPC`, `CLONE_NEWUTS`.
-  - Mounts container rootfs, mounts internal `/proc`, `/sys`, `/dev`.
-  - Executes `pivot_root` and drops dangerous capabilities (`CAP_SYS_ADMIN`, `CAP_SYS_RAWIO`).
+  - **Pasta Rootless Networking (`CLONE_NEWNET`)**: Supports Podman-parity user-mode tap networking via `pasta` (`src/network/pasta.rs`). Unshares `CLONE_NEWNET`, attaches `pasta` to the container's network namespace (`--config-net`), and provisions bidirectional user-space port forwarding (`-t`, `-u`).
+  - Mounts container rootfs, mounts internal `/proc`, `/sys` (with tmpfs fallback on restricted kernels), and `/dev`.
+  - Executes `pivot_root` (or `chroot` fallback) and drops dangerous capabilities (`CAP_SYS_ADMIN`, `CAP_SYS_RAWIO`).
 - **Resource Limits**: Linux cgroups v2 (`/sys/fs/cgroup/boxr/<id>/`) controlling `memory.max`, `cpu.max`, `pids.max`.
 
 ### macOS Execution (`src/runtime/darwin.rs` & `src/runtime/boxr-vz.m`)

@@ -1,3 +1,4 @@
+pub mod pasta;
 pub mod rootless;
 
 use crate::storage::boxr_home;

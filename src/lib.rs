@@ -573,6 +573,14 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
     if let Some(g) = &args.gpus {
         annotations.insert("boxr.gpus".to_string(), g.clone());
     }
+    let net_mode = network::pasta::NetworkMode::parse(&args.network);
+    if net_mode == network::pasta::NetworkMode::Pasta && !network::pasta::PastaDriver::is_available() {
+        #[cfg(target_os = "linux")]
+        return Err(anyhow!(
+            "pasta rootless networking driver is not installed on this system. Install 'passt' package to enable --network=pasta."
+        ));
+    }
+    annotations.insert("boxr.network".to_string(), args.network.clone());
     spec.annotations = Some(annotations);
 
     if is_fast_ephemeral {
@@ -1643,6 +1651,7 @@ pub async fn create_only_container(args: RunArgs) -> Result<String> {
     if let Some(g) = &args.gpus {
         annotations.insert("boxr.gpus".to_string(), g.clone());
     }
+    annotations.insert("boxr.network".to_string(), args.network.clone());
     spec.annotations = Some(annotations);
 
     spec.save_to_bundle(&bundle_dir)?;
