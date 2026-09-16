@@ -18,9 +18,14 @@ A fast, lightweight, production-grade **Open Container Initiative (OCI)** compli
 
 ---
 
-## Architecture & Documentation
+## Architecture & Comprehensive Documentation
 
-For detailed architectural diagrams, subsystem designs, and storage hierarchies, see the [Architecture & Internals Guide](docs/ARCHITECTURE.md).
+Comprehensive engineering guides, architectural diagrams, and command manuals:
+- **[Architecture & Runtime Internals Guide](docs/ARCHITECTURE.md)**: Deep dive into the trampoline, storage hierarchy, and multi-platform hypervisor bridge.
+- **[Rootless Container Isolation](docs/ROOTLESS.md)**: Kernel namespaces, single-threaded trampoline, subordinate ID mapping, and capabilities.
+- **[Container Networking & UserNet Stack](docs/NETWORKING.md)**: Pure-Rust embedded TAP network stack, `pasta` integration, and IPAM.
+- **[CLI Command Reference Manual](docs/CLI_REFERENCE.md)**: Exhaustive syntax, flags, and options for all 38+ CLI subcommands.
+- **[Kubernetes Pods & Compose Orchestration](docs/KUBERNETES_AND_COMPOSE.md)**: Podman-style pods, `play kube`, and Docker Compose DAGs.
 
 ```
 boxr/

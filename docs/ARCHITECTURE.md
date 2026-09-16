@@ -1,14 +1,15 @@
 # Architecture & Internals: `boxr` 📦
 
-`boxr` is an Open Container Initiative (OCI) compliant container runtime and engine built entirely in Rust. It provides full Docker and Podman CLI parity with rootless-by-default execution, sub-second container spin-up, and zero-daemon footprint.
+`boxr` is an Open Container Initiative (OCI) compliant container runtime and engine built entirely in Rust. It provides full Docker and Podman CLI parity with rootless-by-default execution, sub-second container spin-up, zero-daemon footprint, and native multi-platform support.
 
 ---
 
 ## 1. High-Level Design Principles
 
-- **Zero Unnecessary Daemons**: Unlike Docker's client-server architecture (`docker` -> `dockerd` -> `containerd` -> `containerd-shim` -> `runc`), `boxr` operates primarily as a direct, in-process container engine.
+- **Zero Unnecessary Daemons**: Unlike Docker's multi-layered client-server architecture (`docker` -> `dockerd` -> `containerd` -> `containerd-shim` -> `runc`), `boxr` operates primarily as a direct, in-process container engine.
 - **Rootless by Default**: Containers execute using Linux unprivileged user namespaces (`CLONE_NEWUSER`) mapping host user IDs without requiring `sudo` or setuid binaries.
-- **Copy-on-Write Layering**: Layers are mounted or cloned using kernel OverlayFS on Linux, or native Apple APFS `clonefile` copy-on-write on macOS, minimizing disk consumption and startup latency.
+- **Zero External Dependencies**: Embedded pure-Rust user-mode networking (`usernet`), copy-on-write storage, and image distribution clients mean a single static binary runs anywhere.
+- **Copy-on-Write Layering**: Layers are mounted or cloned using kernel OverlayFS on Linux, or native Apple APFS copy-on-write on macOS, minimizing disk consumption and startup latency.
 - **Full Specification Conformance**:
   - [OCI Image Format Specification v1.0.2](https://github.com/opencontainers/image-spec)
   - [OCI Runtime Specification v1.0.2](https://github.com/opencontainers/runtime-spec)
@@ -16,96 +17,145 @@
 
 ---
 
-## 2. Core Subsystems
+## 2. System Architecture Diagram
 
+```mermaid
+graph TD
+    CLI[boxr CLI Entry Point] --> Main{Trampoline Check}
+    
+    Main -->|__internal-trampoline| Trampoline[Single-Threaded Linux Trampoline]
+    Main -->|CLI Command| Dispatcher[Tokio Async Dispatcher]
+    
+    Trampoline -->|CLONE_NEWUSER| UserNS[User Namespace Setup]
+    UserNS -->|Subordinate ID Mapping| SubID[newuidmap / /proc/self/uid_map]
+    SubID -->|CLONE_NEWNS/PID/UTS/IPC| Namespaces[Private Namespaces]
+    Namespaces -->|Network Mode| NetChoice{Network Selection}
+    NetChoice -->|Pure-Rust UserNet| UserNet[Embedded UserNet TAP Stack]
+    NetChoice -->|Pasta| Pasta[Pasta Rootless Tap Daemon]
+    NetChoice -->|Host / None| DirectNet[Direct / Loopback Only]
+    UserNet --> Pivot[pivot_root / chroot]
+    Pasta --> Pivot
+    DirectNet --> Pivot
+    Pivot --> ContainerExec[Container Process PID 1]
+
+    Dispatcher --> Pull[Registry v2 Client]
+    Dispatcher --> Build[Dockerfile Multi-Stage Builder]
+    Dispatcher --> Compose[Compose Dependency Graph Engine]
+    Dispatcher --> Pods[Kubernetes & Podman Pod Engine]
+    Dispatcher --> Storage[Image & Container Stores]
+    Dispatcher --> Daemon[Docker API Socket Daemon]
+    
+    Storage --> CoW[OverlayFS / CoW Layering]
 ```
-+-------------------------------------------------------------------------+
-|                                 boxr CLI                                |
-|  run, pull, build, compose, volume, network, pod, play, stats, events    |
-+-------------------------------------------------------------------------+
-       |                         |                        |
-       v                         v                        v
-+---------------+      +-------------------+      +-----------------------+
-|  OCI Engine   |      |  Storage Layer    |      |  Security & Isolation |
-| - Registry v2 |      | - ImageStore      |      | - Rootless UserNS     |
-| - Layer Tar   |      | - ContainerStore  |      | - Seccomp Filter      |
-| - Manifest    |      | - Overlay / CoW   |      | - Capabilities Whitelist
-| - RuntimeSpec |      | - VolumeStore     |      | - cgroups v2 Limits   |
-+---------------+      +-------------------+      +-----------------------+
-                                 |
-                                 v
-+-------------------------------------------------------------------------+
-|                           Execution Runtime                             |
-|  - Linux: In-process unshare(), pivot_root(), mount(), execvp()         |
-|  - macOS: Hybrid Darwin container execution bridge via VM runner        |
-+-------------------------------------------------------------------------+
-```
-
-### 2.1. OCI Distribution Spec Client (`src/oci/distribution.rs`)
-- Handles Registry V2 HTTP API interactions (Docker Hub, GitHub Packages `ghcr.io`, Quay.io).
-- Negotiates multi-platform Image Index / Manifest Lists (`application/vnd.oci.image.index.v1+json`) and resolves to host CPU architecture (`arm64`, `amd64`).
-- Implements Bearer Token authentication via registry challenge mechanisms (`Www-Authenticate`).
-- Verifies SHA-256 digests for all layer tarballs during download.
-
-### 2.2. Image & Layer Engine (`src/oci/image.rs`, `src/storage/overlay.rs`)
-- Unpacks layered `.tar` / `.tar.gz` filesystem archives into assembled rootfs trees.
-- Correctly interprets OCI whiteout markers:
-  - Explicit whiteouts (`.wh.<name>`) indicate file deletion in preceding layers.
-  - Opaque directory whiteouts (`.wh..wh..opq`) indicate parent directory contents are hidden.
-- Employs copy-on-write storage drivers:
-  - **Linux**: Kernel `overlay` filesystem with `lowerdir`, `upperdir`, `workdir`, and `merged` mount points.
-  - **macOS**: Native APFS `clonefile(2)` system call for instant copy-on-write clones.
-
-### 2.3. Runtime Spec & Sandboxing (`src/oci/runtime.rs`, `src/security/mod.rs`)
-- Synthesizes standardized OCI `config.json` specifications for container bundles.
-- Mounts standard pseudo-filesystems: `/proc` (procfs), `/dev` (tmpfs), `/dev/pts` (devpts), `/dev/shm` (tmpfs), and `/sys` (read-only sysfs).
-- Drops sensitive capabilities (`CAP_SYS_ADMIN`, `CAP_SYS_RAWIO`) while retaining container safe defaults (`CAP_CHOWN`, `CAP_NET_BIND_SERVICE`).
-- Enforces default Seccomp BPF filters blocking high-risk syscalls (`reboot`, `swapon`, `kexec_load`, `ptrace`, `bpf`).
-
-### 2.4. Resource Management (`src/cgroups/mod.rs`)
-- Integrates directly with Linux cgroups v2 hierarchy (`/sys/fs/cgroup`).
-- Sets hard limits for:
-  - Memory: `memory.max`
-  - CPU: `cpu.max` (quota and period)
-  - Processes: `pids.max`
-  - Freezer: `cgroup.freeze` for instant pause/unpause without killing processes.
-
-### 2.5. Networking & IPAM (`src/network/mod.rs`, `src/network/rootless.rs`)
-- Manages software bridge networks with sequential IPAM address allocation.
-- Implements user-space TCP/UDP rootless port forwarders without requiring root privileges.
-- Injects synthetic `/etc/hosts` mappings for container-to-container DNS resolution.
-
-### 2.6. Dockerfile Builder (`src/builder/mod.rs`)
-- Full parser for Dockerfiles supporting `FROM`, `RUN`, `COPY`, `ADD`, `WORKDIR`, `ENV`, `CMD`, `ENTRYPOINT`, `EXPOSE`, `LABEL`, and `HEALTHCHECK`.
-- Supports multi-stage builds (`FROM ... AS builder` and `COPY --from=builder ...`).
-- Deterministic content-addressed step caching via SHA-256 step hashes.
-- `.dockerignore` file evaluation with wildcard globbing and exception negations (`!pattern`).
-
-### 2.7. Multi-Container Orchestration (`src/compose/mod.rs`)
-- Parses `docker-compose.yml` declarations (services, networks, volumes, environment).
-- Performs topological sorting via depth-first cycle detection on service `depends_on` graphs.
-- Supports lifecycle control: `boxr compose up`, `boxr compose down`, `boxr compose ps`, and `boxr compose logs`.
-
-### 2.8. Podman Pod & Kubernetes Interop (`src/pod/mod.rs`, `src/kube/mod.rs`)
-- Implements Podman-style pod abstractions (`boxr pod create`, `boxr pod ps`, `boxr pod rm`).
-- Translates container/pod specs directly to/from Kubernetes Pod manifests (`boxr play kube` and `boxr generate kube`).
-- Supports running arbitrary commands in clean user namespaces (`boxr unshare`).
 
 ---
 
-## 3. Storage Hierarchy
+## 3. Core Subsystems
 
-All state and content-addressable storage is maintained under `~/.boxr`:
+### 3.1. Single-Threaded Rootless Trampoline (`src/runtime/linux.rs`, `src/main.rs`)
+
+The Linux kernel strictly prohibits calling `unshare(CLONE_NEWUSER)` inside a multi-threaded process, returning `EINVAL` to prevent security races across threads. Because modern async runtimes (Tokio) initialize a thread pool at startup, `boxr` employs an early single-threaded trampoline:
+
+1. **Pre-Tokio Interception**: `src/main.rs` inspects `std::env::args()` before building or entering the Tokio runtime.
+2. **Subprocess Dispatch**: When running containers or `boxr unshare`, Boxr invokes `boxr __internal-trampoline <bundle>` as a fresh 1-thread process.
+3. **Namespace Synchronization**:
+   - The child process unshares `CLONE_NEWUSER`.
+   - Parent process receives synchronization over a `UnixStream` socket pair and writes `/proc/<pid>/uid_map` and `/proc/<pid>/gid_map` (using `newuidmap`/`newgidmap` for full subordinate ranges, or direct procfs writes).
+   - Once mapped, the child becomes root (`UID 0`) inside the namespace and cleanly unshares Mount (`CLONE_NEWNS`), PID (`CLONE_NEWPID`), Network (`CLONE_NEWNET`), IPC (`CLONE_NEWIPC`), and UTS (`CLONE_NEWUTS`) namespaces.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Host as Parent Process (Host)
+    participant Socket as UnixStream Sync Pair
+    participant Child as Trampoline Child
+    participant GChild as Container Process (PID 1)
+
+    Host->>Child: fork() single-threaded child
+    Child->>Child: unshare(CLONE_NEWUSER)
+    Child->>Socket: write "ready"
+    Host->>Socket: read "ready"
+    Host->>Host: setup_child_mappings(child_pid) via newuidmap/procfs
+    Host->>Socket: write "done"
+    Child->>Socket: read "done"
+    Child->>Child: unshare(CLONE_NEWNS | CLONE_NEWPID | CLONE_NEWNET | CLONE_NEWUTS | CLONE_NEWIPC)
+    opt UserNet / Pasta Active
+        Child->>Socket: write "netok"
+        Host->>Host: Attach pasta daemon or spawn UserNet TAP
+        Host->>Socket: write "gofor"
+    end
+    Child->>GChild: fork() grandchild (becomes PID 1)
+    GChild->>GChild: pivot_root(), apply mounts & caps
+    GChild->>GChild: execvp(container_binary)
+    Child->>Child: waitpid(PID 1)
+    Host->>Host: waitpid(Child)
+```
+
+---
+
+### 3.2. Network Architecture & User-Mode Stack (`src/network/`)
+
+Boxr supports three distinct networking paradigms:
+
+1. **Pure-Rust UserNet (`src/network/usernet.rs`)**:
+   - Zero external binary dependencies.
+   - Allocates an in-namespace TAP device (`eth0`) via `ioctl(TUNSETIFF)`.
+   - Runs an embedded, asynchronous L2/L3/L4 protocol stack handling:
+     - **Ethernet & ARP**: Immediate resolution for virtual gateway (`10.0.2.2`) and DNS (`10.0.2.3`).
+     - **IPv4 & Checksums**: Standard RFC 1071 ones' complement checksum verification.
+     - **ICMP Echo**: Transparent in-engine ping response for container health and connectivity checks.
+     - **UDP & DNS Proxy**: Intercepts DNS queries on port 53 and proxies them to host system resolvers (`127.0.0.53`, `1.1.1.1`, `8.8.8.8`).
+     - **TCP Stream Bridge**: Connects outbound TCP traffic using host user-space sockets.
+2. **Pasta Tap Virtualization (`src/network/pasta.rs`)**:
+   - Seamless integration with the external `pasta` (Pack A Subtle Tap Abstraction) driver when installed.
+   - Provides full network namespace virtualization matching Podman's default rootless network behavior.
+3. **Bridge & IPAM Networks (`src/network/mod.rs`)**:
+   - Default `boxr0` bridge network (`172.28.0.0/16`) with automatic sequential IPAM.
+   - Custom user-defined bridge networks with container-to-container DNS via synthetic `/etc/hosts`.
+
+```mermaid
+graph LR
+    subgraph Container Network Namespace
+        CProcess[Container Application] --> eth0[TAP Device: eth0 10.0.2.15]
+    end
+    
+    eth0 --> Stack{Network Driver}
+    
+    subgraph Pure-Rust UserNet Engine
+        Stack -->|Ethernet Frame| Eth[Ethernet / ARP Resolver]
+        Eth -->|ARP Request| ArpResp[Virtual MAC: 02:00:0a:00:02:02]
+        Stack -->|IPv4 Packet| IP[IPv4 Parser & Checksum]
+        IP -->|ICMP Echo| IcmpResp[Echo Reply]
+        IP -->|UDP 53 DNS| DnsProxy[Host UDP Socket]
+        IP -->|TCP Stream| TcpNat[Host TCP Sockets]
+    end
+
+    subgraph Host Network Stack
+        DnsProxy --> UpstreamDNS[Upstream Resolvers]
+        TcpNat --> ExternalWAN[External Web / Internet]
+    end
+```
+
+---
+
+### 3.3. macOS Darwin Hypervisor Bridge (`src/runtime/darwin.rs`, `src/runtime/boxr-vz.m`)
+
+Unlike Docker Desktop which runs a 2GB+ background VM with heavy daemons, `boxr` on macOS uses a hyper-optimized native bridge:
+
+- **Apple Virtualization.framework (`boxr-vz`)**: High-performance Objective-C hypervisor runner (76KB), codesigned with `com.apple.security.virtualization`.
+- **Micro-VM Kernel & Initrd**: Tiny Alpine-based kernel (`~/.boxr/vm/vmlinux`) booting directly into container execution in **~120ms**.
+- **Filesystem Sharing**: Native Apple `virtiofs` with `VZSingleDirectoryShare` for high-throughput zero-copy file sharing.
+- **Entropy & Console**: `VZVirtioEntropyDeviceConfiguration` for instant `/dev/urandom` entropy and native VirtIO serial console streaming.
+
+---
+
+### 3.4. Storage & Copy-on-Write Layering (`src/storage/`)
+
+All state is maintained under `~/.boxr`:
 
 ```
 ~/.boxr/
 ├── bin/                 # Installed binaries & drop-in docker symlinks
-│   ├── boxr
-│   └── docker
-├── completions/         # Shell completion scripts
-│   ├── boxr.bash
-│   ├── _boxr
-│   └── boxr.fish
 ├── images/              # Content-addressable unpacked image root filesystems
 │   └── sha256_<digest>/
 │       └── rootfs/
@@ -115,6 +165,8 @@ All state and content-addressable storage is maintained under `~/.boxr`:
 │   └── <container_id>/
 │       ├── config.json  # OCI Runtime Spec
 │       ├── rootfs/      # Copy-on-Write root filesystem
+│       ├── mounts.json  # Resolved volume/bind mounts
+│       ├── ports.json   # Assigned port forwards
 │       └── logs.txt     # Stdout/stderr log stream
 ├── volumes/             # Persistent named volumes
 │   └── <volume_name>/
@@ -130,14 +182,37 @@ All state and content-addressable storage is maintained under `~/.boxr`:
 └── events.jsonl         # Real-time lifecycle event stream
 ```
 
+- **Linux Storage**: Native kernel `overlay` mounts (`lowerdir`, `upperdir`, `workdir`, `merged`).
+- **macOS Storage**: Native APFS copy-on-write (`clonefile`) hardlink trees enabling near-zero disk usage and sub-millisecond rootfs instantiation.
+
 ---
 
-## 4. Platform Differences: Linux vs macOS
+### 3.5. Cgroups v2 Resource Controllers (`src/cgroups/mod.rs`)
 
-| Feature | Linux | macOS (Darwin) |
-| :--- | :--- | :--- |
-| **Execution Model** | Native in-process (`clone(CLONE_NEWUSER \| CLONE_NEWPID...)`) | Hybrid execution bridge via lightweight Linux VM runner |
-| **Filesystem Isolation** | Native `pivot_root()` + private mount namespace | APFS `clonefile` CoW + isolated host directory bind |
-| **Layer Storage** | Kernel `overlay` filesystem driver | APFS native block cloning with hardlink fallback |
-| **Resource Limits** | Direct `/sys/fs/cgroup/user.slice` controllers | Cgroup resource parameters passed to VM runner |
-| **Process Supervision** | Linux `waitpid()` on container PID 1 | Subprocess wait with direct stdio streaming |
+When running on Linux, `boxr` applies cgroups v2 resource controllers:
+- **Memory**: `memory.max` enforces memory caps (e.g. `512m`, `1g`).
+- **CPU Quota**: `cpu.max` configures quota and period (e.g. `1.5` CPUs sets `150000 100000`).
+- **Process Caps**: `pids.max` prevents fork bombs.
+- **Process Freezer**: `cgroup.freeze` enables instant `boxr pause` and `boxr unpause` without sending signals.
+
+---
+
+### 3.6. Guardrails & Defensive Architecture (`src/guardrails/mod.rs`)
+
+1. **Port Collision Guard (`PortCollisionGuard`)**: Proactively scans all running containers and rejects conflicting host port bindings before bundle execution.
+2. **Circular Dependency Detection (`ComposeProject::dependency_order`)**: Depth-first search (DFS) cycle detector for `docker-compose.yml`, preventing deadlock in circular `depends_on` chains.
+3. **Log Rotation (`LogRotator`)**: Automatic size-based rotation for container `logs.txt` and `events.jsonl` preventing disk saturation.
+4. **Disk Safety Margins (`DiskGuard`)**: Proactive `statvfs` checks ensuring available disk space + 100MB margin before image pulls or layer extractions.
+5. **Process Reaper (`ProcessReaper`)**: Automatic garbage collection for dead container processes.
+
+---
+
+## 4. Platform Differences: Linux vs macOS vs Windows
+
+| Capability | Linux | macOS (Darwin) | Windows |
+| :--- | :--- | :--- | :--- |
+| **Execution Model** | Native in-process (`clone(CLONE_NEWUSER \| CLONE_NEWPID...)`) | Native Apple `Virtualization.framework` micro-VM | Windows Host Compute System (HCS) / WSL2 |
+| **Rootless Isolation** | User namespace + subordinate UID/GID mappings | Unprivileged user process invoking micro-VM | User-space process tokens / WSL2 |
+| **Networking** | Pure-Rust `usernet` or `pasta` tap virtualization | VirtIO NAT + port forwarder proxy | TCP port proxying / WinNAT |
+| **Filesystem Isolation** | Native `pivot_root()` + private mount namespace | `virtiofs` zero-copy share + micro-VM mounts | Host directory bind mounts |
+| **Resource Limits** | Linux cgroups v2 controllers | VirtIO CPU/RAM allocation | Windows Job Objects / cgroups inside WSL |
