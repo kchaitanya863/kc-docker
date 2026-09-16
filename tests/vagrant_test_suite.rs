@@ -97,6 +97,7 @@ pub fn generate_vagrantfile(vms: &[VagrantVmSpec], work_dir: &Path) -> std::io::
 }
 
 #[test]
+#[ignore = "Slow multi-OS Vagrant matrix for local manual verification; CI tests natively on each target OS"]
 fn test_vagrant_matrix_multi_os_verification() {
     if !has_vagrant() {
         eprintln!("Vagrant not available on this host. Skipping Vagrant test suite.");
