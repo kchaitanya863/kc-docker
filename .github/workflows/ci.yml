@@ -57,6 +57,8 @@ jobs:
           where rustc 2>nul || (
             powershell -Command "Invoke-WebRequest -Uri 'https://win.rustup.rs/x86_64' -OutFile rustup-init.exe; .\rustup-init.exe -y --default-toolchain stable"
           )
+          echo %USERPROFILE%\.cargo\bin>> %GITHUB_PATH%
+          call "%USERPROFILE%\.cargo\env.cmd" 2>nul || set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
           rustup component add clippy rustfmt || echo "components ready"
 
       - name: Rust Cache
@@ -186,6 +188,8 @@ jobs:
           where rustc 2>nul || (
             powershell -Command "Invoke-WebRequest -Uri 'https://win.rustup.rs/x86_64' -OutFile rustup-init.exe; .\rustup-init.exe -y --default-toolchain stable"
           )
+          echo %USERPROFILE%\.cargo\bin>> %GITHUB_PATH%
+          call "%USERPROFILE%\.cargo\env.cmd" 2>nul || set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
           rustup target add ${{ matrix.target }} || echo "target ready"
 
       - name: Build Release Binary
