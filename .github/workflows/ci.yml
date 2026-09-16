@@ -345,22 +345,16 @@ jobs:
             head "https://github.com/kchaitanya863/kc-docker.git", branch: "main"
 
             on_macos do
-              if Hardware::CPU.arm?
+              on_arm do
                 url "https://github.com/kchaitanya863/homebrew-tap/releases/download/__TAG__/boxr-macos-arm64.tar.gz"
                 sha256 "__MACOS_ARM_SHA__"
-              else
-                url "https://github.com/kchaitanya863/homebrew-tap/releases/download/__TAG__/boxr-macos-x86_64.tar.gz"
-                sha256 "__MACOS_X86_SHA__"
               end
             end
 
             on_linux do
-              if Hardware::CPU.arm?
+              on_arm do
                 url "https://github.com/kchaitanya863/homebrew-tap/releases/download/__TAG__/boxr-linux-arm64.tar.gz"
                 sha256 "__LINUX_ARM_SHA__"
-              else
-                url "https://github.com/kchaitanya863/homebrew-tap/releases/download/__TAG__/boxr-linux-x86_64.tar.gz"
-                sha256 "__LINUX_X86_SHA__"
               end
             end
 
@@ -404,9 +398,7 @@ jobs:
 
           sed -i "s/__TAG__/${TAG}/g" homebrew-tap/Formula/boxr.rb
           sed -i "s/__MACOS_ARM_SHA__/${MACOS_ARM_SHA}/g" homebrew-tap/Formula/boxr.rb
-          sed -i "s/__MACOS_X86_SHA__/${MACOS_X86_SHA}/g" homebrew-tap/Formula/boxr.rb
           sed -i "s/__LINUX_ARM_SHA__/${LINUX_ARM_SHA}/g" homebrew-tap/Formula/boxr.rb
-          sed -i "s/__LINUX_X86_SHA__/${LINUX_X86_SHA}/g" homebrew-tap/Formula/boxr.rb
 
           cd homebrew-tap
           git config user.name "github-actions[bot]"
