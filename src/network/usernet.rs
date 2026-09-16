@@ -11,8 +11,8 @@
 use crate::network::PortMapping;
 use anyhow::{Context, Result, anyhow};
 use std::net::Ipv4Addr;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 pub const DEFAULT_CONTAINER_IP: Ipv4Addr = Ipv4Addr::new(10, 0, 2, 15);
 pub const DEFAULT_GATEWAY_IP: Ipv4Addr = Ipv4Addr::new(10, 0, 2, 2);
@@ -336,7 +336,12 @@ impl UserNetEngine {
         }
     }
 
-    fn handle_icmp(&self, eth: &EthernetHeader, ip: &Ipv4Header, payload: &[u8]) -> Option<Vec<u8>> {
+    fn handle_icmp(
+        &self,
+        eth: &EthernetHeader,
+        ip: &Ipv4Header,
+        payload: &[u8],
+    ) -> Option<Vec<u8>> {
         // Echo Request is type 8, code 0
         if payload.len() < 8 || payload[0] != 8 || payload[1] != 0 {
             return None;
@@ -437,7 +442,12 @@ fn forward_dns_query(query: &[u8]) -> Result<Vec<u8>> {
         .context("Failed to set DNS read timeout")?;
 
     // Try multiple standard upstream resolvers: local host resolver, Cloudflare, Google
-    let upstream_targets = ["127.0.0.53:53", "192.168.64.1:53", "1.1.1.1:53", "8.8.8.8:53"];
+    let upstream_targets = [
+        "127.0.0.53:53",
+        "192.168.64.1:53",
+        "1.1.1.1:53",
+        "8.8.8.8:53",
+    ];
     for target in upstream_targets {
         if socket.send_to(query, target).is_ok() {
             let mut buf = [0u8; 4096];
@@ -501,7 +511,9 @@ pub mod platform {
     /// Configure IP address, netmask, MTU, and default gateway inside the container network namespace
     pub fn configure_container_netns(ifname: &str, ip: Ipv4Addr, gateway: Ipv4Addr) -> Result<()> {
         // Bring loopback up
-        let _ = Command::new("ip").args(["link", "set", "lo", "up"]).status();
+        let _ = Command::new("ip")
+            .args(["link", "set", "lo", "up"])
+            .status();
 
         // Assign IP address to TAP device
         let ip_cidr = format!("{}/24", ip);
@@ -516,17 +528,22 @@ pub mod platform {
 
         // Set default route via gateway
         let _ = Command::new("ip")
-            .args(["route", "add", "default", "via", &gateway.to_string(), "dev", ifname])
+            .args([
+                "route",
+                "add",
+                "default",
+                "via",
+                &gateway.to_string(),
+                "dev",
+                ifname,
+            ])
             .status();
 
         Ok(())
     }
 
     /// Spawn the pure-Rust user-mode TAP network engine on an active TAP device
-    pub fn spawn_tap_network_stack(
-        mut tap_file: File,
-        ports: Vec<PortMapping>,
-    ) -> Arc<AtomicBool> {
+    pub fn spawn_tap_network_stack(mut tap_file: File, ports: Vec<PortMapping>) -> Arc<AtomicBool> {
         let running = Arc::new(AtomicBool::new(true));
         let flag = running.clone();
 
@@ -668,7 +685,10 @@ mod tests {
     #[test]
     fn test_compute_checksum() {
         // Standard sample data
-        let sample = [0x45, 0x00, 0x00, 0x3c, 0x1c, 0x46, 0x40, 0x00, 0x40, 0x06, 0x00, 0x00, 0xac, 0x10, 0x0a, 0x63, 0xac, 0x10, 0x0a, 0x0c];
+        let sample = [
+            0x45, 0x00, 0x00, 0x3c, 0x1c, 0x46, 0x40, 0x00, 0x40, 0x06, 0x00, 0x00, 0xac, 0x10,
+            0x0a, 0x63, 0xac, 0x10, 0x0a, 0x0c,
+        ];
         let csum = compute_checksum(&sample);
         assert_ne!(csum, 0);
     }

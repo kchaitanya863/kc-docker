@@ -1,8 +1,8 @@
 use boxr::network::PortMapping;
 use boxr::network::usernet::{
-    ArpPacket, EthernetHeader, Ipv4Header, UdpHeader, UserNetEngine, compute_checksum,
-    CONTAINER_MAC, DEFAULT_CONTAINER_IP, DEFAULT_DNS_IP, DEFAULT_GATEWAY_IP,
-    ETHERTYPE_ARP, ETHERTYPE_IPV4, IP_PROTO_ICMP, VIRTUAL_GATEWAY_MAC,
+    ArpPacket, CONTAINER_MAC, DEFAULT_CONTAINER_IP, DEFAULT_DNS_IP, DEFAULT_GATEWAY_IP,
+    ETHERTYPE_ARP, ETHERTYPE_IPV4, EthernetHeader, IP_PROTO_ICMP, Ipv4Header, UdpHeader,
+    UserNetEngine, VIRTUAL_GATEWAY_MAC, compute_checksum,
 };
 use std::net::Ipv4Addr;
 

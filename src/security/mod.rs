@@ -355,7 +355,8 @@ vagrant:165536:65536
         );
 
         // Non-existent user
-        let range3 = RootlessUserConfig::parse_subid_content(subuid_content, 9999, Some("nonexistent"));
+        let range3 =
+            RootlessUserConfig::parse_subid_content(subuid_content, 9999, Some("nonexistent"));
         assert_eq!(range3, None);
     }
 
