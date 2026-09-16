@@ -26,7 +26,7 @@ pub struct VolumeStore {
     volumes_dir: PathBuf,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MountSpec {
     pub source: PathBuf,
     pub destination: String,

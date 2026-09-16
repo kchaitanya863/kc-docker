@@ -259,6 +259,10 @@ pub struct RunArgs {
     #[arg(long = "platform")]
     pub platform: Option<String>,
 
+    /// Give extended privileges to this container
+    #[arg(long = "privileged")]
+    pub privileged: bool,
+
     /// GPU devices to add to the container ('all' to pass-through available GPUs)
     #[arg(long = "gpus")]
     pub gpus: Option<String>,

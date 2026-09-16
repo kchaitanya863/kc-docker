@@ -113,6 +113,7 @@ impl KubeManager {
                 restart: "no".to_string(),
                 health_cmd: None,
                 platform: None,
+                privileged: false,
                 gpus: None,
                 workdir: None,
                 image: c_spec.image.clone(),
@@ -200,17 +201,17 @@ impl KubeManager {
 
         #[cfg(target_os = "linux")]
         {
-            use nix::sched::{CloneFlags, unshare};
-            unshare(CloneFlags::CLONE_NEWUSER)?;
+            crate::runtime::linux::run_unshare_cli(cmd)
         }
-
-        let mut child = std::process::Command::new(&cmd[0]);
-        if cmd.len() > 1 {
-            child.args(&cmd[1..]);
+        #[cfg(not(target_os = "linux"))]
+        {
+            let mut child = std::process::Command::new(&cmd[0]);
+            if cmd.len() > 1 {
+                child.args(&cmd[1..]);
+            }
+            let status = child.status()?;
+            Ok(status.code().unwrap_or(0))
         }
-
-        let status = child.status()?;
-        Ok(status.code().unwrap_or(0))
     }
 }
 

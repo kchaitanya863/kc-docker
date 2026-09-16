@@ -46,7 +46,149 @@ impl Default for RootlessUserConfig {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubordinateRange {
+    pub start: u32,
+    pub count: u32,
+}
+
 impl RootlessUserConfig {
+    /// Parse /etc/subuid or /etc/subgid file content for a matching username or UID
+    pub fn parse_subid_content(
+        content: &str,
+        user_id: u32,
+        username: Option<&str>,
+    ) -> Option<SubordinateRange> {
+        let uid_str = user_id.to_string();
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let parts: Vec<&str> = line.split(':').collect();
+            if parts.len() >= 3 {
+                let name_or_id = parts[0].trim();
+                let matches_name = username.map(|u| u == name_or_id).unwrap_or(false);
+                let matches_id = name_or_id == uid_str;
+                if matches_name || matches_id {
+                    if let (Ok(start), Ok(count)) = (
+                        parts[1].trim().parse::<u32>(),
+                        parts[2].trim().parse::<u32>(),
+                    ) {
+                        return Some(SubordinateRange { start, count });
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Read subordinate range from /etc/subuid or /etc/subgid on Linux
+    pub fn read_subordinate_range(is_gid: bool) -> Option<SubordinateRange> {
+        #[cfg(unix)]
+        let (id, user_name) = {
+            let u = if is_gid {
+                unsafe { libc::getgid() }
+            } else {
+                unsafe { libc::getuid() }
+            };
+            let name = std::env::var("USER").ok();
+            (u, name)
+        };
+        #[cfg(not(unix))]
+        let (id, user_name) = (1000, None);
+
+        let file_path = if is_gid { "/etc/subgid" } else { "/etc/subuid" };
+        if let Ok(content) = fs::read_to_string(file_path) {
+            Self::parse_subid_content(&content, id, user_name.as_deref())
+        } else {
+            None
+        }
+    }
+
+    /// Check if newuidmap and newgidmap helper binaries are installed on the system
+    pub fn has_newidmap_binaries() -> bool {
+        let has_uidmap = Path::new("/usr/bin/newuidmap").exists()
+            || Path::new("/bin/newuidmap").exists()
+            || std::process::Command::new("which")
+                .arg("newuidmap")
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+        let has_gidmap = Path::new("/usr/bin/newgidmap").exists()
+            || Path::new("/bin/newgidmap").exists()
+            || std::process::Command::new("which")
+                .arg("newgidmap")
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+        has_uidmap && has_gidmap
+    }
+
+    /// Configure UID and GID mapping for a target child PID in a new user namespace
+    #[cfg(target_os = "linux")]
+    pub fn setup_child_mappings(pid: i32) -> Result<()> {
+        let (host_uid, host_gid) = unsafe { (libc::getuid(), libc::getgid()) };
+
+        let sub_uid = Self::read_subordinate_range(false);
+        let sub_gid = Self::read_subordinate_range(true);
+
+        // Attempt newuidmap/newgidmap if both binaries and subuid/subgid ranges are available
+        if Self::has_newidmap_binaries() && sub_uid.is_some() && sub_gid.is_some() {
+            let u_range = sub_uid.unwrap();
+            let g_range = sub_gid.unwrap();
+
+            // newuidmap <pid> 0 <host_uid> 1 1 <sub_uid_start> <sub_uid_count>
+            let uid_status = std::process::Command::new("newuidmap")
+                .args([
+                    &pid.to_string(),
+                    "0",
+                    &host_uid.to_string(),
+                    "1",
+                    "1",
+                    &u_range.start.to_string(),
+                    &u_range.count.to_string(),
+                ])
+                .status();
+
+            // newgidmap <pid> 0 <host_gid> 1 1 <sub_gid_start> <sub_gid_count>
+            let gid_status = std::process::Command::new("newgidmap")
+                .args([
+                    &pid.to_string(),
+                    "0",
+                    &host_gid.to_string(),
+                    "1",
+                    "1",
+                    &g_range.start.to_string(),
+                    &g_range.count.to_string(),
+                ])
+                .status();
+
+            if let (Ok(u_st), Ok(g_st)) = (uid_status, gid_status) {
+                if u_st.success() && g_st.success() {
+                    return Ok(());
+                }
+            }
+        }
+
+        // Fallback: write single UID/GID map directly to /proc/<pid>/uid_map and /proc/<pid>/gid_map
+        let cfg = RootlessUserConfig {
+            enabled: true,
+            uid_mappings: vec![IdMapping {
+                container_id: 0,
+                host_id: host_uid,
+                size: 1,
+            }],
+            gid_mappings: vec![IdMapping {
+                container_id: 0,
+                host_id: host_gid,
+                size: 1,
+            }],
+        };
+        cfg.write_proc_mappings(pid)?;
+        Ok(())
+    }
+
     /// Configure UID and GID mapping for a target PID in Linux /proc/<pid>
     #[cfg(target_os = "linux")]
     pub fn write_proc_mappings(&self, pid: i32) -> Result<()> {
@@ -182,6 +324,39 @@ mod tests {
         assert!(!config.gid_mappings.is_empty());
         assert_eq!(config.uid_mappings[0].container_id, 0);
         assert_eq!(config.gid_mappings[0].container_id, 0);
+    }
+
+    #[test]
+    fn test_parse_subid_content() {
+        let subuid_content = "\
+# /etc/subuid comment
+root:100000:65536
+vagrant:165536:65536
+1000:231072:65536
+";
+        // Lookup by username
+        let range1 = RootlessUserConfig::parse_subid_content(subuid_content, 1001, Some("vagrant"));
+        assert_eq!(
+            range1,
+            Some(SubordinateRange {
+                start: 165536,
+                count: 65536
+            })
+        );
+
+        // Lookup by uid
+        let range2 = RootlessUserConfig::parse_subid_content(subuid_content, 1000, None);
+        assert_eq!(
+            range2,
+            Some(SubordinateRange {
+                start: 231072,
+                count: 65536
+            })
+        );
+
+        // Non-existent user
+        let range3 = RootlessUserConfig::parse_subid_content(subuid_content, 9999, Some("nonexistent"));
+        assert_eq!(range3, None);
     }
 
     #[test]

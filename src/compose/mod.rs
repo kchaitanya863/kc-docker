@@ -264,6 +264,7 @@ impl ComposeProject {
                 restart: "no".to_string(),
                 health_cmd: None,
                 platform: None,
+                privileged: false,
                 gpus: None,
                 workdir: None,
                 image: image_name,
