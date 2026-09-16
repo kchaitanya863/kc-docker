@@ -55,9 +55,10 @@ jobs:
             $env:Path += ";$env:USERPROFILE\.cargo\bin"
             [Environment]::SetEnvironmentVariable("Path", $env:Path, "User")
           }
-          rustup component add clippy rustfmt || true
+          & rustup component add clippy rustfmt
 
       - name: Rust Cache
+        if: "!matrix.is_windows"
         uses: Swatinem/rust-cache@v2
 
       - name: Check code formatting
@@ -186,7 +187,7 @@ jobs:
             $env:Path += ";$env:USERPROFILE\.cargo\bin"
             [Environment]::SetEnvironmentVariable("Path", $env:Path, "User")
           }
-          rustup target add ${{ matrix.target }} || true
+          & rustup target add ${{ matrix.target }}
 
       - name: Build Release Binary
         run: cargo build --release --target ${{ matrix.target }}
