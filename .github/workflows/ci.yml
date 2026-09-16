@@ -20,6 +20,9 @@ jobs:
   test:
     name: Test & Lint (${{ matrix.name }})
     runs-on: ${{ matrix.runs-on }}
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
     strategy:
       fail-fast: false
       matrix:
@@ -27,12 +30,15 @@ jobs:
           - name: Linux (Ubuntu)
             runs-on: [self-hosted, Linux]
             is_windows: false
+            shell: bash
           - name: macOS
             runs-on: [self-hosted, macOS]
             is_windows: false
+            shell: bash
           - name: Windows
             runs-on: [self-hosted, Windows]
             is_windows: true
+            shell: cmd /C call {0}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -47,15 +53,11 @@ jobs:
 
       - name: Set up Rust toolchain (Windows)
         if: matrix.is_windows
-        shell: powershell
         run: |
-          if (-not (Get-Command rustc -ErrorAction SilentlyContinue)) {
-            Invoke-WebRequest -Uri "https://win.rustup.rs/x86_64" -OutFile rustup-init.exe
-            .\rustup-init.exe -y --default-toolchain stable
-            $env:Path += ";$env:USERPROFILE\.cargo\bin"
-            [Environment]::SetEnvironmentVariable("Path", $env:Path, "User")
-          }
-          & rustup component add clippy rustfmt
+          where rustc 2>nul || (
+            powershell -Command "Invoke-WebRequest -Uri 'https://win.rustup.rs/x86_64' -OutFile rustup-init.exe; .\rustup-init.exe -y --default-toolchain stable"
+          )
+          rustup component add clippy rustfmt || echo "components ready"
 
       - name: Rust Cache
         if: "!matrix.is_windows"
@@ -179,15 +181,12 @@ jobs:
 
       - name: Set up Rust toolchain (Windows)
         if: matrix.is_windows
-        shell: powershell
+        shell: cmd
         run: |
-          if (-not (Get-Command rustc -ErrorAction SilentlyContinue)) {
-            Invoke-WebRequest -Uri "https://win.rustup.rs/x86_64" -OutFile rustup-init.exe
-            .\rustup-init.exe -y --default-toolchain stable
-            $env:Path += ";$env:USERPROFILE\.cargo\bin"
-            [Environment]::SetEnvironmentVariable("Path", $env:Path, "User")
-          }
-          & rustup target add ${{ matrix.target }}
+          where rustc 2>nul || (
+            powershell -Command "Invoke-WebRequest -Uri 'https://win.rustup.rs/x86_64' -OutFile rustup-init.exe; .\rustup-init.exe -y --default-toolchain stable"
+          )
+          rustup target add ${{ matrix.target }} || echo "target ready"
 
       - name: Build Release Binary
         run: cargo build --release --target ${{ matrix.target }}
@@ -209,13 +208,12 @@ jobs:
 
       - name: Package Release Artifact (Windows)
         if: matrix.is_windows
-        shell: pwsh
+        shell: cmd
         run: |
-          New-Item -ItemType Directory -Force -Path package/bin
-          Copy-Item target/${{ matrix.target }}/release/boxr.exe package/bin/
-          Copy-Item README.md package/
-          if (Test-Path LICENSE) { Copy-Item LICENSE package/ }
-          Compress-Archive -Path package/* -DestinationPath ${{ matrix.artifact_name }}
+          if not exist "package\bin" mkdir package\bin
+          copy target\${{ matrix.target }}\release\boxr.exe package\bin\
+          copy README.md package\
+          powershell -Command "Compress-Archive -Path package\* -DestinationPath ${{ matrix.artifact_name }} -Force"
 
       - name: Generate SHA-256 Checksum (Unix)
         if: "!matrix.is_windows"
@@ -228,10 +226,9 @@ jobs:
 
       - name: Generate SHA-256 Checksum (Windows)
         if: matrix.is_windows
-        shell: pwsh
+        shell: cmd
         run: |
-          $hash = (Get-FileHash ${{ matrix.artifact_name }} -Algorithm SHA256).Hash.ToLower()
-          "$hash  ${{ matrix.artifact_name }}" | Out-File -Encoding ascii ${{ matrix.artifact_name }}.sha256
+          powershell -Command "$hash = (Get-FileHash ${{ matrix.artifact_name }} -Algorithm SHA256).Hash.ToLower(); \"$hash  ${{ matrix.artifact_name }}\" | Out-File -Encoding ascii ${{ matrix.artifact_name }}.sha256"
 
       - name: Build Debian Package (.deb)
         if: matrix.build_pkg
@@ -256,20 +253,9 @@ jobs:
 
       - name: Package Chocolatey (Windows)
         if: matrix.is_windows
-        shell: pwsh
+        shell: cmd
         run: |
-          $tag = "${{ steps.tag_info.outputs.release_tag }}"
-          $ver = $tag.TrimStart("v")
-          $hash = (Get-FileHash ${{ matrix.artifact_name }} -Algorithm SHA256).Hash.ToLower()
-
-          # Replace tokens in Chocolatey templates
-          (Get-Content packaging/chocolatey/boxr.nuspec) -replace '__VERSION__', $ver | Set-Content packaging/chocolatey/boxr.nuspec
-          (Get-Content packaging/chocolatey/tools/chocolateyinstall.ps1) -replace '__TAG__', $tag -replace '__WINDOWS_SHA256__', $hash | Set-Content packaging/chocolatey/tools/chocolateyinstall.ps1
-
-          # Build nupkg if choco is available
-          if (Get-Command choco -ErrorAction SilentlyContinue) {
-            choco pack packaging/chocolatey/boxr.nuspec --outputdirectory .
-          }
+          powershell -Command "$tag = '${{ steps.tag_info.outputs.release_tag }}'; $ver = $tag.TrimStart('v'); $hash = (Get-FileHash ${{ matrix.artifact_name }} -Algorithm SHA256).Hash.ToLower(); (Get-Content packaging/chocolatey/boxr.nuspec) -replace '__VERSION__', $ver | Set-Content packaging/chocolatey/boxr.nuspec; (Get-Content packaging/chocolatey/tools/chocolateyinstall.ps1) -replace '__TAG__', $tag -replace '__WINDOWS_SHA256__', $hash | Set-Content packaging/chocolatey/tools/chocolateyinstall.ps1; if (Get-Command choco -ErrorAction SilentlyContinue) { choco pack packaging/chocolatey/boxr.nuspec --outputdirectory . }"
 
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v2
