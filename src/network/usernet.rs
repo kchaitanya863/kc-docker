@@ -499,7 +499,7 @@ pub mod platform {
         let len = bytes.len().min(15);
         ifr.ifr_name[..len].copy_from_slice(&bytes[..len]);
 
-        let ret = unsafe { libc::ioctl(tun_file.as_raw_fd(), TUNSETIFF, &ifr) };
+        let ret = unsafe { libc::ioctl(tun_file.as_raw_fd(), TUNSETIFF as _, &ifr) };
         if ret < 0 {
             return Err(std::io::Error::last_os_error())
                 .context("Failed to create TAP device with TUNSETIFF");
