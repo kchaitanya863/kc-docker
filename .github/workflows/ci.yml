@@ -198,6 +198,8 @@ jobs:
           call "%USERPROFILE%\.cargo\env.cmd" 2>nul || set "PATH=%USERPROFILE%\.cargo\bin;C:\ProgramData\mingw64\mingw64\bin;%PATH%"
           powershell -Command "if (-not (Get-Command gcc -ErrorAction SilentlyContinue)) { choco install mingw -y --no-progress }"
           set "PATH=%USERPROFILE%\.cargo\bin;C:\ProgramData\mingw64\mingw64\bin;%PATH%"
+          rustup toolchain install stable-x86_64-pc-windows-gnu || true
+          rustup default stable-x86_64-pc-windows-gnu || true
           rustup target add ${{ matrix.target }} || echo "target ready"
 
       - name: Build Release Binary
