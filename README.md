@@ -10,7 +10,7 @@ A fast, lightweight, production-grade **Open Container Initiative (OCI)** compli
 5. **Registry Authentication & Push**: `boxr login`, `boxr logout`, and `boxr push` using base64 encoded credentials in `~/.boxr/config.json`.
 6. **Interactive PTY / Terminal**: Raw mode terminal guards (`-it`), window resize (`TIOCGWINSZ`), and clean terminal state restoration.
 7. **Volume Management (`boxr volume`)**: Local named persistent volumes, host directory bind mounts (`-v /host:/container:ro`), volume inspection, and lifecycle management.
-8. **Network Management (`boxr network` & `pasta`)**: Bridge networks, IPAM address allocation, native Podman-style `pasta` user-mode tap networking (`CLONE_NEWNET`), and user-space rootless port forwarding proxy.
+8. **Network Management (`boxr network`, `usernet`, & `pasta`)**: Bridge networks, IPAM address allocation, embedded pure-Rust user-mode network stack (`usernet`) with zero external dependencies, native `pasta` integration, and user-space rootless port forwarding proxy.
 9. **Dockerfile Builder (`boxr build`)**: Multi-step build engine supporting `FROM`, `RUN`, `COPY`, `ADD`, `WORKDIR`, `ENV`, `CMD`, `ENTRYPOINT`, `EXPOSE`, and `LABEL`.
 10. **Compose Orchestrator (`boxr compose`)**: Parsing `docker-compose.yml`, topological dependency graph resolution (`depends_on`), multi-container deployment, teardown, and log streaming.
 11. **Daemon REST API (`boxr daemon`)**: Unix Domain Socket server (`boxr.sock`) implementing Docker Engine API endpoints (`/_ping`, `/version`, `/info`, `/containers`, `/images`, `/networks`, `/volumes`).
@@ -54,6 +54,7 @@ boxr/
 │   ├── network/
 │   │   ├── mod.rs              # Bridge networks, IPAM, and port forwarding
 │   │   ├── pasta.rs            # Pasta user-mode tap rootless network driver
+│   │   ├── usernet.rs          # Pure-Rust native user-mode L2/L3/L4 network stack
 │   │   └── rootless.rs         # Rootless user-space TCP port forwarder proxy
 │   ├── pod/
 │   │   └── mod.rs              # Podman pod lifecycle and namespace sharing
@@ -196,6 +197,9 @@ The resulting binary will be at `target/release/boxr`.
 
 # Run with Podman-style pasta rootless network namespace isolation
 ./target/release/boxr run --network pasta -p 8080:80 nginx:latest
+
+# Run with zero-dependency pure-Rust user-mode network stack (usernet)
+./target/release/boxr run --network usernet -p 8080:80 nginx:latest
 
 # Run with isolated loopback-only private network namespace
 ./target/release/boxr run --network none alpine ifconfig

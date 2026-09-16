@@ -13,10 +13,12 @@ use std::process::{Child, Command, Stdio};
 /// Container network isolation mode
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NetworkMode {
-    /// Automatic resolution: use pasta if available and rootless, otherwise bridge/host
+    /// Automatic resolution: use pasta if available, otherwise pure-Rust native usernet
     Auto,
-    /// Explicit Pasta rootless user-mode tap networking
+    /// Explicit Pasta external tap driver
     Pasta,
+    /// Native pure-Rust embedded user-mode network stack (zero external dependencies)
+    UserNet,
     /// Standard virtual bridge network (e.g. boxr0)
     Bridge,
     /// Share host network namespace
@@ -35,6 +37,7 @@ impl NetworkMode {
     pub fn parse(s: &str) -> Self {
         match s.trim().to_lowercase().as_str() {
             "pasta" => Self::Pasta,
+            "usernet" | "native" | "slirp" => Self::UserNet,
             "host" => Self::Host,
             "none" => Self::None,
             "bridge" => Self::Bridge,
@@ -51,11 +54,20 @@ impl NetworkMode {
         }
     }
 
+    /// Determines whether native pure-Rust usernet should be activated
+    pub fn should_use_native_usernet(&self) -> bool {
+        match self {
+            Self::UserNet => true,
+            Self::Auto => !PastaDriver::is_available(),
+            _ => false,
+        }
+    }
+
     /// Whether a private network namespace (CLONE_NEWNET) should be unshared
     pub fn requires_new_netns(&self) -> bool {
         match self {
-            Self::Pasta | Self::None => true,
-            Self::Auto => PastaDriver::is_available(),
+            Self::Pasta | Self::UserNet | Self::None => true,
+            Self::Auto => true,
             Self::Host | Self::Bridge => false,
         }
     }
@@ -66,6 +78,7 @@ impl std::fmt::Display for NetworkMode {
         match self {
             Self::Auto => write!(f, "auto"),
             Self::Pasta => write!(f, "pasta"),
+            Self::UserNet => write!(f, "usernet"),
             Self::Bridge => write!(f, "bridge"),
             Self::Host => write!(f, "host"),
             Self::None => write!(f, "none"),

@@ -210,6 +210,16 @@ pub fn run_trampoline(args: &[String]) -> Result<i32> {
                 }
                 drop(child_sock);
 
+                // If using native pure-Rust user-mode networking stack:
+                let mut _tap_running = None;
+                if network_mode.should_use_native_usernet() {
+                    use crate::network::usernet::{platform, DEFAULT_CONTAINER_IP, DEFAULT_GATEWAY_IP};
+                    if let Ok(tap_file) = platform::create_tap_device("eth0") {
+                        let _ = platform::configure_container_netns("eth0", DEFAULT_CONTAINER_IP, DEFAULT_GATEWAY_IP);
+                        _tap_running = Some(platform::spawn_tap_network_stack(tap_file, ports.clone()));
+                    }
+                }
+
                 // 5. Fork so grandchild becomes PID 1 inside new PID namespace
                 match unsafe { fork() } {
                     Ok(ForkResult::Parent { child: grandchild }) => {
@@ -441,6 +451,16 @@ fn run_container_child(rootfs: &Path, spec: &Spec, mounts: &[MountSpec]) -> Resu
             flags |= MsFlags::MS_RDONLY;
         }
         let _ = mount(Some(&m.source), &target, None::<&str>, flags, None::<&str>);
+    }
+
+    // Ensure DNS configuration exists in container rootfs
+    let resolv_path = rootfs.join("etc/resolv.conf");
+    let _ = fs::create_dir_all(rootfs.join("etc"));
+    if !resolv_path.exists() {
+        let _ = fs::write(
+            &resolv_path,
+            "nameserver 10.0.2.3\nnameserver 1.1.1.1\nnameserver 8.8.8.8\n",
+        );
     }
 
     // Setup pivot_root
