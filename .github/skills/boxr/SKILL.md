@@ -18,7 +18,7 @@ Use this skill when developing, debugging, benchmarking, or packaging `boxr` (th
   - Supports `/etc/subuid` and `/etc/subgid` subordinate mapping using `newuidmap`/`newgidmap` when available, falling back to `/proc/<pid>/uid_map` for single UID mapping.
   - Synchronizes parent and child via `UnixStream` socket pair to write UID/GID mappings prior to namespace isolation.
   - Unshares `CLONE_NEWNS`, `CLONE_NEWPID`, `CLONE_NEWIPC`, `CLONE_NEWUTS`.
-  - **Pasta Rootless Networking (`CLONE_NEWNET`)**: Supports Podman-parity user-mode tap networking via `pasta` (`src/network/pasta.rs`). Unshares `CLONE_NEWNET`, attaches `pasta` to the container's network namespace (`--config-net`), and provisions bidirectional user-space port forwarding (`-t`, `-u`).
+  - **User-Mode Networking (`CLONE_NEWNET`)**: Supports both Podman-parity `pasta` (`src/network/pasta.rs`) and pure-Rust zero-dependency embedded user-mode network stack (`src/network/usernet.rs`). In rootless mode, unshares `CLONE_NEWNET`, binds an in-namespace TAP device (`eth0`), and handles ARP, IPv4 checksums, ICMP Echo ping replies, and DNS UDP forwarding directly without requiring external packages.
   - Mounts container rootfs, mounts internal `/proc`, `/sys` (with tmpfs fallback on restricted kernels), and `/dev`.
   - Executes `pivot_root` (or `chroot` fallback) and drops dangerous capabilities (`CAP_SYS_ADMIN`, `CAP_SYS_RAWIO`).
 - **Resource Limits**: Linux cgroups v2 (`/sys/fs/cgroup/boxr/<id>/`) controlling `memory.max`, `cpu.max`, `pids.max`.

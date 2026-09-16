@@ -1,5 +1,6 @@
 pub mod pasta;
 pub mod rootless;
+pub mod usernet;
 
 use crate::storage::boxr_home;
 use anyhow::{Result, anyhow};
