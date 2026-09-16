@@ -576,7 +576,9 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
         annotations.insert("boxr.gpus".to_string(), g.clone());
     }
     let net_mode = network::pasta::NetworkMode::parse(&args.network);
-    if net_mode == network::pasta::NetworkMode::Pasta && !network::pasta::PastaDriver::is_available() {
+    if net_mode == network::pasta::NetworkMode::Pasta
+        && !network::pasta::PastaDriver::is_available()
+    {
         #[cfg(target_os = "linux")]
         return Err(anyhow!(
             "pasta rootless networking driver is not installed on this system. Install 'passt' package to enable --network=pasta."

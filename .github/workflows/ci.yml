@@ -18,26 +18,60 @@ env:
 
 jobs:
   test:
-    name: Test & Lint (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    name: Test & Lint (${{ matrix.name }})
+    runs-on: ${{ matrix.runs-on }}
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - name: Linux (Ubuntu)
+            runs-on: [self-hosted, Linux]
+            is_windows: false
+            shell: bash
+          - name: macOS
+            runs-on: [self-hosted, macOS]
+            is_windows: false
+            shell: bash
+          - name: Windows
+            runs-on: [self-hosted, Windows]
+            is_windows: true
+            shell: cmd /C call {0}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          submodules: false
 
       - name: Set up Rust toolchain
+        if: "!matrix.is_windows"
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
 
+      - name: Set up Rust toolchain (Windows)
+        if: matrix.is_windows
+        run: |
+          where rustc 2>nul || (
+            powershell -Command "Invoke-WebRequest -Uri 'https://win.rustup.rs/x86_64' -OutFile rustup-init.exe; .\rustup-init.exe -y --default-toolchain stable"
+          )
+          echo %USERPROFILE%\.cargo\bin>> %GITHUB_PATH%
+          echo C:\ProgramData\mingw64\mingw64\bin>> %GITHUB_PATH%
+          call "%USERPROFILE%\.cargo\env.cmd" 2>nul || set "PATH=%USERPROFILE%\.cargo\bin;C:\ProgramData\mingw64\mingw64\bin;%PATH%"
+          powershell -Command "if (-not (Get-Command gcc -ErrorAction SilentlyContinue)) { choco install mingw -y --no-progress }"
+          set "PATH=%USERPROFILE%\.cargo\bin;C:\ProgramData\mingw64\mingw64\bin;%PATH%"
+          rustup toolchain install stable-x86_64-pc-windows-gnu || true
+          rustup default stable-x86_64-pc-windows-gnu || true
+          rustup component add clippy rustfmt || echo "components ready"
+
       - name: Rust Cache
+        if: "!matrix.is_windows"
         uses: Swatinem/rust-cache@v2
 
       - name: Check code formatting
-        if: matrix.os != 'windows-latest'
+        if: "!matrix.is_windows"
         run: cargo fmt --all -- --check
 
       - name: Run Clippy Linter
@@ -53,7 +87,10 @@ jobs:
     name: Bump Version & Create Git Tag
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !startsWith(github.event.head_commit.message, 'chore(release):')
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux]
+    defaults:
+      run:
+        shell: bash
     outputs:
       new_tag: ${{ steps.version.outputs.tag }}
       new_version: ${{ steps.version.outputs.version }}
@@ -63,6 +100,7 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
+          submodules: false
 
       - name: Compute Next Version
         id: version
@@ -100,38 +138,35 @@ jobs:
     name: Build & Publish Release (${{ matrix.target }})
     needs: [test, bump-and-tag]
     if: always() && needs.test.result == 'success' && (needs.bump-and-tag.result == 'success' || startsWith(github.ref, 'refs/tags/v'))
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runs-on }}
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-            artifact_name: boxr-linux-x86_64.tar.gz
-            use_musl: true
-            build_pkg: true
-            deb_arch: amd64
-            rpm_arch: x86_64
-          - os: ubuntu-24.04-arm
+          - runs-on: [self-hosted, Linux]
             target: aarch64-unknown-linux-musl
             artifact_name: boxr-linux-arm64.tar.gz
             use_musl: true
             build_pkg: true
             deb_arch: arm64
             rpm_arch: aarch64
-          - os: macos-latest
+            is_windows: false
+            shell: bash
+          - runs-on: [self-hosted, macOS]
             target: aarch64-apple-darwin
             artifact_name: boxr-macos-arm64.tar.gz
             use_musl: false
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            artifact_name: boxr-macos-x86_64.tar.gz
-            use_musl: false
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
+            is_windows: false
+            shell: bash
+          - runs-on: [self-hosted, Windows]
+            target: x86_64-pc-windows-gnu
             artifact_name: boxr-windows-x86_64.zip
             use_musl: false
             is_windows: true
+            shell: cmd /C call {0}
     steps:
       - name: Determine Target Tag
         id: tag_info
@@ -148,6 +183,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.tag_info.outputs.release_tag }}
+          submodules: false
 
       - name: Install musl-tools (Linux)
         if: matrix.use_musl
@@ -156,9 +192,24 @@ jobs:
           sudo apt-get install -y musl-tools
 
       - name: Set up Rust toolchain
+        if: "!matrix.is_windows"
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
+      - name: Set up Rust toolchain (Windows)
+        if: matrix.is_windows
+        shell: cmd
+        run: |
+          where rustc 2>nul || (
+            powershell -Command "Invoke-WebRequest -Uri 'https://win.rustup.rs/x86_64' -OutFile rustup-init.exe; .\rustup-init.exe -y --default-toolchain stable"
+          )
+          echo %USERPROFILE%\.cargo\bin>> %GITHUB_PATH%
+          echo C:\ProgramData\mingw64\mingw64\bin>> %GITHUB_PATH%
+          call "%USERPROFILE%\.cargo\env.cmd" 2>nul || set "PATH=%USERPROFILE%\.cargo\bin;C:\ProgramData\mingw64\mingw64\bin;%PATH%"
+          powershell -Command "if (-not (Get-Command gcc -ErrorAction SilentlyContinue)) { choco install mingw -y --no-progress }"
+          set "PATH=%USERPROFILE%\.cargo\bin;C:\ProgramData\mingw64\mingw64\bin;%PATH%"
+          rustup target add ${{ matrix.target }} || echo "target ready"
 
       - name: Build Release Binary
         run: cargo build --release --target ${{ matrix.target }}
@@ -180,13 +231,12 @@ jobs:
 
       - name: Package Release Artifact (Windows)
         if: matrix.is_windows
-        shell: pwsh
+        shell: cmd
         run: |
-          New-Item -ItemType Directory -Force -Path package/bin
-          Copy-Item target/${{ matrix.target }}/release/boxr.exe package/bin/
-          Copy-Item README.md package/
-          if (Test-Path LICENSE) { Copy-Item LICENSE package/ }
-          Compress-Archive -Path package/* -DestinationPath ${{ matrix.artifact_name }}
+          if not exist "package\bin" mkdir package\bin
+          copy target\${{ matrix.target }}\release\boxr.exe package\bin\
+          copy README.md package\
+          powershell -Command "Compress-Archive -Path package\* -DestinationPath ${{ matrix.artifact_name }} -Force"
 
       - name: Generate SHA-256 Checksum (Unix)
         if: "!matrix.is_windows"
@@ -199,10 +249,9 @@ jobs:
 
       - name: Generate SHA-256 Checksum (Windows)
         if: matrix.is_windows
-        shell: pwsh
+        shell: cmd
         run: |
-          $hash = (Get-FileHash ${{ matrix.artifact_name }} -Algorithm SHA256).Hash.ToLower()
-          "$hash  ${{ matrix.artifact_name }}" | Out-File -Encoding ascii ${{ matrix.artifact_name }}.sha256
+          powershell -Command "$hash = (Get-FileHash ${{ matrix.artifact_name }} -Algorithm SHA256).Hash.ToLower(); \"$hash  ${{ matrix.artifact_name }}\" | Out-File -Encoding ascii ${{ matrix.artifact_name }}.sha256"
 
       - name: Build Debian Package (.deb)
         if: matrix.build_pkg
@@ -227,20 +276,9 @@ jobs:
 
       - name: Package Chocolatey (Windows)
         if: matrix.is_windows
-        shell: pwsh
+        shell: cmd
         run: |
-          $tag = "${{ steps.tag_info.outputs.release_tag }}"
-          $ver = $tag.TrimStart("v")
-          $hash = (Get-FileHash ${{ matrix.artifact_name }} -Algorithm SHA256).Hash.ToLower()
-
-          # Replace tokens in Chocolatey templates
-          (Get-Content packaging/chocolatey/boxr.nuspec) -replace '__VERSION__', $ver | Set-Content packaging/chocolatey/boxr.nuspec
-          (Get-Content packaging/chocolatey/tools/chocolateyinstall.ps1) -replace '__TAG__', $tag -replace '__WINDOWS_SHA256__', $hash | Set-Content packaging/chocolatey/tools/chocolateyinstall.ps1
-
-          # Build nupkg if choco is available
-          if (Get-Command choco -ErrorAction SilentlyContinue) {
-            choco pack packaging/chocolatey/boxr.nuspec --outputdirectory .
-          }
+          powershell -Command "$tag = '${{ steps.tag_info.outputs.release_tag }}'; $ver = $tag.TrimStart('v'); $hash = (Get-FileHash ${{ matrix.artifact_name }} -Algorithm SHA256).Hash.ToLower(); (Get-Content packaging/chocolatey/boxr.nuspec) -replace '__VERSION__', $ver | Set-Content packaging/chocolatey/boxr.nuspec; (Get-Content packaging/chocolatey/tools/chocolateyinstall.ps1) -replace '__TAG__', $tag -replace '__WINDOWS_SHA256__', $hash | Set-Content packaging/chocolatey/tools/chocolateyinstall.ps1; if (Get-Command choco -ErrorAction SilentlyContinue) { choco pack packaging/chocolatey/boxr.nuspec --outputdirectory . }"
 
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v2
@@ -263,7 +301,10 @@ jobs:
     name: Publish Release & Update Homebrew Tap
     needs: [bump-and-tag, release]
     if: always() && needs.release.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux]
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Checkout Homebrew Tap repository
         uses: actions/checkout@v4
@@ -271,6 +312,7 @@ jobs:
           repository: kchaitanya863/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN || secrets.GITHUB_TOKEN }}
           path: homebrew-tap
+          submodules: false
 
       - name: Download Release Assets
         id: dl

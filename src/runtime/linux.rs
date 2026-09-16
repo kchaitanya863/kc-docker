@@ -141,11 +141,11 @@ pub fn run_trampoline(args: &[String]) -> Result<i32> {
                 if use_pasta {
                     let mut net_sync = [0u8; 5];
                     if parent_sock.read_exact(&mut net_sync).is_ok() && &net_sync == b"netok" {
-                        let pasta_cfg = crate::network::pasta::PastaConfig::for_pid(
-                            child.as_raw(),
-                            &ports,
-                        );
-                        pasta_child = crate::network::pasta::PastaDriver::spawn(&pasta_cfg).ok().flatten();
+                        let pasta_cfg =
+                            crate::network::pasta::PastaConfig::for_pid(child.as_raw(), &ports);
+                        pasta_child = crate::network::pasta::PastaDriver::spawn(&pasta_cfg)
+                            .ok()
+                            .flatten();
                         let _ = parent_sock.write_all(b"gofor");
                     }
                 }
@@ -213,10 +213,17 @@ pub fn run_trampoline(args: &[String]) -> Result<i32> {
                 // If using native pure-Rust user-mode networking stack:
                 let mut _tap_running = None;
                 if network_mode.should_use_native_usernet() {
-                    use crate::network::usernet::{platform, DEFAULT_CONTAINER_IP, DEFAULT_GATEWAY_IP};
+                    use crate::network::usernet::{
+                        DEFAULT_CONTAINER_IP, DEFAULT_GATEWAY_IP, platform,
+                    };
                     if let Ok(tap_file) = platform::create_tap_device("eth0") {
-                        let _ = platform::configure_container_netns("eth0", DEFAULT_CONTAINER_IP, DEFAULT_GATEWAY_IP);
-                        _tap_running = Some(platform::spawn_tap_network_stack(tap_file, ports.clone()));
+                        let _ = platform::configure_container_netns(
+                            "eth0",
+                            DEFAULT_CONTAINER_IP,
+                            DEFAULT_GATEWAY_IP,
+                        );
+                        _tap_running =
+                            Some(platform::spawn_tap_network_stack(tap_file, ports.clone()));
                     }
                 }
 
@@ -278,14 +285,8 @@ pub fn run_trampoline(args: &[String]) -> Result<i32> {
 
 /// Run an unshare command in a new user namespace (boxr unshare)
 pub fn run_unshare_cli(args: &[String]) -> Result<i32> {
-    let default_cmd = vec![
-        std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string()),
-    ];
-    let cmd = if args.is_empty() {
-        &default_cmd
-    } else {
-        args
-    };
+    let default_cmd = vec![std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())];
+    let cmd = if args.is_empty() { &default_cmd } else { args };
 
     let is_rootless = unsafe { libc::getuid() != 0 };
     if is_rootless {
