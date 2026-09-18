@@ -380,8 +380,6 @@ boxr service status
 boxr service stop
 boxr service uninstall
 ```
-curl --unix-socket ~/.boxr/boxr.sock http://localhost/containers/json
-```
 
 ### Stats & Events Monitoring
 
