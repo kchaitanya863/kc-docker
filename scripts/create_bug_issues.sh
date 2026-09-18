@@ -18,6 +18,8 @@ ISSUES=(
   "09-compose-up-swallows-errors.md|[Bug] compose up ignores service start failures|bug"
   "10-cached-blob-skips-digest-verification.md|[Bug] Cached registry blobs skip SHA-256 verification|bug"
   "11-json-store-race-condition.md|[Bug] JSON metadata stores have race conditions on concurrent writes|bug"
+  "12-seccomp-runtime-enforcement.md|[Security] Default seccomp filter not enforced at runtime|bug"
+  "13-absolute-volume-traversal.md|[Security] Absolute paths with .. bypass volume traversal guard|bug"
 )
 
 if ! command -v gh >/dev/null 2>&1; then
