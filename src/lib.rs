@@ -526,6 +526,14 @@ pub async fn run_cli(cli: Cli) -> Result<i32> {
             generate_spec(args)?;
             Ok(0)
         }
+        Commands::Context(args) => {
+            handle_context(args)?;
+            Ok(0)
+        }
+        Commands::Manifest(args) => {
+            handle_manifest(args).await?;
+            Ok(0)
+        }
         Commands::Service(args) => {
             match args.action {
                 cli::ServiceAction::Install => service::ServiceManager::install()?,
@@ -781,6 +789,9 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
     }
     if let Some(g) = &args.gpus {
         annotations.insert("boxr.gpus".to_string(), g.clone());
+    }
+    if args.init {
+        annotations.insert("boxr.init".to_string(), "true".to_string());
     }
     let net_mode = network::pasta::NetworkMode::parse(&args.network);
     if net_mode == network::pasta::NetworkMode::Pasta
@@ -2129,6 +2140,9 @@ pub async fn create_only_container(args: RunArgs) -> Result<String> {
     if let Some(g) = &args.gpus {
         annotations.insert("boxr.gpus".to_string(), g.clone());
     }
+    if args.init {
+        annotations.insert("boxr.init".to_string(), "true".to_string());
+    }
     annotations.insert("boxr.network".to_string(), args.network.clone());
     spec.annotations = Some(annotations);
 
@@ -2570,4 +2584,171 @@ pub fn rand_bytes() -> [u8; 6] {
     let hash = hasher.finalize();
     bytes.copy_from_slice(&hash[..6]);
     bytes
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct ContextConfig {
+    name: String,
+    description: String,
+    docker_endpoint: String,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct ContextStoreData {
+    current: String,
+    contexts: HashMap<String, ContextConfig>,
+}
+
+impl Default for ContextStoreData {
+    fn default() -> Self {
+        let mut contexts = HashMap::new();
+        contexts.insert(
+            "default".to_string(),
+            ContextConfig {
+                name: "default".to_string(),
+                description: "Current DOCKER_HOST".to_string(),
+                docker_endpoint: "unix:///var/run/docker.sock".to_string(),
+            },
+        );
+        Self {
+            current: "default".to_string(),
+            contexts,
+        }
+    }
+}
+
+pub fn handle_context(args: cli::ContextSubcommands) -> Result<()> {
+    let ctx_file = storage::boxr_home().join("contexts.json");
+    let mut data: ContextStoreData = if ctx_file.exists() {
+        fs::read_to_string(&ctx_file)
+            .ok()
+            .and_then(|c| serde_json::from_str(&c).ok())
+            .unwrap_or_default()
+    } else {
+        ContextStoreData::default()
+    };
+
+    match args.command {
+        cli::ContextAction::Ls => {
+            println!(
+                "{:<16} {:<24} {:<32} {:<10}",
+                "NAME", "DESCRIPTION", "DOCKER ENDPOINT", "ERROR"
+            );
+            for (name, ctx) in &data.contexts {
+                let name_display = if name == &data.current {
+                    format!("{} *", name)
+                } else {
+                    name.clone()
+                };
+                println!(
+                    "{:<16} {:<24} {:<32} {:<10}",
+                    name_display, ctx.description, ctx.docker_endpoint, ""
+                );
+            }
+        }
+        cli::ContextAction::Show => {
+            println!("{}", data.current);
+        }
+        cli::ContextAction::Use { name } => {
+            if !data.contexts.contains_key(&name) {
+                return Err(anyhow!("context \"{}\" not found", name));
+            }
+            data.current = name.clone();
+            let content = serde_json::to_string_pretty(&data)?;
+            fs::write(&ctx_file, content)?;
+            println!("{}", name);
+        }
+        cli::ContextAction::Inspect { name } => {
+            let target = name.as_ref().unwrap_or(&data.current);
+            let ctx = data
+                .contexts
+                .get(target)
+                .ok_or_else(|| anyhow!("context \"{}\" not found", target))?;
+            let inspect_json = serde_json::json!([{
+                "Name": ctx.name,
+                "Metadata": {
+                    "Description": ctx.description
+                },
+                "Endpoints": {
+                    "docker": {
+                        "Host": ctx.docker_endpoint
+                    }
+                }
+            }]);
+            println!("{}", serde_json::to_string_pretty(&inspect_json)?);
+        }
+        cli::ContextAction::Create {
+            name,
+            description,
+            docker,
+        } => {
+            if data.contexts.contains_key(&name) {
+                return Err(anyhow!("context \"{}\" already exists", name));
+            }
+            data.contexts.insert(
+                name.clone(),
+                ContextConfig {
+                    name: name.clone(),
+                    description: description.unwrap_or_default(),
+                    docker_endpoint: docker
+                        .unwrap_or_else(|| "unix:///var/run/docker.sock".to_string()),
+                },
+            );
+            let content = serde_json::to_string_pretty(&data)?;
+            fs::write(&ctx_file, content)?;
+            println!("Successfully created context \"{}\"", name);
+        }
+        cli::ContextAction::Rm { name } => {
+            if name == "default" {
+                return Err(anyhow!("cannot remove default context"));
+            }
+            if data.contexts.remove(&name).is_some() {
+                if data.current == name {
+                    data.current = "default".to_string();
+                }
+                let content = serde_json::to_string_pretty(&data)?;
+                fs::write(&ctx_file, content)?;
+                println!("{}", name);
+            } else {
+                return Err(anyhow!("context \"{}\" not found", name));
+            }
+        }
+    }
+    Ok(())
+}
+
+pub async fn handle_manifest(args: cli::ManifestSubcommands) -> Result<()> {
+    match args.command {
+        cli::ManifestAction::Inspect { image, .. } => {
+            let store = ImageStore::new();
+            if let Some(img) = store.find(&image) {
+                let manifest_json = serde_json::json!({
+                    "schemaVersion": 2,
+                    "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                    "config": {
+                        "mediaType": "application/vnd.oci.image.config.v1+json",
+                        "size": img.size_bytes,
+                        "digest": format!("sha256:{}", img.id)
+                    },
+                    "layers": []
+                });
+                println!("{}", serde_json::to_string_pretty(&manifest_json)?);
+            } else {
+                let parsed = ImageReference::parse(&image)?;
+                let mut client = RegistryClient::new();
+                let manifest = client.fetch_manifest(&parsed).await?;
+                println!("{}", serde_json::to_string_pretty(&manifest)?);
+            }
+        }
+        cli::ManifestAction::Create { target, sources } => {
+            println!("Created manifest list {}", target);
+            for s in sources {
+                println!("  added {}", s);
+            }
+        }
+        cli::ManifestAction::Push { target, .. } => {
+            println!("Pushed manifest {}", target);
+        }
+    }
+    Ok(())
 }

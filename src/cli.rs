@@ -180,6 +180,12 @@ pub enum Commands {
     /// Generate a standard OCI runtime specification (config.json)
     Spec(SpecArgs),
 
+    /// Manage Docker contexts
+    Context(ContextSubcommands),
+
+    /// Manage Docker image manifests and manifest lists
+    Manifest(ManifestSubcommands),
+
     /// Manage the Boxr background daemon service (launchd on macOS, systemd on Linux)
     Service(ServiceArgs),
 }
@@ -324,6 +330,10 @@ pub struct RunArgs {
     /// Mount the container's root filesystem as read only
     #[arg(long = "read-only")]
     pub read_only: bool,
+
+    /// Run an init inside the container that forwards signals and reaps processes
+    #[arg(long = "init")]
+    pub init: bool,
 
     pub image: String,
 
@@ -756,6 +766,65 @@ pub struct AliasArgs {
 pub struct DiffArgs {
     /// Container to inspect changes on
     pub container: String,
+}
+
+#[derive(Args, Debug)]
+pub struct ContextSubcommands {
+    #[command(subcommand)]
+    pub command: ContextAction,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ContextAction {
+    /// List contexts
+    #[command(alias = "list")]
+    Ls,
+    /// Print current context
+    Show,
+    /// Set the current docker context
+    Use { name: String },
+    /// Display detailed information on one or more contexts
+    Inspect { name: Option<String> },
+    /// Create a context
+    Create {
+        name: String,
+        #[arg(long = "description")]
+        description: Option<String>,
+        #[arg(long = "docker")]
+        docker: Option<String>,
+    },
+    /// Remove one or more contexts
+    Rm { name: String },
+}
+
+#[derive(Args, Debug)]
+pub struct ManifestSubcommands {
+    #[command(subcommand)]
+    pub command: ManifestAction,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ManifestAction {
+    /// Display an image manifest, or manifest list
+    Inspect {
+        image: String,
+        #[arg(long = "insecure")]
+        insecure: bool,
+    },
+    /// Create a local manifest list for annotating and pushing to a registry
+    Create {
+        target: String,
+        #[arg(required = true)]
+        sources: Vec<String>,
+    },
+    /// Push a manifest list to a repository
+    Push {
+        target: String,
+        #[arg(long = "insecure")]
+        insecure: bool,
+        #[arg(long = "purge")]
+        purge: bool,
+    },
 }
 
 #[derive(Args, Debug)]

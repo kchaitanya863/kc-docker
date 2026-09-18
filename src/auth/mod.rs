@@ -144,6 +144,27 @@ impl CredentialStore {
                 }
             }
         }
+
+        // Fallback to ~/.docker/config.json if available
+        if let Some(home) = std::env::var_os("HOME") {
+            let docker_config = PathBuf::from(home).join(".docker/config.json");
+            if docker_config.exists() {
+                if let Ok(content) = fs::read_to_string(&docker_config) {
+                    if let Ok(docker_cfg) = serde_json::from_str::<AuthConfig>(&content) {
+                        if let Some(entry) = docker_cfg.auths.get(srv_key) {
+                            if let Some(decoded_bytes) = custom_base64_decode(&entry.auth) {
+                                if let Ok(decoded_str) = String::from_utf8(decoded_bytes) {
+                                    if let Some((user, pass)) = decoded_str.split_once(':') {
+                                        return Some((user.to_string(), pass.to_string()));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         None
     }
 }

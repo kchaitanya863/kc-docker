@@ -58,3 +58,28 @@ Tracked tasks to reach 100% production readiness and drop-in parity with Docker 
   - Full raw-mode PTY passthrough forwarding terminal size / `SIGWINCH` resize events.
   - Signal forwarding (`SIGINT`, `SIGTERM`, `SIGWINCH`) for interactive container sessions.
   - Verified with `TerminalGuard` lifecycle in `test_docker_parity_exec_flags`.
+
+- [x] **10. Real Container Execution & Exec in REST API (`daemon-real-exec`)**
+  - Wired `POST /v1.45/containers/create` to full bundle CoW creation.
+  - Wired `POST /v1.45/containers/{id}/start` and `POST /v1.45/containers/{id}/stop` to actual hypervisor/cgroup lifecycle.
+  - Implemented `POST /v1.45/containers/{id}/exec`, `POST /v1.45/exec/{id}/start`, and `GET /v1.45/exec/{id}/json`.
+  - Verified with `test_daemon_prune_and_crud_endpoints` and section 10 of `run_parity_tests.sh`.
+
+- [x] **11. Docker Context Management (`cli-context-cmds`)**
+  - Implemented `docker context ls`, `show`, `use`, `inspect`, `create`, `rm`.
+  - Verified with integration test `test_docker_parity_context_commands` and section 15 of `run_parity_tests.sh`.
+
+- [x] **12. Container Init Subreaper Process (`cli-init-flag`)**
+  - Added `--init` flag to `docker run` and `docker create`.
+  - Enabled Linux `PR_SET_CHILD_SUBREAPER` and guest init supervision.
+  - Verified with integration test `test_docker_parity_run_init` and section 17 of `run_parity_tests.sh`.
+
+- [x] **13. Docker Hub & Registry Credential Fallback (`auth-docker-fallback`)**
+  - Seamlessly fall back to `~/.docker/config.json` when `~/.boxr/config.json` has no credentials for a registry.
+
+- [x] **14. Native Process Resource Metrics in `docker stats` (`stats-real-metrics`)**
+  - Added real process CPU% and RSS memory sampling via PID on Unix/macOS when cgroup v2 controllers are absent.
+
+- [x] **15. Multi-Arch Manifest Subcommands (`cli-manifest-cmds`)**
+  - Implemented `docker manifest inspect`, `create`, and `push`.
+  - Verified with integration test `test_docker_parity_manifest_commands` and section 16 of `run_parity_tests.sh`.

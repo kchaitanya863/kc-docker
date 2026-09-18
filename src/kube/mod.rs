@@ -128,6 +128,7 @@ impl KubeManager {
                 cap_add: Vec::new(),
                 cap_drop: Vec::new(),
                 read_only: false,
+                init: false,
                 workdir: None,
                 image: c_spec.image.clone(),
                 command: c_spec.command.clone().unwrap_or_default(),

@@ -1,5 +1,5 @@
 use crate::network::NetworkStore;
-use crate::storage::{ContainerRecord, ContainerStatus, ContainerStore, ImageStore, boxr_home};
+use crate::storage::{ContainerStatus, ContainerStore, ImageStore, boxr_home};
 use crate::volume::VolumeStore;
 use anyhow::{Context, Result};
 use axum::{
@@ -99,6 +99,12 @@ pub fn create_router(state: DaemonState) -> Router {
         .route("/v1.45/containers/{id}/logs", get(get_container_logs))
         .route("/containers/{id}", delete(remove_container))
         .route("/v1.45/containers/{id}", delete(remove_container))
+        .route("/containers/{id}/exec", post(create_container_exec))
+        .route("/v1.45/containers/{id}/exec", post(create_container_exec))
+        .route("/exec/{id}/start", post(start_exec_instance))
+        .route("/v1.45/exec/{id}/start", post(start_exec_instance))
+        .route("/exec/{id}/json", get(inspect_exec_instance))
+        .route("/v1.45/exec/{id}/json", get(inspect_exec_instance))
         .route("/containers/prune", post(prune_containers_endpoint))
         .route("/v1.45/containers/prune", post(prune_containers_endpoint))
         .route("/images/prune", post(prune_images_endpoint))
@@ -272,6 +278,12 @@ async fn list_containers(Query(params): Query<ListContainersQuery>) -> Json<serd
 }
 
 #[allow(dead_code)]
+#[derive(Deserialize, Default)]
+struct CreateContainerQuery {
+    name: Option<String>,
+}
+
+#[allow(dead_code)]
 #[derive(Deserialize)]
 struct CreateContainerRequest {
     #[serde(rename = "Image")]
@@ -280,62 +292,192 @@ struct CreateContainerRequest {
     cmd: Option<Vec<String>>,
     #[serde(rename = "Env")]
     env: Option<Vec<String>>,
+    #[serde(rename = "WorkingDir")]
+    working_dir: Option<String>,
+    #[serde(rename = "User")]
+    user: Option<String>,
 }
 
 async fn create_container(
+    Query(query): Query<CreateContainerQuery>,
     Json(payload): Json<CreateContainerRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let random_id = hex::encode(crate::storage::container_store::rand_id());
-    let store = ContainerStore::new();
-    let record = ContainerRecord {
-        id: random_id.clone(),
-        name: format!("boxr-{}", &random_id[..6]),
+    let run_args = crate::cli::RunArgs {
+        interactive: false,
+        tty: false,
+        detach: true,
+        rm: false,
+        name: query.name,
+        env: payload.env.unwrap_or_default(),
+        ports: Vec::new(),
+        volumes: Vec::new(),
+        workdir: payload.working_dir,
+        user: payload.user,
+        hostname: None,
+        add_host: Vec::new(),
+        dns: Vec::new(),
+        labels: Vec::new(),
+        cidfile: None,
+        memory: None,
+        cpus: None,
+        pids_limit: None,
+        rootless: true,
+        restart: "no".to_string(),
+        health_cmd: None,
+        platform: None,
+        network: "auto".to_string(),
+        privileged: false,
+        gpus: None,
+        entrypoint: None,
+        env_file: None,
+        shm_size: None,
+        cap_add: Vec::new(),
+        cap_drop: Vec::new(),
+        read_only: false,
+        init: false,
         image: payload.image,
         command: payload.cmd.unwrap_or_default(),
-        created_at: chrono::Utc::now(),
-        status: ContainerStatus::Created,
-        bundle_path: format!("/tmp/boxr/containers/{}", random_id),
-        restart_policy: crate::health::RestartPolicy::No,
-        health_status: crate::health::HealthStatus::None,
-        restart_count: 0,
-        ports: Vec::new(),
     };
 
-    store
-        .add(record.clone())
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    #[derive(Serialize)]
-    struct Resp {
-        #[serde(rename = "Id")]
-        id: String,
-        #[serde(rename = "Warnings")]
-        warnings: Vec<String>,
+    match crate::create_only_container(run_args).await {
+        Ok(id) => Ok(Json(serde_json::json!({
+            "Id": id,
+            "Warnings": []
+        }))),
+        Err(e) => {
+            eprintln!("Failed to create container via REST API: {:#}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
     }
-
-    Ok(Json(
-        serde_json::to_value(Resp {
-            id: random_id,
-            warnings: vec![],
-        })
-        .unwrap(),
-    ))
 }
 
 async fn start_container(Path(id): Path<String>) -> StatusCode {
-    let store = ContainerStore::new();
-    match store.update_status(&id, ContainerStatus::Running) {
+    match crate::start_container(&id).await {
         Ok(_) => StatusCode::NO_CONTENT,
         Err(_) => StatusCode::NOT_FOUND,
     }
 }
 
 async fn stop_container(Path(id): Path<String>) -> StatusCode {
-    let store = ContainerStore::new();
-    match store.update_status(&id, ContainerStatus::Exited(0)) {
+    match crate::stop_container(&id) {
         Ok(_) => StatusCode::NO_CONTENT,
         Err(_) => StatusCode::NOT_FOUND,
     }
+}
+
+#[derive(Deserialize)]
+struct CreateExecRequest {
+    #[serde(rename = "Cmd")]
+    cmd: Option<Vec<String>>,
+    #[serde(rename = "Env")]
+    env: Option<Vec<String>>,
+    #[serde(rename = "WorkingDir")]
+    working_dir: Option<String>,
+    #[serde(rename = "User")]
+    user: Option<String>,
+    #[serde(rename = "Detach")]
+    detach: Option<bool>,
+}
+
+async fn create_container_exec(
+    Path(id): Path<String>,
+    Json(payload): Json<CreateExecRequest>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let store = ContainerStore::new();
+    let c = store.find(&id).ok_or(StatusCode::NOT_FOUND)?;
+    let exec_id = hex::encode(crate::storage::container_store::rand_id());
+
+    let bundle = PathBuf::from(&c.bundle_path);
+    let exec_info = serde_json::json!({
+        "container_id": c.id,
+        "cmd": payload.cmd.unwrap_or_default(),
+        "env": payload.env.unwrap_or_default(),
+        "working_dir": payload.working_dir,
+        "user": payload.user,
+        "detach": payload.detach.unwrap_or(false)
+    });
+    let _ = fs::write(
+        bundle.join(format!("exec-{}.json", exec_id)),
+        serde_json::to_string(&exec_info).unwrap(),
+    );
+
+    Ok(Json(serde_json::json!({
+        "Id": exec_id
+    })))
+}
+
+async fn start_exec_instance(Path(exec_id): Path<String>) -> Result<String, StatusCode> {
+    let store = ContainerStore::new();
+    for c in store.list() {
+        let bundle = PathBuf::from(&c.bundle_path);
+        let exec_file = bundle.join(format!("exec-{}.json", exec_id));
+        if exec_file.exists() {
+            if let Ok(content) = fs::read_to_string(&exec_file) {
+                if let Ok(info) = serde_json::from_str::<serde_json::Value>(&content) {
+                    let cmd: Vec<String> = info
+                        .get("cmd")
+                        .and_then(|v| serde_json::from_value(v.clone()).ok())
+                        .unwrap_or_default();
+                    let env: Vec<String> = info
+                        .get("env")
+                        .and_then(|v| serde_json::from_value(v.clone()).ok())
+                        .unwrap_or_default();
+                    let wd = info.get("working_dir").and_then(|v| v.as_str());
+                    let user = info.get("user").and_then(|v| v.as_str());
+                    let detach = info
+                        .get("detach")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+
+                    let log_path = bundle.join(format!("exec-{}.log", exec_id));
+                    let code = crate::runtime::exec_in_bundle(
+                        &bundle, &cmd, &env, wd, user, detach,
+                    )
+                    .unwrap_or(1);
+                    let _ = fs::write(
+                        bundle.join(format!("exec-{}.done", exec_id)),
+                        code.to_string(),
+                    );
+                    let output = if log_path.exists() {
+                        fs::read_to_string(&log_path).unwrap_or_default()
+                    } else {
+                        String::new()
+                    };
+                    return Ok(output);
+                }
+            }
+        }
+    }
+    Err(StatusCode::NOT_FOUND)
+}
+
+async fn inspect_exec_instance(
+    Path(exec_id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let store = ContainerStore::new();
+    for c in store.list() {
+        let bundle = PathBuf::from(&c.bundle_path);
+        let exec_file = bundle.join(format!("exec-{}.json", exec_id));
+        if exec_file.exists() {
+            let done_file = bundle.join(format!("exec-{}.done", exec_id));
+            let (running, exit_code) = if done_file.exists() {
+                let code = fs::read_to_string(&done_file)
+                    .ok()
+                    .and_then(|s| s.trim().parse::<i32>().ok())
+                    .unwrap_or(0);
+                (false, code)
+            } else {
+                (false, 0)
+            };
+            return Ok(Json(serde_json::json!({
+                "ID": exec_id,
+                "Running": running,
+                "ExitCode": exit_code,
+                "ContainerID": c.id
+            })));
+        }
+    }
+    Err(StatusCode::NOT_FOUND)
 }
 
 async fn remove_container(Path(id): Path<String>) -> StatusCode {
@@ -684,5 +826,58 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+
+        // Test POST /containers/create
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1.45/containers/create?name=daemon-test-box")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"Image":"alpine:latest","Cmd":["echo","hello"]}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let created_json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        let cont_id = created_json.get("Id").unwrap().as_str().unwrap();
+
+        // Test POST /containers/{id}/exec
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1.45/containers/{}/exec", cont_id))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"Cmd":["echo","exec-test"]}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let exec_json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        let exec_id = exec_json.get("Id").unwrap().as_str().unwrap();
+
+        // Test GET /exec/{id}/json
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/v1.45/exec/{}/json", exec_id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Cleanup created container
+        let _ = crate::remove_container(cont_id, true);
     }
 }

@@ -281,6 +281,7 @@ impl ComposeProject {
                 cap_add: Vec::new(),
                 cap_drop: Vec::new(),
                 read_only: false,
+                init: false,
                 workdir: None,
                 image: image_name,
                 command: cmd_vec,

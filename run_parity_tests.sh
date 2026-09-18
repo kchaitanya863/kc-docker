@@ -434,6 +434,10 @@ test_step "POST /v1.45/volumes/prune (Volumes Prune API)" \
 test_step "POST /v1.45/networks/prune (Networks Prune API)" \
     "curl -s -X POST --unix-socket $API_SOCK http://localhost/v1.45/networks/prune | grep 'NetworksDeleted' >/dev/null"
 
+# Test REST API Container Creation & Exec
+test_step "POST /v1.45/containers/create & /exec (REST Container & Exec API)" \
+    "CID=\$(curl -s -X POST --unix-socket $API_SOCK 'http://localhost/v1.45/containers/create?name=rest-c-$(rand_id)' -H 'Content-Type: application/json' -d '{\"Image\":\"ubuntu\",\"Cmd\":[\"sleep\",\"30\"]}' | grep -o '\"Id\":\"[^\"]*' | cut -d'\"' -f4); test -n \"\$CID\" && EID=\$(curl -s -X POST --unix-socket $API_SOCK \"http://localhost/v1.45/containers/\$CID/exec\" -H 'Content-Type: application/json' -d '{\"Cmd\":[\"echo\",\"exec-ok\"]}' | grep -o '\"Id\":\"[^\"]*' | cut -d'\"' -f4); test -n \"\$EID\" && curl -s --unix-socket $API_SOCK \"http://localhost/v1.45/exec/\$EID/json\" | grep '\"ID\"' >/dev/null && curl -s -X DELETE --unix-socket $API_SOCK \"http://localhost/v1.45/containers/\$CID\" >/dev/null"
+
 # Cleanup daemon
 run_cmd "if [ -f /tmp/boxr-daemon.pid ]; then kill \$(cat /tmp/boxr-daemon.pid) 2>/dev/null || true; rm -f /tmp/boxr-daemon.pid; fi; rm -f $API_SOCK"
 
@@ -520,6 +524,51 @@ test_step "docker images -a (all images)" \
     "$DOCKER_CMD images -a | grep 'REPOSITORY' >/dev/null"
 
 run_cmd "$DOCKER_CMD rm $Q_NAME" &>/dev/null
+
+# ------------------------------------------------------------------------------
+# 15. Context Management Parity (docker context ...)
+# ------------------------------------------------------------------------------
+echo -e "\n${BOLD}15. Context Management Parity (docker context ...)${NC}"
+CTX_NAME="ctx-$(rand_id)"
+
+test_step "docker context ls" \
+    "$DOCKER_CMD context ls | grep 'default' >/dev/null"
+
+test_step "docker context show" \
+    "$DOCKER_CMD context show | grep . >/dev/null"
+
+test_step "docker context create <name>" \
+    "$DOCKER_CMD context create $CTX_NAME --description 'Remote Boxr' --docker tcp://127.0.0.1:2375"
+
+test_step "docker context use <name>" \
+    "$DOCKER_CMD context use $CTX_NAME"
+
+test_step "docker context inspect <name>" \
+    "$DOCKER_CMD context inspect $CTX_NAME | grep '$CTX_NAME' >/dev/null"
+
+run_cmd "$DOCKER_CMD context use default" &>/dev/null
+
+test_step "docker context rm <name>" \
+    "$DOCKER_CMD context rm $CTX_NAME"
+
+# ------------------------------------------------------------------------------
+# 16. Image Manifest Subcommands Parity (docker manifest ...)
+# ------------------------------------------------------------------------------
+echo -e "\n${BOLD}16. Image Manifest Subcommands Parity (docker manifest ...)${NC}"
+
+test_step "docker manifest inspect <image>" \
+    "$DOCKER_CMD manifest inspect ubuntu | grep -E 'schemaVersion|mediaType|config' >/dev/null"
+
+test_step "docker manifest create <target> <sources...>" \
+    "$DOCKER_CMD manifest create test-manifest:latest ubuntu"
+
+# ------------------------------------------------------------------------------
+# 17. Container Init Process Parity (--init)
+# ------------------------------------------------------------------------------
+echo -e "\n${BOLD}17. Container Init Process Parity (--init)${NC}"
+
+test_step "docker run --rm --init ubuntu echo 'init-ok'" \
+    "$DOCKER_CMD run --rm --init ubuntu echo 'init-ok' | grep 'init-ok' >/dev/null"
 
 # ------------------------------------------------------------------------------
 # Summary Report

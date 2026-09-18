@@ -474,6 +474,14 @@ pub fn exec_in_bundle(
 }
 
 fn run_container_child(rootfs: &Path, spec: &Spec, mounts: &[MountSpec]) -> Result<()> {
+    if let Some(ann) = &spec.annotations {
+        if ann.get("boxr.init").map(|v| v == "true").unwrap_or(false) {
+            unsafe {
+                libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1);
+            }
+        }
+    }
+
     // Set hostname
     if let Some(hostname) = &spec.hostname {
         let host_c = CString::new(hostname.as_str())?;

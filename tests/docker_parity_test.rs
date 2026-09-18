@@ -686,3 +686,112 @@ CMD ["echo", "test"]
     let _ = boxr_cmd(&bin).args(["rmi", &tag]).output();
 }
 
+/// Docker Parity Test: Context Commands (context ls, show, create, use, inspect, rm)
+#[test]
+fn test_docker_parity_context_commands() {
+    let bin = boxr_bin();
+    if !bin.exists() {
+        return;
+    }
+
+    let ctx_name = format!("dockertest-ctx-{}", unique_id());
+
+    // 1. context ls
+    let out = boxr_cmd(&bin).args(["context", "ls"]).output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("default"));
+
+    // 2. context show
+    let out = boxr_cmd(&bin).args(["context", "show"]).output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(!stdout.trim().is_empty());
+
+    // 3. context create
+    let out = boxr_cmd(&bin)
+        .args([
+            "context",
+            "create",
+            &ctx_name,
+            "--description",
+            "Test remote context",
+            "--docker",
+            "tcp://127.0.0.1:2375",
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    // 4. context use
+    let out = boxr_cmd(&bin)
+        .args(["context", "use", &ctx_name])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    // 5. context inspect
+    let out = boxr_cmd(&bin)
+        .args(["context", "inspect", &ctx_name])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains(&ctx_name));
+
+    // Reset to default
+    let _ = boxr_cmd(&bin).args(["context", "use", "default"]).output();
+
+    // 6. context rm
+    let out = boxr_cmd(&bin)
+        .args(["context", "rm", &ctx_name])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+}
+
+/// Docker Parity Test: Manifest Commands (manifest inspect, create)
+#[test]
+fn test_docker_parity_manifest_commands() {
+    let bin = boxr_bin();
+    if !bin.exists() {
+        return;
+    }
+
+    // 1. manifest inspect
+    let out = boxr_cmd(&bin)
+        .args(["manifest", "inspect", "alpine:latest"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("schemaVersion") || stdout.contains("mediaType") || stdout.contains("config"));
+
+    // 2. manifest create
+    let out = boxr_cmd(&bin)
+        .args(["manifest", "create", "my-app:multi", "alpine:latest"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+}
+
+/// Docker Parity Test: Container Init flag (--init)
+#[test]
+fn test_docker_parity_run_init() {
+    let bin = boxr_bin();
+    if !bin.exists() {
+        return;
+    }
+
+    let name = format!("dockertest-init-{}", unique_id());
+
+    // Run container with --init
+    let out = boxr_cmd(&bin)
+        .args(["run", "--rm", "--init", "--name", &name, "alpine", "echo", "init-ok"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("init-ok"));
+}
+

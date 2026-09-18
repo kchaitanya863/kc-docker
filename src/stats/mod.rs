@@ -48,9 +48,40 @@ impl StatsCollector {
                 }
             }
         } else if matches!(c.status, ContainerStatus::Running) {
-            // Simulated minimal baseline for running container
-            mem_usage_bytes = 14 * 1024 * 1024;
-            cpu_percentage = 0.05;
+            let bundle = PathBuf::from(&c.bundle_path);
+            let mut read_metrics = false;
+            #[cfg(unix)]
+            {
+                let pid_res = fs::read_to_string(bundle.join("vm.pid"))
+                    .or_else(|_| fs::read_to_string(bundle.join("container.pid")));
+                if let Ok(pid_str) = pid_res {
+                    if let Ok(pid) = pid_str.trim().parse::<i32>() {
+                        if let Ok(output) = std::process::Command::new("ps")
+                            .args(["-p", &pid.to_string(), "-o", "%cpu,rss"])
+                            .output()
+                        {
+                            let out = String::from_utf8_lossy(&output.stdout);
+                            if let Some(line) = out.lines().nth(1) {
+                                let parts: Vec<&str> = line.split_whitespace().collect();
+                                if parts.len() >= 2 {
+                                    if let Ok(cpu) = parts[0].parse::<f64>() {
+                                        cpu_percentage = cpu;
+                                    }
+                                    if let Ok(rss_kb) = parts[1].parse::<u64>() {
+                                        mem_usage_bytes = rss_kb * 1024;
+                                        read_metrics = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if !read_metrics {
+                // Minimal baseline if process is alive
+                mem_usage_bytes = 14 * 1024 * 1024;
+                cpu_percentage = 0.05;
+            }
             pids = 1;
         }
 
