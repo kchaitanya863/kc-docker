@@ -358,7 +358,7 @@ pub async fn run_cli(cli: Cli) -> Result<i32> {
         }
         Commands::Rm(args) => {
             for c in &args.containers {
-                remove_container(c)?;
+                remove_container(c, args.force)?;
             }
             Ok(0)
         }
@@ -802,9 +802,10 @@ pub fn stop_container(container: &str) -> Result<()> {
         for pid in pids {
             unsafe {
                 libc::kill(pid, libc::SIGTERM);
-                libc::kill(-pid, libc::SIGTERM);
+                let _ = libc::kill(-pid, libc::SIGTERM);
             }
-            for _ in 0..10 {
+            // Wait up to 3.0 seconds (60 * 50ms) for graceful hypervisor/process stop
+            for _ in 0..60 {
                 std::thread::sleep(std::time::Duration::from_millis(50));
                 if unsafe { libc::kill(pid, 0) != 0 } {
                     break;
@@ -813,7 +814,7 @@ pub fn stop_container(container: &str) -> Result<()> {
             if unsafe { libc::kill(pid, 0) == 0 } {
                 unsafe {
                     libc::kill(pid, libc::SIGKILL);
-                    libc::kill(-pid, libc::SIGKILL);
+                    let _ = libc::kill(-pid, libc::SIGKILL);
                 }
             }
         }
@@ -833,6 +834,7 @@ pub fn stop_container(container: &str) -> Result<()> {
         }
     }
     store.update_status(&c.id, ContainerStatus::Exited(0))?;
+    let _ = guardrails::ProcessReaper::reap_stale_containers();
     println!("{}", container);
     Ok(())
 }
@@ -1614,42 +1616,25 @@ pub fn list_containers(args: PsArgs) -> Result<()> {
     Ok(())
 }
 
-pub fn remove_container(container: &str) -> Result<()> {
+pub fn remove_container(container: &str, force: bool) -> Result<()> {
     let store = ContainerStore::new();
+    let c = store
+        .find(container)
+        .ok_or_else(|| anyhow!("Container '{}' not found", container))?;
+
+    if matches!(c.status, ContainerStatus::Running) && !force {
+        return Err(anyhow!(
+            "Conflict. You cannot remove a running container {}. Stop the container before attempting removal or force remove",
+            c.id
+        ));
+    }
+
+    if matches!(c.status, ContainerStatus::Running) {
+        let _ = stop_container(container);
+    }
+
     let removed = store.remove(container)?;
-    #[cfg(unix)]
-    {
-        let bundle_path = std::path::PathBuf::from(&removed.bundle_path);
-        let mut pids = Vec::new();
-        if let Ok(pid_str) = std::fs::read_to_string(bundle_path.join("vm.pid")) {
-            if let Ok(pid) = pid_str.trim().parse::<i32>() {
-                pids.push(pid);
-            }
-        }
-        if let Ok(pid_str) = std::fs::read_to_string(bundle_path.join("container.pid")) {
-            if let Ok(pid) = pid_str.trim().parse::<i32>() {
-                pids.push(pid);
-            }
-        }
-        for pid in pids {
-            unsafe {
-                libc::kill(pid, libc::SIGKILL);
-                libc::kill(-pid, libc::SIGKILL);
-            }
-        }
-    }
-    #[cfg(target_os = "windows")]
-    {
-        let bundle_path = std::path::PathBuf::from(&removed.bundle_path);
-        let pid_file = bundle_path.join("vm.pid");
-        if let Ok(pid_str) = std::fs::read_to_string(pid_file) {
-            if let Ok(pid) = pid_str.trim().parse::<u32>() {
-                let _ = std::process::Command::new("taskkill")
-                    .args(["/F", "/PID", &pid.to_string()])
-                    .output();
-            }
-        }
-    }
+    let _ = guardrails::ProcessReaper::reap_stale_containers();
     println!("{}", removed.id);
     Ok(())
 }

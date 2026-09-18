@@ -13,14 +13,25 @@ pub fn ensure_vz_runner() -> Result<PathBuf> {
     let bin_dir = home.join("bin");
     let runner_bin = bin_dir.join("boxr-vz");
 
-    if runner_bin.exists() {
-        return Ok(runner_bin);
+    let vz_source = include_str!("boxr-vz.m");
+    let entitlements = include_str!("boxr-vz.entitlements");
+
+    use sha2::Digest;
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(vz_source.as_bytes());
+    hasher.update(entitlements.as_bytes());
+    let current_hash = format!("{:x}", hasher.finalize());
+
+    let hash_file = bin_dir.join("boxr-vz.hash");
+    if runner_bin.exists() && hash_file.exists() {
+        if let Ok(saved_hash) = fs::read_to_string(&hash_file) {
+            if saved_hash.trim() == current_hash {
+                return Ok(runner_bin);
+            }
+        }
     }
 
     fs::create_dir_all(&bin_dir)?;
-
-    let vz_source = include_str!("boxr-vz.m");
-    let entitlements = include_str!("boxr-vz.entitlements");
 
     let temp_dir = tempfile::tempdir()?;
     let m_file = temp_dir.path().join("boxr-vz.m");
@@ -63,6 +74,8 @@ pub fn ensure_vz_runner() -> Result<PathBuf> {
     if !sign_status.success() {
         return Err(anyhow!("codesign failed for boxr-vz"));
     }
+
+    let _ = fs::write(&hash_file, current_hash);
 
     Ok(runner_bin)
 }
@@ -284,12 +297,14 @@ pub fn execute_bundle(
         run_script.push_str("wait $MAIN_PID 2>/dev/null\n");
         run_script.push_str("EXIT_CODE=$?\n");
         run_script.push_str("echo $EXIT_CODE > /boxr-exitcode\n");
-        run_script.push_str("echo 1 > /proc/sys/kernel/sysrq 2>/dev/null; echo o > /proc/sysrq-trigger 2>/dev/null || /bin/busybox poweroff -f 2>/dev/null || poweroff -f 2>/dev/null\n");
+        run_script.push_str("sync 2>/dev/null || true\n");
+        run_script.push_str("echo 1 > /proc/sys/kernel/sysrq 2>/dev/null; echo o > /proc/sysrq-trigger 2>/dev/null || /bin/busybox poweroff -f 2>/dev/null || poweroff -f 2>/dev/null || halt -f -p 2>/dev/null\n");
     } else {
         run_script.push_str(&format!("{}\n", final_cmd));
         run_script.push_str("EXIT_CODE=$?\n");
         run_script.push_str("echo $EXIT_CODE > /boxr-exitcode\n");
-        run_script.push_str("echo 1 > /proc/sys/kernel/sysrq 2>/dev/null; echo o > /proc/sysrq-trigger 2>/dev/null || /bin/busybox poweroff -f 2>/dev/null || poweroff -f 2>/dev/null\n");
+        run_script.push_str("sync 2>/dev/null || true\n");
+        run_script.push_str("echo 1 > /proc/sys/kernel/sysrq 2>/dev/null; echo o > /proc/sysrq-trigger 2>/dev/null || /bin/busybox poweroff -f 2>/dev/null || poweroff -f 2>/dev/null || halt -f -p 2>/dev/null\n");
     }
 
     let run_script_path = rootfs_path.join("boxr-run.sh");
@@ -305,6 +320,11 @@ pub fn execute_bundle(
         cmd.stdin(std::process::Stdio::null());
         cmd.stdout(std::process::Stdio::null());
         cmd.stderr(std::process::Stdio::null());
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            cmd.process_group(0);
+        }
         let _child = cmd.spawn()?;
         // Give background VM a brief moment to boot
         std::thread::sleep(std::time::Duration::from_millis(200));

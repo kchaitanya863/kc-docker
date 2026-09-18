@@ -9,17 +9,16 @@
 #include <unistd.h>
 
 static VZVirtualMachine *g_vm = nil;
-static BOOL g_should_stop = NO;
+static NSString *g_bundlePath = nil;
 
-static void handle_signal(int sig) {
+static void clean_exit_handler(void) {
     if (g_vm && [g_vm canStop]) {
         dispatch_semaphore_t sem = dispatch_semaphore_create(0);
-        [g_vm stopWithCompletionHandler:^(NSError * _Nullable errorOrNil) {
+        [g_vm stopWithCompletionHandler:^(NSError * _Nullable error) {
             dispatch_semaphore_signal(sem);
         }];
-        dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)));
+        dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)));
     }
-    exit(128 + sig);
 }
 
 @interface BoxrVMDelegate : NSObject <VZVirtualMachineDelegate>
@@ -95,11 +94,41 @@ int main(int argc, const char *argv[]) {
             return 1;
         }
 
-        signal(SIGINT, handle_signal);
-        signal(SIGTERM, handle_signal);
+        atexit(clean_exit_handler);
+
+        signal(SIGINT, SIG_IGN);
+        signal(SIGTERM, SIG_IGN);
+
+        void (^stopAndExit)(int) = ^(int sig) {
+            if (g_vm && [g_vm canStop]) {
+                dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+                [g_vm stopWithCompletionHandler:^(NSError * _Nullable errorOrNil) {
+                    dispatch_semaphore_signal(sem);
+                }];
+                dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)));
+            }
+            if (bundlePath) {
+                NSString *pidFile = [bundlePath stringByAppendingPathComponent:@"vm.pid"];
+                [[NSFileManager defaultManager] removeItemAtPath:pidFile error:nil];
+            }
+            exit(128 + sig);
+        };
+
+        dispatch_source_t sigtermSrc = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, SIGTERM, 0, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0));
+        dispatch_source_set_event_handler(sigtermSrc, ^{
+            stopAndExit(SIGTERM);
+        });
+        dispatch_resume(sigtermSrc);
+
+        dispatch_source_t sigintSrc = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, SIGINT, 0, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0));
+        dispatch_source_set_event_handler(sigintSrc, ^{
+            stopAndExit(SIGINT);
+        });
+        dispatch_resume(sigintSrc);
 
         // Record PID if bundle path is provided
         if (bundlePath) {
+            g_bundlePath = bundlePath;
             NSString *pidFile = [bundlePath stringByAppendingPathComponent:@"vm.pid"];
             NSString *pidStr = [NSString stringWithFormat:@"%d\n", getpid()];
             [pidStr writeToFile:pidFile atomically:YES encoding:NSUTF8StringEncoding error:nil];
@@ -203,6 +232,15 @@ int main(int argc, const char *argv[]) {
 
         // Run until guest powers down
         CFRunLoopRun();
+
+        // Ensure VM is stopped cleanly if not already stopped
+        if (vm.canStop) {
+            dispatch_semaphore_t stopSem = dispatch_semaphore_create(0);
+            [vm stopWithCompletionHandler:^(NSError * _Nullable error) {
+                dispatch_semaphore_signal(stopSem);
+            }];
+            dispatch_semaphore_wait(stopSem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)));
+        }
 
         if (isDetach && writeHandle) {
             @try {

@@ -183,6 +183,50 @@ impl ContainerStore {
             // Clean up bundle folder
             let bundle = PathBuf::from(&removed.bundle_path);
             if bundle.exists() {
+                #[cfg(unix)]
+                {
+                    let mut pids = Vec::new();
+                    if let Ok(pid_str) = std::fs::read_to_string(bundle.join("vm.pid")) {
+                        if let Ok(pid) = pid_str.trim().parse::<i32>() {
+                            pids.push(pid);
+                        }
+                    }
+                    if let Ok(pid_str) = std::fs::read_to_string(bundle.join("container.pid")) {
+                        if let Ok(pid) = pid_str.trim().parse::<i32>() {
+                            pids.push(pid);
+                        }
+                    }
+                    for pid in pids {
+                        unsafe {
+                            libc::kill(pid, libc::SIGTERM);
+                            let _ = libc::kill(-pid, libc::SIGTERM);
+                        }
+                        for _ in 0..40 {
+                            std::thread::sleep(std::time::Duration::from_millis(50));
+                            if unsafe { libc::kill(pid, 0) != 0 } {
+                                break;
+                            }
+                        }
+                        if unsafe { libc::kill(pid, 0) == 0 } {
+                            unsafe {
+                                libc::kill(pid, libc::SIGKILL);
+                                let _ = libc::kill(-pid, libc::SIGKILL);
+                            }
+                        }
+                    }
+                }
+                #[cfg(target_os = "windows")]
+                {
+                    let pid_file = bundle.join("vm.pid");
+                    if let Ok(pid_str) = std::fs::read_to_string(pid_file) {
+                        if let Ok(pid) = pid_str.trim().parse::<u32>() {
+                            let _ = std::process::Command::new("taskkill")
+                                .args(["/F", "/PID", &pid.to_string()])
+                                .output();
+                        }
+                    }
+                }
+
                 let _ = fs::remove_dir_all(bundle);
             }
 

@@ -249,6 +249,8 @@ impl ProcessReaper {
                 .map(|c| c.bundle_path.clone())
                 .collect();
 
+            let mut running_boxr_vz_pids = Vec::new();
+
             if let Ok(output) = std::process::Command::new("ps")
                 .args(["-A", "-o", "pid,command"])
                 .output()
@@ -270,10 +272,32 @@ impl ProcessReaper {
                                 if !is_active {
                                     unsafe {
                                         libc::kill(pid, libc::SIGTERM);
+                                        let _ = libc::kill(-pid, libc::SIGTERM);
                                     }
                                     reaped_count += 1;
+                                } else {
+                                    running_boxr_vz_pids.push(pid);
                                 }
                             }
+                        }
+                    }
+                }
+            }
+
+            // If no boxr-vz processes are active, reap any orphaned VirtualMachine XPC services
+            if running_boxr_vz_pids.is_empty() {
+                if let Ok(output) = std::process::Command::new("pgrep")
+                    .arg("-f")
+                    .arg("com.apple.Virtualization.VirtualMachine")
+                    .output()
+                {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    for line in stdout.lines() {
+                        if let Ok(pid) = line.trim().parse::<i32>() {
+                            unsafe {
+                                libc::kill(pid, libc::SIGKILL);
+                            }
+                            reaped_count += 1;
                         }
                     }
                 }

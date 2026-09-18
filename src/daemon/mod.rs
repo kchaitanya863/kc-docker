@@ -131,6 +131,13 @@ pub async fn start_daemon(socket_path: Option<&str>) -> Result<()> {
 
         println!("boxr daemon listening on unix://{:?}", sock);
 
+        tokio::spawn(async {
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                let _ = crate::guardrails::ProcessReaper::reap_stale_containers();
+            }
+        });
+
         let state = DaemonState { home };
         let app = create_router(state);
 
@@ -145,6 +152,13 @@ pub async fn start_daemon(socket_path: Option<&str>) -> Result<()> {
             .with_context(|| format!("Failed to bind TCP listener at {}", addr))?;
 
         println!("boxr daemon listening on tcp://{}", addr);
+
+        tokio::spawn(async {
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                let _ = crate::guardrails::ProcessReaper::reap_stale_containers();
+            }
+        });
 
         let state = DaemonState { home };
         let app = create_router(state);
@@ -309,8 +323,7 @@ async fn stop_container(Path(id): Path<String>) -> StatusCode {
 }
 
 async fn remove_container(Path(id): Path<String>) -> StatusCode {
-    let store = ContainerStore::new();
-    match store.remove(&id) {
+    match crate::remove_container(&id, true) {
         Ok(_) => StatusCode::NO_CONTENT,
         Err(_) => StatusCode::NOT_FOUND,
     }
