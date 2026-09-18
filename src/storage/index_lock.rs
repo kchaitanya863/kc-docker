@@ -5,7 +5,7 @@ use std::path::Path;
 /// Run `f` while holding an exclusive lock on the JSON index file.
 pub fn with_index_lock<T>(index_file: &Path, f: impl FnOnce() -> Result<T>) -> Result<T> {
     let lock_path = index_file.with_extension("lock");
-    let lock_file = OpenOptions::new()
+    let _lock_file = OpenOptions::new()
         .create(true)
         .read(true)
         .write(true)
@@ -14,13 +14,15 @@ pub fn with_index_lock<T>(index_file: &Path, f: impl FnOnce() -> Result<T>) -> R
 
     #[cfg(unix)]
     {
-        use nix::fcntl::{FlockArg, flock};
         use std::os::unix::io::AsRawFd;
-
-        flock(lock_file.as_raw_fd(), FlockArg::LockExclusive)
-            .with_context(|| format!("Failed to acquire lock {:?}", lock_path))?;
+        let fd = _lock_file.as_raw_fd();
+        unsafe {
+            libc::flock(fd, libc::LOCK_EX);
+        }
         let result = f();
-        let _ = flock(lock_file.as_raw_fd(), FlockArg::Unlock);
+        unsafe {
+            libc::flock(fd, libc::LOCK_UN);
+        }
         return result;
     }
 

@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VolumeRecord {
@@ -89,73 +89,73 @@ impl VolumeStore {
         labels: Option<HashMap<String, String>>,
     ) -> Result<VolumeRecord> {
         crate::storage::index_lock::with_index_lock(&self.index_file, || {
-        let mut data = self.load_unlocked();
-        let vol_name = match name {
-            Some(n) if !n.trim().is_empty() => n.trim().to_string(),
-            _ => format!(
-                "vol-{}",
-                &hex::encode(crate::storage::container_store::rand_id())[..8]
-            ),
-        };
+            let mut data = self.load_unlocked();
+            let vol_name = match name {
+                Some(n) if !n.trim().is_empty() => n.trim().to_string(),
+                _ => format!(
+                    "vol-{}",
+                    &hex::encode(crate::storage::container_store::rand_id())[..8]
+                ),
+            };
 
-        if data.volumes.iter().any(|v| v.name == vol_name) {
-            return Err(anyhow!("Volume with name '{}' already exists", vol_name));
-        }
+            if data.volumes.iter().any(|v| v.name == vol_name) {
+                return Err(anyhow!("Volume with name '{}' already exists", vol_name));
+            }
 
-        let mountpoint = self.volumes_dir.join(&vol_name).join("_data");
-        fs::create_dir_all(&mountpoint)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(&mountpoint, fs::Permissions::from_mode(0o777));
-        }
+            let mountpoint = self.volumes_dir.join(&vol_name).join("_data");
+            fs::create_dir_all(&mountpoint)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(&mountpoint, fs::Permissions::from_mode(0o777));
+            }
 
-        let record = VolumeRecord {
-            name: vol_name,
-            driver: "local".to_string(),
-            mountpoint: mountpoint.to_string_lossy().to_string(),
-            created_at: Utc::now(),
-            labels: labels.unwrap_or_default(),
-            scope: "local".to_string(),
-        };
+            let record = VolumeRecord {
+                name: vol_name,
+                driver: "local".to_string(),
+                mountpoint: mountpoint.to_string_lossy().to_string(),
+                created_at: Utc::now(),
+                labels: labels.unwrap_or_default(),
+                scope: "local".to_string(),
+            };
 
-        data.volumes.push(record.clone());
-        self.save_unlocked(&data)?;
-        Ok(record)
+            data.volumes.push(record.clone());
+            self.save_unlocked(&data)?;
+            Ok(record)
         })
     }
 
     pub fn remove(&self, name: &str) -> Result<VolumeRecord> {
         crate::storage::index_lock::with_index_lock(&self.index_file, || {
-        let mut data = self.load_unlocked();
-        if let Some(pos) = data.volumes.iter().position(|v| v.name == name) {
-            let removed = data.volumes.remove(pos);
-            self.save_unlocked(&data)?;
+            let mut data = self.load_unlocked();
+            if let Some(pos) = data.volumes.iter().position(|v| v.name == name) {
+                let removed = data.volumes.remove(pos);
+                self.save_unlocked(&data)?;
 
-            let vol_dir = self.volumes_dir.join(&removed.name);
-            if vol_dir.exists() {
-                let _ = fs::remove_dir_all(vol_dir);
+                let vol_dir = self.volumes_dir.join(&removed.name);
+                if vol_dir.exists() {
+                    let _ = fs::remove_dir_all(vol_dir);
+                }
+                Ok(removed)
+            } else {
+                Err(anyhow!("Volume '{}' not found", name))
             }
-            Ok(removed)
-        } else {
-            Err(anyhow!("Volume '{}' not found", name))
-        }
         })
     }
 
     pub fn prune(&self) -> Result<Vec<String>> {
         crate::storage::index_lock::with_index_lock(&self.index_file, || {
-        let mut data = self.load_unlocked();
-        let pruned: Vec<String> = data.volumes.iter().map(|v| v.name.clone()).collect();
-        for name in &pruned {
-            let vol_dir = self.volumes_dir.join(name);
-            if vol_dir.exists() {
-                let _ = fs::remove_dir_all(vol_dir);
+            let mut data = self.load_unlocked();
+            let pruned: Vec<String> = data.volumes.iter().map(|v| v.name.clone()).collect();
+            for name in &pruned {
+                let vol_dir = self.volumes_dir.join(name);
+                if vol_dir.exists() {
+                    let _ = fs::remove_dir_all(vol_dir);
+                }
             }
-        }
-        data.volumes.clear();
-        self.save_unlocked(&data)?;
-        Ok(pruned)
+            data.volumes.clear();
+            self.save_unlocked(&data)?;
+            Ok(pruned)
         })
     }
 

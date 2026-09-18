@@ -74,73 +74,73 @@ impl PodStore {
 
     pub fn create(&self, name: Option<&str>, ports: Vec<PortMapping>) -> Result<PodRecord> {
         crate::storage::index_lock::with_index_lock(&self.index_file, || {
-        let mut data = self.load_unlocked();
-        let random_id = hex::encode(crate::storage::container_store::rand_id());
-        let pod_name = name
-            .map(|n| n.trim().to_string())
-            .unwrap_or_else(|| format!("pod-{}", &random_id[..6]));
+            let mut data = self.load_unlocked();
+            let random_id = hex::encode(crate::storage::container_store::rand_id());
+            let pod_name = name
+                .map(|n| n.trim().to_string())
+                .unwrap_or_else(|| format!("pod-{}", &random_id[..6]));
 
-        if data.pods.iter().any(|p| p.name == pod_name) {
-            return Err(anyhow!("Pod name '{}' already exists", pod_name));
-        }
+            if data.pods.iter().any(|p| p.name == pod_name) {
+                return Err(anyhow!("Pod name '{}' already exists", pod_name));
+            }
 
-        let pod = PodRecord {
-            id: random_id[..12].to_string(),
-            name: pod_name,
-            created_at: Utc::now(),
-            status: "Created".to_string(),
-            infra_container_id: format!("infra-{}", &random_id[..6]),
-            containers: Vec::new(),
-            ports,
-        };
+            let pod = PodRecord {
+                id: random_id[..12].to_string(),
+                name: pod_name,
+                created_at: Utc::now(),
+                status: "Created".to_string(),
+                infra_container_id: format!("infra-{}", &random_id[..6]),
+                containers: Vec::new(),
+                ports,
+            };
 
-        data.pods.push(pod.clone());
-        self.save_unlocked(&data)?;
-        Ok(pod)
+            data.pods.push(pod.clone());
+            self.save_unlocked(&data)?;
+            Ok(pod)
         })
     }
 
     pub fn remove(&self, query: &str) -> Result<PodRecord> {
         crate::storage::index_lock::with_index_lock(&self.index_file, || {
-        let mut data = self.load_unlocked();
-        let c_store = ContainerStore::new();
+            let mut data = self.load_unlocked();
+            let c_store = ContainerStore::new();
 
-        if let Some(pos) = data
-            .pods
-            .iter()
-            .position(|p| p.id.starts_with(query) || p.name == query)
-        {
-            let removed = data.pods.remove(pos);
-            self.save_unlocked(&data)?;
+            if let Some(pos) = data
+                .pods
+                .iter()
+                .position(|p| p.id.starts_with(query) || p.name == query)
+            {
+                let removed = data.pods.remove(pos);
+                self.save_unlocked(&data)?;
 
-            // Remove all member containers
-            for cid in &removed.containers {
-                let _ = c_store.remove(cid);
+                // Remove all member containers
+                for cid in &removed.containers {
+                    let _ = c_store.remove(cid);
+                }
+                Ok(removed)
+            } else {
+                Err(anyhow!("Pod '{}' not found", query))
             }
-            Ok(removed)
-        } else {
-            Err(anyhow!("Pod '{}' not found", query))
-        }
         })
     }
 
     pub fn add_container_to_pod(&self, pod_query: &str, container_id: &str) -> Result<()> {
         crate::storage::index_lock::with_index_lock(&self.index_file, || {
-        let mut data = self.load_unlocked();
-        if let Some(p) = data
-            .pods
-            .iter_mut()
-            .find(|p| p.id.starts_with(pod_query) || p.name == pod_query)
-        {
-            if !p.containers.contains(&container_id.to_string()) {
-                p.containers.push(container_id.to_string());
-                p.status = "Running".to_string();
-                self.save_unlocked(&data)?;
+            let mut data = self.load_unlocked();
+            if let Some(p) = data
+                .pods
+                .iter_mut()
+                .find(|p| p.id.starts_with(pod_query) || p.name == pod_query)
+            {
+                if !p.containers.contains(&container_id.to_string()) {
+                    p.containers.push(container_id.to_string());
+                    p.status = "Running".to_string();
+                    self.save_unlocked(&data)?;
+                }
+                Ok(())
+            } else {
+                Err(anyhow!("Pod '{}' not found", pod_query))
             }
-            Ok(())
-        } else {
-            Err(anyhow!("Pod '{}' not found", pod_query))
-        }
         })
     }
 }

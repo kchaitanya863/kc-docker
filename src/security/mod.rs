@@ -334,7 +334,10 @@ fn syscall_name_to_nr(name: &str) -> Option<i32> {
         "settimeofday" => Some(to_i32(libc::SYS_settimeofday)),
         "swapoff" => Some(to_i32(libc::SYS_swapoff)),
         "swapon" => Some(to_i32(libc::SYS_swapon)),
+        #[cfg(target_arch = "x86_64")]
         "sysfs" => Some(to_i32(libc::SYS_sysfs)),
+        #[cfg(not(target_arch = "x86_64"))]
+        "sysfs" => None,
         "umount2" => Some(to_i32(libc::SYS_umount2)),
         "unshare" => Some(to_i32(libc::SYS_unshare)),
         "userfaultfd" => Some(to_i32(libc::SYS_userfaultfd)),
