@@ -215,7 +215,7 @@ jobs:
           cp completions/_boxr package/completions/
           cp completions/boxr.fish package/completions/
 
-          tar -czvf ${{ matrix.artifact_name }} -C package .
+          COPYFILE_DISABLE=1 tar --no-xattrs -czvf ${{ matrix.artifact_name }} -C package .
           shasum -a 256 ${{ matrix.artifact_name }} > ${{ matrix.artifact_name }}.sha256
 
       - name: Package Release Artifact (Windows)
