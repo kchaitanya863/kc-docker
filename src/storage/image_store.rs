@@ -112,7 +112,12 @@ impl ImageStore {
                 };
                 (os, norm)
             } else {
-                (Some("linux"), host_arch)
+                let default_os = if cfg!(target_os = "windows") {
+                    Some("windows")
+                } else {
+                    Some("linux")
+                };
+                (default_os, host_arch)
             };
 
             let img_arch = match img.config.architecture.as_str() {
