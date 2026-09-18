@@ -18,60 +18,31 @@ env:
 
 jobs:
   test:
-    name: Test & Lint (${{ matrix.name }})
-    runs-on: ${{ matrix.runs-on }}
+    name: Test & Lint (macOS Self-Hosted)
+    runs-on: [self-hosted, macOS]
     defaults:
       run:
-        shell: ${{ matrix.shell }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: Linux (Ubuntu)
-            runs-on: [self-hosted, Linux]
-            is_windows: false
-            shell: bash
-          - name: macOS
-            runs-on: [self-hosted, macOS]
-            is_windows: false
-            shell: bash
-          - name: Windows
-            runs-on: [self-hosted, Windows]
-            is_windows: true
-            shell: cmd /C call {0}
+        shell: bash
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: false
 
+      - name: Configure PATH
+        run: |
+          echo "/opt/homebrew/bin" >> $GITHUB_PATH
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
       - name: Set up Rust toolchain
-        if: "!matrix.is_windows"
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
 
-      - name: Set up Rust toolchain (Windows)
-        if: matrix.is_windows
-        run: |
-          where rustc 2>nul || (
-            powershell -Command "Invoke-WebRequest -Uri 'https://win.rustup.rs/x86_64' -OutFile rustup-init.exe; .\rustup-init.exe -y --default-toolchain stable"
-          )
-          echo %USERPROFILE%\.cargo\bin>> %GITHUB_PATH%
-          echo C:\ProgramData\mingw64\mingw64\bin>> %GITHUB_PATH%
-          call "%USERPROFILE%\.cargo\env.cmd" 2>nul || set "PATH=%USERPROFILE%\.cargo\bin;C:\ProgramData\mingw64\mingw64\bin;%PATH%"
-          powershell -Command "if (-not (Get-Command gcc -ErrorAction SilentlyContinue)) { choco install mingw -y --no-progress }"
-          set "PATH=%USERPROFILE%\.cargo\bin;C:\ProgramData\mingw64\mingw64\bin;%PATH%"
-          rustup toolchain install stable-x86_64-pc-windows-gnu || true
-          rustup default stable-x86_64-pc-windows-gnu || true
-          rustup component add clippy rustfmt || echo "components ready"
-
       - name: Rust Cache
-        if: "!matrix.is_windows"
         uses: Swatinem/rust-cache@v2
 
       - name: Check code formatting
-        if: "!matrix.is_windows"
         run: cargo fmt --all -- --check
 
       - name: Run Clippy Linter
@@ -87,7 +58,7 @@ jobs:
     name: Bump Version & Create Git Tag
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !startsWith(github.event.head_commit.message, 'chore(release):')
-    runs-on: [self-hosted, Linux]
+    runs-on: [self-hosted, macOS]
     defaults:
       run:
         shell: bash
@@ -101,6 +72,11 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
           submodules: false
+
+      - name: Configure PATH
+        run: |
+          echo "/opt/homebrew/bin" >> $GITHUB_PATH
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Compute Next Version
         id: version
@@ -125,7 +101,7 @@ jobs:
           echo "tag=$NEW_TAG" >> "$GITHUB_OUTPUT"
           echo "version=$NEW_VER" >> "$GITHUB_OUTPUT"
 
-          sed -i 's/^version = ".*"/version = "'"$NEW_VER"'"/' Cargo.toml
+          perl -pi -e 's/^version = ".*"/version = "'"$NEW_VER"'"/' Cargo.toml
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -135,38 +111,51 @@ jobs:
           git push origin "$NEW_TAG"
 
   release:
-    name: Build & Publish Release (${{ matrix.target }})
+    name: Build & Publish Release (${{ matrix.name }})
     needs: [test, bump-and-tag]
     if: always() && needs.test.result == 'success' && (needs.bump-and-tag.result == 'success' || startsWith(github.ref, 'refs/tags/v'))
-    runs-on: ${{ matrix.runs-on }}
+    runs-on: [self-hosted, macOS]
     defaults:
       run:
-        shell: ${{ matrix.shell }}
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
         include:
-          - runs-on: [self-hosted, Linux]
+          - name: macOS (Apple Silicon arm64)
+            target: aarch64-apple-darwin
+            artifact_name: boxr-macos-arm64.tar.gz
+            use_zig: false
+            build_pkg: false
+            is_windows: false
+          - name: macOS (Intel x86_64)
+            target: x86_64-apple-darwin
+            artifact_name: boxr-macos-x86_64.tar.gz
+            use_zig: false
+            build_pkg: false
+            is_windows: false
+          - name: Linux (musl arm64)
             target: aarch64-unknown-linux-musl
             artifact_name: boxr-linux-arm64.tar.gz
-            use_musl: true
+            use_zig: true
             build_pkg: true
             deb_arch: arm64
             rpm_arch: aarch64
             is_windows: false
-            shell: bash
-          - runs-on: [self-hosted, macOS]
-            target: aarch64-apple-darwin
-            artifact_name: boxr-macos-arm64.tar.gz
-            use_musl: false
+          - name: Linux (musl x86_64)
+            target: x86_64-unknown-linux-musl
+            artifact_name: boxr-linux-x86_64.tar.gz
+            use_zig: true
+            build_pkg: true
+            deb_arch: amd64
+            rpm_arch: x86_64
             is_windows: false
-            shell: bash
-          - runs-on: [self-hosted, Windows]
+          - name: Windows (x86_64)
             target: x86_64-pc-windows-gnu
             artifact_name: boxr-windows-x86_64.zip
-            use_musl: false
+            use_zig: true
+            build_pkg: false
             is_windows: true
-            shell: cmd /C call {0}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -174,36 +163,45 @@ jobs:
           ref: ${{ needs.bump-and-tag.outputs.new_tag || github.ref_name }}
           submodules: false
 
-      - name: Install musl-tools (Linux)
-        if: matrix.use_musl
+      - name: Configure PATH
         run: |
-          sudo apt-get update
-          sudo apt-get install -y musl-tools
+          echo "/opt/homebrew/bin" >> $GITHUB_PATH
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Ensure Cross-Compilation Dependencies
+        run: |
+          if ! command -v zig >/dev/null 2>&1; then
+            brew install zig
+          fi
+          if ! cargo zigbuild --version >/dev/null 2>&1; then
+            cargo install cargo-zigbuild
+          fi
+          if ! command -v dpkg-deb >/dev/null 2>&1; then
+            brew install dpkg
+          fi
+          if ! command -v rpmbuild >/dev/null 2>&1; then
+            brew install rpm
+          fi
 
       - name: Set up Rust toolchain
-        if: "!matrix.is_windows"
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      - name: Set up Rust toolchain (Windows)
-        if: matrix.is_windows
-        shell: cmd
+      - name: Pre-generate Shell Completions
         run: |
-          where rustc 2>nul || (
-            powershell -Command "Invoke-WebRequest -Uri 'https://win.rustup.rs/x86_64' -OutFile rustup-init.exe; .\rustup-init.exe -y --default-toolchain stable"
-          )
-          echo %USERPROFILE%\.cargo\bin>> %GITHUB_PATH%
-          echo C:\ProgramData\mingw64\mingw64\bin>> %GITHUB_PATH%
-          call "%USERPROFILE%\.cargo\env.cmd" 2>nul || set "PATH=%USERPROFILE%\.cargo\bin;C:\ProgramData\mingw64\mingw64\bin;%PATH%"
-          powershell -Command "if (-not (Get-Command gcc -ErrorAction SilentlyContinue)) { choco install mingw -y --no-progress }"
-          set "PATH=%USERPROFILE%\.cargo\bin;C:\ProgramData\mingw64\mingw64\bin;%PATH%"
-          rustup toolchain install stable-x86_64-pc-windows-gnu || true
-          rustup default stable-x86_64-pc-windows-gnu || true
-          rustup target add ${{ matrix.target }} || echo "target ready"
+          mkdir -p completions
+          cargo run --quiet -- completion bash > completions/boxr.bash
+          cargo run --quiet -- completion zsh > completions/_boxr
+          cargo run --quiet -- completion fish > completions/boxr.fish
 
       - name: Build Release Binary
-        run: cargo build --release --target ${{ matrix.target }}
+        run: |
+          if [ "${{ matrix.use_zig }}" = "true" ]; then
+            cargo zigbuild --release --target ${{ matrix.target }}
+          else
+            cargo build --release --target ${{ matrix.target }}
+          fi
 
       - name: Package Release Artifact (Unix)
         if: "!matrix.is_windows"
@@ -213,36 +211,26 @@ jobs:
           cp install.sh package/
           cp README.md package/
           cp LICENSE package/ 2>/dev/null || true
-
-          package/bin/boxr completion bash > package/completions/boxr.bash 2>/dev/null || true
-          package/bin/boxr completion zsh > package/completions/_boxr 2>/dev/null || true
-          package/bin/boxr completion fish > package/completions/boxr.fish 2>/dev/null || true
+          cp completions/boxr.bash package/completions/
+          cp completions/_boxr package/completions/
+          cp completions/boxr.fish package/completions/
 
           tar -czvf ${{ matrix.artifact_name }} -C package .
+          shasum -a 256 ${{ matrix.artifact_name }} > ${{ matrix.artifact_name }}.sha256
 
       - name: Package Release Artifact (Windows)
         if: matrix.is_windows
-        shell: cmd
         run: |
-          if not exist "package\bin" mkdir package\bin
-          copy target\${{ matrix.target }}\release\boxr.exe package\bin\
-          copy README.md package\
-          powershell -Command "Compress-Archive -Path package\* -DestinationPath ${{ matrix.artifact_name }} -Force"
+          mkdir -p package-win/bin package-win/completions
+          cp target/${{ matrix.target }}/release/boxr.exe package-win/bin/
+          cp README.md package-win/
+          cp LICENSE package-win/ 2>/dev/null || true
+          cp completions/boxr.bash package-win/completions/
+          cp completions/_boxr package-win/completions/
+          cp completions/boxr.fish package-win/completions/
 
-      - name: Generate SHA-256 Checksum (Unix)
-        if: "!matrix.is_windows"
-        run: |
-          if command -v shasum >/dev/null 2>&1; then
-            shasum -a 256 ${{ matrix.artifact_name }} > ${{ matrix.artifact_name }}.sha256
-          else
-            sha256sum ${{ matrix.artifact_name }} > ${{ matrix.artifact_name }}.sha256
-          fi
-
-      - name: Generate SHA-256 Checksum (Windows)
-        if: matrix.is_windows
-        shell: cmd
-        run: |
-          powershell -Command "$hash = (Get-FileHash ${{ matrix.artifact_name }} -Algorithm SHA256).Hash.ToLower(); \"$hash  ${{ matrix.artifact_name }}\" | Out-File -Encoding ascii ${{ matrix.artifact_name }}.sha256"
+          (cd package-win && zip -r ../${{ matrix.artifact_name }} .)
+          shasum -a 256 ${{ matrix.artifact_name }} > ${{ matrix.artifact_name }}.sha256
 
       - name: Build Debian Package (.deb)
         if: matrix.build_pkg
@@ -251,25 +239,19 @@ jobs:
           VER="${TAG#v}"
           chmod +x packaging/deb/build-deb.sh
           ./packaging/deb/build-deb.sh "target/${{ matrix.target }}/release/boxr" "$VER" "${{ matrix.deb_arch }}" .
-          sha256sum boxr_${VER}_${{ matrix.deb_arch }}.deb > boxr_${VER}_${{ matrix.deb_arch }}.deb.sha256
+          shasum -a 256 boxr_${VER}_${{ matrix.deb_arch }}.deb > boxr_${VER}_${{ matrix.deb_arch }}.deb.sha256
 
       - name: Build RPM Package (.rpm)
         if: matrix.build_pkg
         run: |
           TAG="${{ needs.bump-and-tag.outputs.new_tag || github.ref_name }}"
           VER="${TAG#v}"
-          sudo apt-get install -y rpm
           mkdir -p rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
           cp target/${{ matrix.target }}/release/boxr rpmbuild/SOURCES/
-          rpmbuild --define "_topdir $(pwd)/rpmbuild" --define "version $VER" --target ${{ matrix.rpm_arch }} -bb packaging/rpm/boxr.spec
+          cp completions/* rpmbuild/SOURCES/
+          rpmbuild --define "_topdir $(pwd)/rpmbuild" --define "version $VER" --define "_prefix /usr" --define "_bindir /usr/bin" --define "_datadir /usr/share" --target ${{ matrix.rpm_arch }} -bb packaging/rpm/boxr.spec
           cp rpmbuild/RPMS/*/*.rpm .
-          sha256sum *.rpm > boxr-${VER}-1.${{ matrix.rpm_arch }}.rpm.sha256
-
-      - name: Package Chocolatey (Windows)
-        if: matrix.is_windows
-        shell: cmd
-        run: |
-          powershell -Command "$tag = '${{ needs.bump-and-tag.outputs.new_tag || github.ref_name }}'; $ver = $tag.TrimStart('v'); $hash = (Get-FileHash ${{ matrix.artifact_name }} -Algorithm SHA256).Hash.ToLower(); (Get-Content packaging/chocolatey/boxr.nuspec) -replace '__VERSION__', $ver | Set-Content packaging/chocolatey/boxr.nuspec; (Get-Content packaging/chocolatey/tools/chocolateyinstall.ps1) -replace '__TAG__', $tag -replace '__WINDOWS_SHA256__', $hash | Set-Content packaging/chocolatey/tools/chocolateyinstall.ps1; if (Get-Command choco -ErrorAction SilentlyContinue) { choco pack packaging/chocolatey/boxr.nuspec --outputdirectory . }"
+          shasum -a 256 *.rpm > boxr-${VER}-1.${{ matrix.rpm_arch }}.rpm.sha256
 
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v2
@@ -283,7 +265,6 @@ jobs:
             *.deb.sha256
             *.rpm
             *.rpm.sha256
-            *.nupkg
           draft: false
           prerelease: false
           generate_release_notes: true
@@ -292,7 +273,7 @@ jobs:
     name: Publish Release & Update Homebrew Tap
     needs: [bump-and-tag, release]
     if: always() && needs.release.result == 'success'
-    runs-on: [self-hosted, Linux]
+    runs-on: [self-hosted, macOS]
     defaults:
       run:
         shell: bash
@@ -304,6 +285,11 @@ jobs:
           token: ${{ secrets.HOMEBREW_TAP_TOKEN || secrets.GITHUB_TOKEN }}
           path: homebrew-tap
           submodules: false
+
+      - name: Configure PATH
+        run: |
+          echo "/opt/homebrew/bin" >> $GITHUB_PATH
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Download Release Assets
         id: dl
@@ -349,12 +335,20 @@ jobs:
                 url "https://github.com/kchaitanya863/homebrew-tap/releases/download/__TAG__/boxr-macos-arm64.tar.gz"
                 sha256 "__MACOS_ARM_SHA__"
               end
+              on_intel do
+                url "https://github.com/kchaitanya863/homebrew-tap/releases/download/__TAG__/boxr-macos-x86_64.tar.gz"
+                sha256 "__MACOS_X86_SHA__"
+              end
             end
 
             on_linux do
               on_arm do
                 url "https://github.com/kchaitanya863/homebrew-tap/releases/download/__TAG__/boxr-linux-arm64.tar.gz"
                 sha256 "__LINUX_ARM_SHA__"
+              end
+              on_intel do
+                url "https://github.com/kchaitanya863/homebrew-tap/releases/download/__TAG__/boxr-linux-x86_64.tar.gz"
+                sha256 "__LINUX_X86_SHA__"
               end
             end
 
@@ -396,9 +390,11 @@ jobs:
           end
           EOF
 
-          sed -i "s/__TAG__/${TAG}/g" homebrew-tap/Formula/boxr.rb
-          sed -i "s/__MACOS_ARM_SHA__/${MACOS_ARM_SHA}/g" homebrew-tap/Formula/boxr.rb
-          sed -i "s/__LINUX_ARM_SHA__/${LINUX_ARM_SHA}/g" homebrew-tap/Formula/boxr.rb
+          perl -pi -e "s/__TAG__/${TAG}/g" homebrew-tap/Formula/boxr.rb
+          perl -pi -e "s/__MACOS_ARM_SHA__/${MACOS_ARM_SHA}/g" homebrew-tap/Formula/boxr.rb
+          perl -pi -e "s/__MACOS_X86_SHA__/${MACOS_X86_SHA}/g" homebrew-tap/Formula/boxr.rb
+          perl -pi -e "s/__LINUX_ARM_SHA__/${LINUX_ARM_SHA}/g" homebrew-tap/Formula/boxr.rb
+          perl -pi -e "s/__LINUX_X86_SHA__/${LINUX_X86_SHA}/g" homebrew-tap/Formula/boxr.rb
 
           cd homebrew-tap
           git config user.name "github-actions[bot]"
@@ -407,4 +403,3 @@ jobs:
           git push origin main || true
         env:
           GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN || secrets.GITHUB_TOKEN }}
-

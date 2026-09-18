@@ -501,10 +501,9 @@ async fn start_exec_instance(Path(exec_id): Path<String>) -> Result<String, Stat
                         .unwrap_or(false);
 
                     let log_path = bundle.join(format!("exec-{}.log", exec_id));
-                    let code = crate::runtime::exec_in_bundle(
-                        &bundle, &cmd, &env, wd, user, detach,
-                    )
-                    .unwrap_or(1);
+                    let code =
+                        crate::runtime::exec_in_bundle(&bundle, &cmd, &env, wd, user, detach)
+                            .unwrap_or(1);
                     let _ = fs::write(
                         bundle.join(format!("exec-{}.done", exec_id)),
                         code.to_string(),
@@ -770,7 +769,9 @@ async fn prune_networks_endpoint() -> Json<serde_json::Value> {
 async fn inspect_network(Path(id): Path<String>) -> Result<Json<serde_json::Value>, StatusCode> {
     let store = NetworkStore::new();
     let net = store.find(&id).ok_or(StatusCode::NOT_FOUND)?;
-    Ok(Json(serde_json::to_value(net).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?))
+    Ok(Json(
+        serde_json::to_value(net).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+    ))
 }
 
 async fn remove_network(Path(id): Path<String>) -> StatusCode {
@@ -784,7 +785,9 @@ async fn remove_network(Path(id): Path<String>) -> StatusCode {
 async fn inspect_volume(Path(name): Path<String>) -> Result<Json<serde_json::Value>, StatusCode> {
     let store = VolumeStore::new();
     let vol = store.find(&name).ok_or(StatusCode::NOT_FOUND)?;
-    Ok(Json(serde_json::to_value(vol).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?))
+    Ok(Json(
+        serde_json::to_value(vol).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+    ))
 }
 
 async fn remove_volume(Path(name): Path<String>) -> StatusCode {
@@ -906,13 +909,17 @@ mod tests {
                     .method("POST")
                     .uri("/v1.45/containers/create?name=daemon-test-box")
                     .header("content-type", "application/json")
-                    .body(Body::from(r#"{"Image":"alpine:latest","Cmd":["echo","hello"]}"#))
+                    .body(Body::from(
+                        r#"{"Image":"alpine:latest","Cmd":["echo","hello"]}"#,
+                    ))
                     .unwrap(),
             )
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let created_json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         let cont_id = created_json.get("Id").unwrap().as_str().unwrap();
 
@@ -930,7 +937,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let exec_json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         let exec_id = exec_json.get("Id").unwrap().as_str().unwrap();
 

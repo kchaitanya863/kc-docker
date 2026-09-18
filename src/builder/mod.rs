@@ -603,11 +603,7 @@ impl ImageBuilder {
                 }
                 Instruction::Healthcheck(_hc) => {}
                 Instruction::Arg { name, default } => {
-                    let val = opts
-                        .build_args
-                        .get(name)
-                        .cloned()
-                        .or(default.clone());
+                    let val = opts.build_args.get(name).cloned().or(default.clone());
                     if let Some(v) = val {
                         let env_entry = format!("{}={}", name, v);
                         if let Some(envs) = &mut current_config.env {

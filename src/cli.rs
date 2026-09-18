@@ -1075,8 +1075,12 @@ pub enum VolumeAction {
         vol_type: Option<String>,
     },
     Ls,
-    Inspect { name: String },
-    Rm { name: String },
+    Inspect {
+        name: String,
+    },
+    Rm {
+        name: String,
+    },
     Prune {
         #[arg(short = 'f', long = "force")]
         force: bool,

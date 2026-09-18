@@ -218,7 +218,10 @@ pub fn execute_bundle(
                 for server in dns_servers {
                     dns_str.push_str(&format!("nameserver {}\\n", server.trim()));
                 }
-                run_script.push_str(&format!("printf '{}' > /etc/resolv.conf 2>/dev/null || true\n", dns_str));
+                run_script.push_str(&format!(
+                    "printf '{}' > /etc/resolv.conf 2>/dev/null || true\n",
+                    dns_str
+                ));
             } else {
                 run_script.push_str("printf 'nameserver 192.168.64.1\\nnameserver 1.1.1.1\\nnameserver 8.8.8.8\\n' > /etc/resolv.conf 2>/dev/null || true\n");
             }
@@ -248,7 +251,11 @@ pub fn execute_bundle(
                     is_volume: false,
                 });
             }
-        } else if m.mount_type == "tmpfs" && m.destination != "/dev" && m.destination != "/proc" && m.destination != "/sys" {
+        } else if m.mount_type == "tmpfs"
+            && m.destination != "/dev"
+            && m.destination != "/proc"
+            && m.destination != "/sys"
+        {
             let opts_str = m
                 .options
                 .as_ref()
@@ -320,7 +327,8 @@ pub fn execute_bundle(
     // Ensure /etc/hosts exists and contains localhost, container hostname, and custom add-hosts
     let hosts_path = rootfs_path.join("etc/hosts");
     let _ = fs::create_dir_all(rootfs_path.join("etc"));
-    let mut hosts_content = String::from("127.0.0.1 localhost\n::1 localhost ip6-localhost ip6-loopback\n");
+    let mut hosts_content =
+        String::from("127.0.0.1 localhost\n::1 localhost ip6-localhost ip6-loopback\n");
     if let Some(h) = &spec.hostname {
         hosts_content.push_str(&format!("127.0.0.1 {}\n", h));
     }

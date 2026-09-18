@@ -325,11 +325,7 @@ impl ImageArchiver {
         Ok(loaded)
     }
 
-    fn append_dir_resilient(
-        builder: &mut Builder<File>,
-        base: &Path,
-        rel: &Path,
-    ) -> Result<()> {
+    fn append_dir_resilient(builder: &mut Builder<File>, base: &Path, rel: &Path) -> Result<()> {
         let current = if rel.as_os_str().is_empty() {
             base.to_path_buf()
         } else {

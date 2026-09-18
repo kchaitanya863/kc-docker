@@ -14,13 +14,32 @@ mkdir -p %{buildroot}%{_bindir}
 install -m 755 %{_sourcedir}/boxr %{buildroot}%{_bindir}/boxr
 
 mkdir -p %{buildroot}%{_datadir}/bash-completion/completions
-%{buildroot}%{_bindir}/boxr completion bash > %{buildroot}%{_datadir}/bash-completion/completions/boxr 2>/dev/null || true
-
 mkdir -p %{buildroot}%{_datadir}/zsh/site-functions
-%{buildroot}%{_bindir}/boxr completion zsh > %{buildroot}%{_datadir}/zsh/site-functions/_boxr 2>/dev/null || true
-
 mkdir -p %{buildroot}%{_datadir}/fish/vendor_completions.d
-%{buildroot}%{_bindir}/boxr completion fish > %{buildroot}%{_datadir}/fish/vendor_completions.d/boxr.fish 2>/dev/null || true
+
+if [ -f %{_sourcedir}/boxr.bash ]; then
+    install -m 644 %{_sourcedir}/boxr.bash %{buildroot}%{_datadir}/bash-completion/completions/boxr
+elif %{buildroot}%{_bindir}/boxr --version >/dev/null 2>&1; then
+    %{buildroot}%{_bindir}/boxr completion bash > %{buildroot}%{_datadir}/bash-completion/completions/boxr 2>/dev/null || true
+else
+    touch %{buildroot}%{_datadir}/bash-completion/completions/boxr
+fi
+
+if [ -f %{_sourcedir}/_boxr ]; then
+    install -m 644 %{_sourcedir}/_boxr %{buildroot}%{_datadir}/zsh/site-functions/_boxr
+elif %{buildroot}%{_bindir}/boxr --version >/dev/null 2>&1; then
+    %{buildroot}%{_bindir}/boxr completion zsh > %{buildroot}%{_datadir}/zsh/site-functions/_boxr 2>/dev/null || true
+else
+    touch %{buildroot}%{_datadir}/zsh/site-functions/_boxr
+fi
+
+if [ -f %{_sourcedir}/boxr.fish ]; then
+    install -m 644 %{_sourcedir}/boxr.fish %{buildroot}%{_datadir}/fish/vendor_completions.d/boxr.fish
+elif %{buildroot}%{_bindir}/boxr --version >/dev/null 2>&1; then
+    %{buildroot}%{_bindir}/boxr completion fish > %{buildroot}%{_datadir}/fish/vendor_completions.d/boxr.fish 2>/dev/null || true
+else
+    touch %{buildroot}%{_datadir}/fish/vendor_completions.d/boxr.fish
+fi
 
 %files
 %{_bindir}/boxr

@@ -93,11 +93,19 @@ fn test_docker_parity_volume_crud() {
     assert!(out.status.success());
     let json_str = String::from_utf8_lossy(&out.stdout);
     let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
-    let name_val = parsed.get("name").or_else(|| parsed.get("Name")).unwrap().as_str().unwrap();
+    let name_val = parsed
+        .get("name")
+        .or_else(|| parsed.get("Name"))
+        .unwrap()
+        .as_str()
+        .unwrap();
     assert_eq!(name_val, vol);
 
     // 4. volume rm
-    let out = boxr_cmd(&bin).args(["volume", "rm", &vol]).output().unwrap();
+    let out = boxr_cmd(&bin)
+        .args(["volume", "rm", &vol])
+        .output()
+        .unwrap();
     assert!(out.status.success());
 
     // 5. Verify gone
@@ -135,11 +143,19 @@ fn test_docker_parity_network_crud() {
     assert!(out.status.success());
     let json_str = String::from_utf8_lossy(&out.stdout);
     let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
-    let name_val = parsed.get("name").or_else(|| parsed.get("Name")).unwrap().as_str().unwrap();
+    let name_val = parsed
+        .get("name")
+        .or_else(|| parsed.get("Name"))
+        .unwrap()
+        .as_str()
+        .unwrap();
     assert_eq!(name_val, net);
 
     // 4. network rm
-    let out = boxr_cmd(&bin).args(["network", "rm", &net]).output().unwrap();
+    let out = boxr_cmd(&bin)
+        .args(["network", "rm", &net])
+        .output()
+        .unwrap();
     assert!(out.status.success());
 
     // 5. Verify removed
@@ -274,7 +290,10 @@ fn test_docker_parity_system_df_and_prune() {
     assert!(stdout.contains("TYPE"));
     assert!(stdout.contains("TOTAL"));
 
-    let out = boxr_cmd(&bin).args(["system", "prune", "-f"]).output().unwrap();
+    let out = boxr_cmd(&bin)
+        .args(["system", "prune", "-f"])
+        .output()
+        .unwrap();
     assert!(out.status.success());
 }
 
@@ -365,15 +384,24 @@ fn test_docker_parity_container_rename_and_port() {
     assert!(stdout.contains("80/tcp") || stdout.contains("8888"));
 
     // Rename
-    let out = boxr_cmd(&bin).args(["rename", &orig_name, &new_name]).output().unwrap();
+    let out = boxr_cmd(&bin)
+        .args(["rename", &orig_name, &new_name])
+        .output()
+        .unwrap();
     assert!(out.status.success());
 
     // Verify new name
-    let out = boxr_cmd(&bin).args(["inspect", &new_name]).output().unwrap();
+    let out = boxr_cmd(&bin)
+        .args(["inspect", &new_name])
+        .output()
+        .unwrap();
     assert!(out.status.success());
 
     // Old name should now fail
-    let out = boxr_cmd(&bin).args(["inspect", &orig_name]).output().unwrap();
+    let out = boxr_cmd(&bin)
+        .args(["inspect", &orig_name])
+        .output()
+        .unwrap();
     assert!(!out.status.success());
 
     // Cleanup
@@ -605,7 +633,16 @@ fn test_docker_parity_management_subcommands() {
 
     // 2. docker container run -d
     let out = boxr_cmd(&bin)
-        .args(["container", "run", "-d", "--name", &name, "alpine", "sleep", "60"])
+        .args([
+            "container",
+            "run",
+            "-d",
+            "--name",
+            &name,
+            "alpine",
+            "sleep",
+            "60",
+        ])
         .output()
         .unwrap();
     assert!(out.status.success());
@@ -616,23 +653,38 @@ fn test_docker_parity_management_subcommands() {
     assert!(String::from_utf8_lossy(&out.stdout).contains(&name));
 
     // 4. docker container inspect
-    let out = boxr_cmd(&bin).args(["container", "inspect", &name]).output().unwrap();
+    let out = boxr_cmd(&bin)
+        .args(["container", "inspect", &name])
+        .output()
+        .unwrap();
     assert!(out.status.success());
 
     // 5. docker container stop
-    let out = boxr_cmd(&bin).args(["container", "stop", &name]).output().unwrap();
+    let out = boxr_cmd(&bin)
+        .args(["container", "stop", &name])
+        .output()
+        .unwrap();
     assert!(out.status.success());
 
     // 6. docker container rm
-    let out = boxr_cmd(&bin).args(["container", "rm", &name]).output().unwrap();
+    let out = boxr_cmd(&bin)
+        .args(["container", "rm", &name])
+        .output()
+        .unwrap();
     assert!(out.status.success());
 
     // 7. docker container prune
-    let out = boxr_cmd(&bin).args(["container", "prune", "-f"]).output().unwrap();
+    let out = boxr_cmd(&bin)
+        .args(["container", "prune", "-f"])
+        .output()
+        .unwrap();
     assert!(out.status.success());
 
     // 8. docker image prune
-    let out = boxr_cmd(&bin).args(["image", "prune", "-f"]).output().unwrap();
+    let out = boxr_cmd(&bin)
+        .args(["image", "prune", "-f"])
+        .output()
+        .unwrap();
     assert!(out.status.success());
 }
 
@@ -765,7 +817,11 @@ fn test_docker_parity_manifest_commands() {
         .unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("schemaVersion") || stdout.contains("mediaType") || stdout.contains("config"));
+    assert!(
+        stdout.contains("schemaVersion")
+            || stdout.contains("mediaType")
+            || stdout.contains("config")
+    );
 
     // 2. manifest create
     let out = boxr_cmd(&bin)
@@ -787,7 +843,9 @@ fn test_docker_parity_run_init() {
 
     // Run container with --init
     let out = boxr_cmd(&bin)
-        .args(["run", "--rm", "--init", "--name", &name, "alpine", "echo", "init-ok"])
+        .args([
+            "run", "--rm", "--init", "--name", &name, "alpine", "echo", "init-ok",
+        ])
         .output()
         .unwrap();
     assert!(out.status.success());
@@ -892,7 +950,10 @@ services:
     assert!(stdout.contains(&custom_cname));
 
     // 3. inspect container env
-    let out = boxr_cmd(&bin).args(["inspect", &custom_cname]).output().unwrap();
+    let out = boxr_cmd(&bin)
+        .args(["inspect", &custom_cname])
+        .output()
+        .unwrap();
     assert!(out.status.success());
 
     // 4. compose down
@@ -1003,7 +1064,14 @@ fn test_docker_parity_exec_env_file() {
     assert!(out.status.success());
 
     let out = boxr_cmd(&bin)
-        .args(["exec", "--env-file", env_file.to_str().unwrap(), &name, "printenv", "EXEC_VAR"])
+        .args([
+            "exec",
+            "--env-file",
+            env_file.to_str().unwrap(),
+            &name,
+            "printenv",
+            "EXEC_VAR",
+        ])
         .output()
         .unwrap();
     assert!(out.status.success());
@@ -1030,7 +1098,10 @@ fn test_docker_parity_ps_format_and_size() {
     assert!(out.status.success());
 
     // 1. ps --format json
-    let out = boxr_cmd(&bin).args(["ps", "-a", "--format", "json"]).output().unwrap();
+    let out = boxr_cmd(&bin)
+        .args(["ps", "-a", "--format", "json"])
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains(&name) && stdout.contains("["));
@@ -1045,7 +1116,10 @@ fn test_docker_parity_ps_format_and_size() {
     assert!(stdout.contains(&name));
 
     // 3. ps --size
-    let out = boxr_cmd(&bin).args(["ps", "-a", "--size"]).output().unwrap();
+    let out = boxr_cmd(&bin)
+        .args(["ps", "-a", "--size"])
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("SIZE"));
@@ -1218,19 +1292,28 @@ fn test_docker_parity_images_digests_and_format() {
     }
 
     // 1. images --digests
-    let out = boxr_cmd(&bin).args(["images", "--digests"]).output().unwrap();
+    let out = boxr_cmd(&bin)
+        .args(["images", "--digests"])
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("DIGEST"));
 
     // 2. images --format json
-    let out = boxr_cmd(&bin).args(["images", "--format", "json"]).output().unwrap();
+    let out = boxr_cmd(&bin)
+        .args(["images", "--format", "json"])
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("["));
 
     // 3. images --no-trunc
-    let out = boxr_cmd(&bin).args(["images", "--no-trunc"]).output().unwrap();
+    let out = boxr_cmd(&bin)
+        .args(["images", "--no-trunc"])
+        .output()
+        .unwrap();
     assert!(out.status.success());
 }
 
@@ -1268,12 +1351,7 @@ fn test_docker_parity_100_percent_upstream_coverage() {
 
     // 2. update with blkio-weight, cpu-rt-period, cpuset-mems
     let out = boxr_cmd(&bin)
-        .args([
-            "create",
-            "--name",
-            &name,
-            "alpine",
-        ])
+        .args(["create", "--name", &name, "alpine"])
         .output()
         .unwrap();
     assert!(out.status.success());
@@ -1295,4 +1373,3 @@ fn test_docker_parity_100_percent_upstream_coverage() {
 
     let _ = boxr_cmd(&bin).args(["rm", &name]).output();
 }
-

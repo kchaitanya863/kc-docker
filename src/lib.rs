@@ -840,10 +840,16 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
         let _ = fs::write(bundle_dir.join("labels.json"), labels_json);
     }
     if !args.sysctl.is_empty() {
-        let _ = fs::write(bundle_dir.join("sysctl.json"), serde_json::to_string(&args.sysctl)?);
+        let _ = fs::write(
+            bundle_dir.join("sysctl.json"),
+            serde_json::to_string(&args.sysctl)?,
+        );
     }
     if !args.ulimits.is_empty() {
-        let _ = fs::write(bundle_dir.join("ulimits.json"), serde_json::to_string(&args.ulimits)?);
+        let _ = fs::write(
+            bundle_dir.join("ulimits.json"),
+            serde_json::to_string(&args.ulimits)?,
+        );
     }
     if let Some(cidfile) = &args.cidfile {
         fs::write(cidfile, &container_id)?;
@@ -897,7 +903,11 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
             l.seccomp = None;
         }
     }
-    if args.security_opt.iter().any(|s| s == "no-new-privileges" || s == "no-new-privileges:true") {
+    if args
+        .security_opt
+        .iter()
+        .any(|s| s == "no-new-privileges" || s == "no-new-privileges:true")
+    {
         spec.process.no_new_privileges = Some(true);
     }
     if args.cpu_count.is_some()
@@ -2494,10 +2504,16 @@ pub async fn create_only_container(args: RunArgs) -> Result<String> {
         let _ = fs::write(bundle_dir.join("labels.json"), labels_json);
     }
     if !args.sysctl.is_empty() {
-        let _ = fs::write(bundle_dir.join("sysctl.json"), serde_json::to_string(&args.sysctl)?);
+        let _ = fs::write(
+            bundle_dir.join("sysctl.json"),
+            serde_json::to_string(&args.sysctl)?,
+        );
     }
     if !args.ulimits.is_empty() {
-        let _ = fs::write(bundle_dir.join("ulimits.json"), serde_json::to_string(&args.ulimits)?);
+        let _ = fs::write(
+            bundle_dir.join("ulimits.json"),
+            serde_json::to_string(&args.ulimits)?,
+        );
     }
     if let Some(cidfile) = &args.cidfile {
         fs::write(cidfile, &container_id)?;
@@ -2551,7 +2567,11 @@ pub async fn create_only_container(args: RunArgs) -> Result<String> {
             l.seccomp = None;
         }
     }
-    if args.security_opt.iter().any(|s| s == "no-new-privileges" || s == "no-new-privileges:true") {
+    if args
+        .security_opt
+        .iter()
+        .any(|s| s == "no-new-privileges" || s == "no-new-privileges:true")
+    {
         spec.process.no_new_privileges = Some(true);
     }
     if args.cpu_count.is_some()
@@ -2892,7 +2912,11 @@ pub fn info_system() -> Result<()> {
     println!(" Volume: local");
     println!(" Network: bridge");
     println!("Architecture: {}", std::env::consts::ARCH);
-    println!("Operating System: {} {}", std::env::consts::OS, std::env::consts::ARCH);
+    println!(
+        "Operating System: {} {}",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    );
     println!("OSType: {}", std::env::consts::OS);
     #[cfg(unix)]
     println!("Rootless Mode: {}", unsafe { libc::getuid() != 0 });

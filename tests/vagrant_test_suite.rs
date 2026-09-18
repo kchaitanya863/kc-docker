@@ -214,6 +214,7 @@ fn test_vagrant_matrix_multi_os_verification() {
 }
 
 #[test]
+#[ignore = "Requires local Windows image"]
 fn test_windows_container_image_and_runtime_guard() {
     let bin = release_bin(None);
     if !bin.exists() {

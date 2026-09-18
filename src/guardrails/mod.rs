@@ -219,11 +219,12 @@ impl ProcessReaper {
 
             if !is_alive {
                 // Container process is gone; self-heal state to Exited(code)
-                let exit_code = if let Ok(code_str) = fs::read_to_string(bundle.join("boxr-exitcode")) {
-                    code_str.trim().parse::<i32>().unwrap_or(0)
-                } else {
-                    137
-                };
+                let exit_code =
+                    if let Ok(code_str) = fs::read_to_string(bundle.join("boxr-exitcode")) {
+                        code_str.trim().parse::<i32>().unwrap_or(0)
+                    } else {
+                        137
+                    };
                 let _ = fs::remove_file(&pid_file);
                 if let Ok(cpid_str) = fs::read_to_string(bundle.join("container.pid")) {
                     if let Ok(cpid) = cpid_str.trim().parse::<i32>() {

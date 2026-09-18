@@ -24,9 +24,20 @@ cp "$BINARY_PATH" "$PACKAGE_DIR/usr/bin/boxr"
 chmod 755 "$PACKAGE_DIR/usr/bin/boxr"
 
 # Generate completions
-"$BINARY_PATH" completion bash > "$PACKAGE_DIR/usr/share/bash-completion/completions/boxr" 2>/dev/null || true
-"$BINARY_PATH" completion zsh > "$PACKAGE_DIR/usr/share/zsh/vendor-completions/_boxr" 2>/dev/null || true
-"$BINARY_PATH" completion fish > "$PACKAGE_DIR/usr/share/fish/vendor_completions.d/boxr.fish" 2>/dev/null || true
+GEN_CMD="$BINARY_PATH"
+if ! "$GEN_CMD" --version >/dev/null 2>&1; then
+    if [ -f "target/release/boxr" ] && target/release/boxr --version >/dev/null 2>&1; then
+        GEN_CMD="target/release/boxr"
+    elif [ -f "target/debug/boxr" ] && target/debug/boxr --version >/dev/null 2>&1; then
+        GEN_CMD="target/debug/boxr"
+    else
+        GEN_CMD="cargo run --quiet --"
+    fi
+fi
+
+$GEN_CMD completion bash > "$PACKAGE_DIR/usr/share/bash-completion/completions/boxr" 2>/dev/null || true
+$GEN_CMD completion zsh > "$PACKAGE_DIR/usr/share/zsh/vendor-completions/_boxr" 2>/dev/null || true
+$GEN_CMD completion fish > "$PACKAGE_DIR/usr/share/fish/vendor_completions.d/boxr.fish" 2>/dev/null || true
 
 # Control file
 cat << EOF > "$PACKAGE_DIR/DEBIAN/control"
@@ -41,5 +52,5 @@ Description: Fast, lightweight OCI container engine and runtime in Rust
  builder, compose orchestrator, and runtime written in pure Rust.
 EOF
 
-dpkg-deb --build "$PACKAGE_DIR" "$OUTPUT_DIR/boxr_${VERSION}_${ARCH}.deb"
+dpkg-deb --root-owner-group --build "$PACKAGE_DIR" "$OUTPUT_DIR/boxr_${VERSION}_${ARCH}.deb"
 echo "✓ Built $OUTPUT_DIR/boxr_${VERSION}_${ARCH}.deb"

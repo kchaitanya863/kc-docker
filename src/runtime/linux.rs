@@ -127,7 +127,10 @@ pub fn run_trampoline(args: &[String]) -> Result<i32> {
 
         match unsafe { fork() }? {
             ForkResult::Parent { child } => {
-                let _ = fs::write(bundle_path.join("container.pid"), child.as_raw().to_string());
+                let _ = fs::write(
+                    bundle_path.join("container.pid"),
+                    child.as_raw().to_string(),
+                );
                 drop(child_sock);
                 // 1. Wait for child to unshare user namespace
                 let mut sync_buf = [0u8; 5];
@@ -159,7 +162,10 @@ pub fn run_trampoline(args: &[String]) -> Result<i32> {
                 }
                 drop(parent_sock);
 
-                let _ = fs::write(bundle_path.join("container.pid"), child.as_raw().to_string());
+                let _ = fs::write(
+                    bundle_path.join("container.pid"),
+                    child.as_raw().to_string(),
+                );
                 if let Some(cont_id) = bundle_path.file_name().and_then(|s| s.to_str()) {
                     if let Ok(cgroup_mgr) = crate::cgroups::CgroupV2Manager::new(cont_id) {
                         let _ = cgroup_mgr.add_process(child.as_raw());
@@ -263,7 +269,10 @@ pub fn run_trampoline(args: &[String]) -> Result<i32> {
                 // 5. Fork so grandchild becomes PID 1 inside new PID namespace
                 match unsafe { fork() } {
                     Ok(ForkResult::Parent { child: grandchild }) => {
-                        let _ = fs::write(bundle_path.join("container.pid"), grandchild.as_raw().to_string());
+                        let _ = fs::write(
+                            bundle_path.join("container.pid"),
+                            grandchild.as_raw().to_string(),
+                        );
                         let status = match waitpid(grandchild, None) {
                             Ok(WaitStatus::Exited(_, code)) => code,
                             Ok(WaitStatus::Signaled(_, sig, _)) => 128 + sig as i32,
@@ -271,10 +280,8 @@ pub fn run_trampoline(args: &[String]) -> Result<i32> {
                         };
 
                         if let Some(tap_pid) = tap_worker_pid {
-                            let _ = nix::sys::signal::kill(
-                                tap_pid,
-                                nix::sys::signal::Signal::SIGKILL,
-                            );
+                            let _ =
+                                nix::sys::signal::kill(tap_pid, nix::sys::signal::Signal::SIGKILL);
                             let _ = waitpid(tap_pid, None);
                         }
 
@@ -611,14 +618,34 @@ fn run_container_child(rootfs: &Path, spec: &Spec, mounts: &[MountSpec]) -> Resu
             let target = rootfs.join(m.destination.trim_start_matches('/'));
             let _ = fs::create_dir_all(&target);
             let mut flags = MsFlags::MS_BIND | MsFlags::MS_REC;
-            if m.options.as_ref().map(|opts| opts.iter().any(|o| o == "ro")).unwrap_or(false) {
+            if m.options
+                .as_ref()
+                .map(|opts| opts.iter().any(|o| o == "ro"))
+                .unwrap_or(false)
+            {
                 flags |= MsFlags::MS_RDONLY;
             }
-            let _ = mount(Some(Path::new(&m.source)), &target, None::<&str>, flags, None::<&str>);
-        } else if m.mount_type == "tmpfs" && m.destination != "/dev" && m.destination != "/proc" && m.destination != "/sys" {
+            let _ = mount(
+                Some(Path::new(&m.source)),
+                &target,
+                None::<&str>,
+                flags,
+                None::<&str>,
+            );
+        } else if m.mount_type == "tmpfs"
+            && m.destination != "/dev"
+            && m.destination != "/proc"
+            && m.destination != "/sys"
+        {
             let target = rootfs.join(m.destination.trim_start_matches('/'));
             let _ = fs::create_dir_all(&target);
-            let _ = mount(Some("tmpfs"), &target, Some("tmpfs"), MsFlags::MS_NOSUID | MsFlags::MS_NODEV, None::<&str>);
+            let _ = mount(
+                Some("tmpfs"),
+                &target,
+                Some("tmpfs"),
+                MsFlags::MS_NOSUID | MsFlags::MS_NODEV,
+                None::<&str>,
+            );
         }
     }
 
@@ -658,7 +685,8 @@ fn run_container_child(rootfs: &Path, spec: &Spec, mounts: &[MountSpec]) -> Resu
 
     // Ensure /etc/hosts exists and contains localhost and container hostname
     let hosts_path = rootfs.join("etc/hosts");
-    let mut hosts_content = String::from("127.0.0.1 localhost\n::1 localhost ip6-localhost ip6-loopback\n");
+    let mut hosts_content =
+        String::from("127.0.0.1 localhost\n::1 localhost ip6-localhost ip6-loopback\n");
     if let Some(h) = &spec.hostname {
         hosts_content.push_str(&format!("127.0.0.1 {}\n", h));
     }
