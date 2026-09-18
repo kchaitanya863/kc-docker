@@ -235,8 +235,40 @@ pub fn execute_bundle(
         ));
     }
 
+    let final_cmd = if spec.process.user.uid != 0 {
+        format!(
+            "su -s /bin/sh $(id -un {} 2>/dev/null || echo {}) -c '{}'",
+            spec.process.user.uid,
+            spec.process.user.uid,
+            cmd_line.replace('\'', "'\\''")
+        )
+    } else {
+        cmd_line
+    };
+
+    // Ensure /etc/hosts exists and contains localhost, container hostname, and custom add-hosts
+    let hosts_path = rootfs_path.join("etc/hosts");
+    let _ = fs::create_dir_all(rootfs_path.join("etc"));
+    let mut hosts_content = String::from("127.0.0.1 localhost\n::1 localhost ip6-localhost ip6-loopback\n");
+    if let Some(h) = &spec.hostname {
+        hosts_content.push_str(&format!("127.0.0.1 {}\n", h));
+    }
+    let custom_hosts_file = bundle_path.join("hosts.json");
+    if custom_hosts_file.exists() {
+        if let Ok(content) = fs::read_to_string(&custom_hosts_file) {
+            if let Ok(add_hosts) = serde_json::from_str::<Vec<String>>(&content) {
+                for entry in add_hosts {
+                    if let Some((host, ip)) = entry.split_once(':') {
+                        hosts_content.push_str(&format!("{} {}\n", ip.trim(), host.trim()));
+                    }
+                }
+            }
+        }
+    }
+    let _ = fs::write(&hosts_path, hosts_content);
+
     if detach {
-        run_script.push_str(&format!("{} 2>&1 | tee /logs.txt &\n", cmd_line));
+        run_script.push_str(&format!("{} 2>&1 | tee /logs.txt &\n", final_cmd));
         run_script.push_str("sleep 0.1\n");
         run_script.push_str("MAIN_PID=$!\n");
         run_script.push_str("while kill -0 $MAIN_PID 2>/dev/null; do\n");
@@ -250,9 +282,14 @@ pub fn execute_bundle(
         run_script.push_str("  sleep 0.05 2>/dev/null || sleep 1\n");
         run_script.push_str("done\n");
         run_script.push_str("wait $MAIN_PID 2>/dev/null\n");
-        run_script.push_str("exit $?\n");
+        run_script.push_str("EXIT_CODE=$?\n");
+        run_script.push_str("echo $EXIT_CODE > /boxr-exitcode\n");
+        run_script.push_str("echo 1 > /proc/sys/kernel/sysrq 2>/dev/null; echo o > /proc/sysrq-trigger 2>/dev/null || /bin/busybox poweroff -f 2>/dev/null || poweroff -f 2>/dev/null\n");
     } else {
-        run_script.push_str(&format!("exec {}\n", cmd_line));
+        run_script.push_str(&format!("{}\n", final_cmd));
+        run_script.push_str("EXIT_CODE=$?\n");
+        run_script.push_str("echo $EXIT_CODE > /boxr-exitcode\n");
+        run_script.push_str("echo 1 > /proc/sys/kernel/sysrq 2>/dev/null; echo o > /proc/sysrq-trigger 2>/dev/null || /bin/busybox poweroff -f 2>/dev/null || poweroff -f 2>/dev/null\n");
     }
 
     let run_script_path = rootfs_path.join("boxr-run.sh");

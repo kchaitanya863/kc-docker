@@ -191,7 +191,7 @@ impl ProcessReaper {
         let containers = store.list();
         let mut reaped_count = 0;
 
-        for c in containers {
+        for c in &containers {
             if !matches!(c.status, ContainerStatus::Running) {
                 continue;
             }
@@ -218,10 +218,65 @@ impl ProcessReaper {
             };
 
             if !is_alive {
-                // Container process is gone; self-heal state to Exited(137)
+                // Container process is gone; self-heal state to Exited(code)
+                let exit_code = if let Ok(code_str) = fs::read_to_string(bundle.join("boxr-exitcode")) {
+                    code_str.trim().parse::<i32>().unwrap_or(0)
+                } else {
+                    137
+                };
                 let _ = fs::remove_file(&pid_file);
-                let _ = store.update_status(&c.id, ContainerStatus::Exited(137));
+                if let Ok(cpid_str) = fs::read_to_string(bundle.join("container.pid")) {
+                    if let Ok(cpid) = cpid_str.trim().parse::<i32>() {
+                        #[cfg(unix)]
+                        unsafe {
+                            libc::kill(cpid, libc::SIGKILL);
+                            libc::kill(-cpid, libc::SIGKILL);
+                        }
+                    }
+                }
+                let _ = fs::remove_file(bundle.join("container.pid"));
+                let _ = store.update_status(&c.id, ContainerStatus::Exited(exit_code));
                 reaped_count += 1;
+            }
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            use std::collections::HashSet;
+            let active_bundles: HashSet<String> = containers
+                .iter()
+                .filter(|c| matches!(c.status, ContainerStatus::Running))
+                .map(|c| c.bundle_path.clone())
+                .collect();
+
+            if let Ok(output) = std::process::Command::new("ps")
+                .args(["-A", "-o", "pid,command"])
+                .output()
+            {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                for line in stdout.lines() {
+                    if line.contains("boxr-vz") && line.contains("--bundle") {
+                        let parts: Vec<&str> = line.split_whitespace().collect();
+                        if let Some(pid_str) = parts.first() {
+                            if let Ok(pid) = pid_str.parse::<i32>() {
+                                let mut is_active = false;
+                                for i in 0..parts.len() {
+                                    if parts[i] == "--bundle" && i + 1 < parts.len() {
+                                        if active_bundles.contains(parts[i + 1]) {
+                                            is_active = true;
+                                        }
+                                    }
+                                }
+                                if !is_active {
+                                    unsafe {
+                                        libc::kill(pid, libc::SIGTERM);
+                                    }
+                                    reaped_count += 1;
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 

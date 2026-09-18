@@ -111,6 +111,17 @@ impl ContainerStore {
 
     pub fn add(&self, record: ContainerRecord) -> Result<()> {
         let mut data = self.load();
+        if let Some(existing) = data
+            .containers
+            .iter()
+            .find(|c| c.name == record.name && c.id != record.id)
+        {
+            return Err(anyhow!(
+                "Conflict. The container name \"/{}\" is already in use by container \"{}\". You have to remove (or rename) that container to be able to reuse that name.",
+                record.name,
+                existing.id
+            ));
+        }
         data.containers.retain(|c| c.id != record.id);
         data.containers.push(record);
         self.save(&data)

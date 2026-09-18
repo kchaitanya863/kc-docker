@@ -58,7 +58,7 @@ impl NetworkMode {
     pub fn should_use_native_usernet(&self) -> bool {
         match self {
             Self::UserNet => true,
-            Self::Auto => !PastaDriver::is_available(),
+            Self::Auto => false,
             _ => false,
         }
     }
@@ -67,7 +67,7 @@ impl NetworkMode {
     pub fn requires_new_netns(&self) -> bool {
         match self {
             Self::Pasta | Self::UserNet | Self::None => true,
-            Self::Auto => true,
+            Self::Auto => PastaDriver::is_available(),
             Self::Host | Self::Bridge => false,
         }
     }

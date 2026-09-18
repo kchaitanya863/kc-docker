@@ -33,11 +33,11 @@ impl ContainerKiller {
     pub fn kill(container: &ContainerRecord, signal_str: Option<&str>) -> Result<()> {
         let sig = signal_str.map(Self::parse_signal).transpose()?.unwrap_or(9); // Default SIGKILL
 
-        #[cfg(target_os = "macos")]
+        #[cfg(unix)]
         {
             let bundle_path = std::path::PathBuf::from(&container.bundle_path);
             let pid_file = bundle_path.join("vm.pid");
-            if let Ok(pid_str) = std::fs::read_to_string(pid_file) {
+            if let Ok(pid_str) = std::fs::read_to_string(&pid_file) {
                 if let Ok(pid) = pid_str.trim().parse::<i32>() {
                     unsafe {
                         libc::kill(pid, sig);

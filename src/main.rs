@@ -2,6 +2,11 @@ use anyhow::Result;
 use clap::Parser;
 
 fn main() -> Result<()> {
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+
     let args: Vec<String> = std::env::args().collect();
     if args.len() > 1 {
         if args[1] == "__internal-trampoline" {

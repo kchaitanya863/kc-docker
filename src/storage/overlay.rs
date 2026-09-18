@@ -123,15 +123,25 @@ impl OverlayDriver {
     /// Fast CoW fallback: creates a tree of hardlinks to files and real directories.
     /// This is instant, uses near-zero disk space, and isolates writes.
     pub fn create_hardlink_tree(src: &Path, dst: &Path) -> Result<()> {
-        fs::create_dir_all(dst)?;
-        for entry in fs::read_dir(src)? {
-            let entry = entry?;
-            let ty = entry.file_type()?;
+        let _ = fs::create_dir_all(dst);
+        let entries = match fs::read_dir(src) {
+            Ok(e) => e,
+            Err(_) => return Ok(()),
+        };
+        for entry in entries {
+            let entry = match entry {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            let ty = match entry.file_type() {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
             let from = entry.path();
             let to = dst.join(entry.file_name());
 
             if ty.is_dir() {
-                Self::create_hardlink_tree(&from, &to)?;
+                let _ = Self::create_hardlink_tree(&from, &to);
             } else if ty.is_symlink() {
                 #[cfg(unix)]
                 {

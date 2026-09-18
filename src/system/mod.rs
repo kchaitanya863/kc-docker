@@ -216,10 +216,14 @@ fn dir_size(path: &Path) -> u64 {
     if let Ok(entries) = fs::read_dir(path) {
         for entry in entries.flatten() {
             let p = entry.path();
-            if p.is_dir() {
-                total += dir_size(&p);
-            } else if let Ok(meta) = p.metadata() {
-                total += meta.len();
+            if let Ok(ft) = entry.file_type() {
+                if ft.is_dir() {
+                    total += dir_size(&p);
+                } else if ft.is_file() {
+                    if let Ok(meta) = entry.metadata() {
+                        total += meta.len();
+                    }
+                }
             }
         }
     }

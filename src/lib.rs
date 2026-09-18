@@ -154,11 +154,15 @@ pub async fn run_cli(cli: Cli) -> Result<i32> {
             Ok(0)
         }
         Commands::Stop(args) => {
-            stop_container(&args.container)?;
+            for c in &args.containers {
+                stop_container(c)?;
+            }
             Ok(0)
         }
         Commands::Start(args) => {
-            start_container(&args.container).await?;
+            for c in &args.containers {
+                start_container(c).await?;
+            }
             Ok(0)
         }
         Commands::Logs(args) => {
@@ -294,7 +298,7 @@ pub async fn run_cli(cli: Cli) -> Result<i32> {
                 system::SystemManager::print_df()?;
                 Ok(0)
             }
-            SystemAction::Prune { all, volumes } => {
+            SystemAction::Prune { all, volumes, .. } => {
                 system::SystemManager::prune(all, volumes)?;
                 Ok(0)
             }
@@ -353,11 +357,15 @@ pub async fn run_cli(cli: Cli) -> Result<i32> {
             Ok(0)
         }
         Commands::Rm(args) => {
-            remove_container(&args.container)?;
+            for c in &args.containers {
+                remove_container(c)?;
+            }
             Ok(0)
         }
         Commands::Rmi(args) => {
-            remove_image(&args.image)?;
+            for img in &args.images {
+                remove_image(img)?;
+            }
             Ok(0)
         }
         Commands::Spec(args) => {
@@ -513,14 +521,8 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
     let bundle_dir = home.join("containers").join(&container_id);
     let base_rootfs = PathBuf::from(&image_record.rootfs_path);
 
-    let is_fast_ephemeral = args.rm && !args.detach && args.volumes.is_empty();
-
-    let cow_bundle = if is_fast_ephemeral {
-        None
-    } else {
-        fs::create_dir_all(&bundle_dir)?;
-        Some(OverlayDriver::create_cow_layer(&bundle_dir, &base_rootfs)?)
-    };
+    fs::create_dir_all(&bundle_dir)?;
+    let cow_bundle = OverlayDriver::create_cow_layer(&bundle_dir, &base_rootfs)?;
 
     // Configure cgroups v2 resource limits if specified
     let mut limits = cgroups::ResourceLimits::default();
@@ -535,10 +537,8 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
     }
     limits.pids_max = args.pids_limit;
 
-    if !is_fast_ephemeral {
-        if let Ok(cgroup_mgr) = cgroups::CgroupV2Manager::new(&container_id) {
-            let _ = cgroup_mgr.apply_limits(&limits);
-        }
+    if let Ok(cgroup_mgr) = cgroups::CgroupV2Manager::new(&container_id) {
+        let _ = cgroup_mgr.apply_limits(&limits);
     }
 
     // Build OCI Runtime Spec
@@ -548,8 +548,21 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
         None
     };
 
-    let env_override = if !args.env.is_empty() {
-        Some(args.env.as_slice())
+    let mut combined_env = args.env.clone();
+    if let Some(env_file_path) = &args.env_file {
+        if let Ok(content) = fs::read_to_string(env_file_path) {
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() || trimmed.starts_with('#') {
+                    continue;
+                }
+                combined_env.push(trimmed.to_string());
+            }
+        }
+    }
+
+    let env_override = if !combined_env.is_empty() {
+        Some(combined_env.as_slice())
     } else {
         None
     };
@@ -559,6 +572,46 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
         cmd_override,
         env_override,
     );
+
+    if let Some(h) = &args.hostname {
+        spec.hostname = Some(h.clone());
+    }
+
+    if let Some(u) = &args.user {
+        if let Some((uid_str, gid_str)) = u.split_once(':') {
+            let uid = uid_str.parse::<u32>().unwrap_or(0);
+            let gid = gid_str.parse::<u32>().unwrap_or(0);
+            spec.process.user.uid = uid;
+            spec.process.user.gid = gid;
+        } else {
+            let uid = u.parse::<u32>().unwrap_or(0);
+            spec.process.user.uid = uid;
+        }
+    }
+
+    if args.read_only {
+        spec.root.readonly = true;
+    }
+
+    if let Some(shm) = &args.shm_size {
+        if let Some(m) = spec.mounts.iter_mut().find(|m| m.destination == "/dev/shm") {
+            m.options = Some(vec![
+                "nosuid".to_string(),
+                "noexec".to_string(),
+                "nodev".to_string(),
+                "mode=1777".to_string(),
+                format!("size={}", shm),
+            ]);
+        }
+    }
+
+    if let Some(ep) = &args.entrypoint {
+        let mut new_args = vec![ep.clone()];
+        if !args.command.is_empty() {
+            new_args.extend(args.command.clone());
+        }
+        spec.process.args = new_args;
+    }
 
     if let Some(w) = &args.workdir {
         spec.process.cwd = w.clone();
@@ -587,12 +640,12 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
     annotations.insert("boxr.network".to_string(), args.network.clone());
     spec.annotations = Some(annotations);
 
-    if is_fast_ephemeral {
-        spec.root.path = base_rootfs.to_string_lossy().to_string();
-        spec.root.readonly = true;
-    } else {
-        spec.save_to_bundle(&bundle_dir)?;
+    fs::create_dir_all(&bundle_dir)?;
+    if !args.add_host.is_empty() {
+        let hosts_json = serde_json::to_string(&args.add_host)?;
+        let _ = fs::write(bundle_dir.join("hosts.json"), hosts_json);
     }
+    spec.save_to_bundle(&bundle_dir)?;
 
     let restart_policy = health::parse_restart_policy(&args.restart)?;
     let mut health_cfg = health::HealthConfig::default();
@@ -634,16 +687,14 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
     );
     event_attrs.insert("name".to_string(), container_name.clone());
 
-    if !is_fast_ephemeral {
-        EventManager::record(ContainerEvent::new(
-            "container",
-            "create",
-            &container_id,
-            &container_name,
-            event_attrs.clone(),
-        ));
-        container_store.add(record)?;
-    }
+    EventManager::record(ContainerEvent::new(
+        "container",
+        "create",
+        &container_id,
+        &container_name,
+        event_attrs.clone(),
+    ));
+    container_store.add(record)?;
 
     if args.detach {
         println!("{}", container_id);
@@ -652,17 +703,16 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
         }
     }
 
-    if !is_fast_ephemeral {
-        EventManager::record(ContainerEvent::new(
-            "container",
-            "start",
-            &container_id,
-            &container_name,
-            event_attrs.clone(),
-        ));
-    }
+    EventManager::record(ContainerEvent::new(
+        "container",
+        "start",
+        &container_id,
+        &container_name,
+        event_attrs.clone(),
+    ));
 
-    // Enter raw terminal mode if interactive TTY was requested
+    // Enter raw terminal mode on macOS where a VM serial console is used
+    #[cfg(target_os = "macos")]
     let _term_guard = if args.interactive && args.tty {
         terminal::TerminalGuard::enter_raw_mode().ok()
     } else {
@@ -700,16 +750,14 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
         }
     }
 
-    if !is_fast_ephemeral {
-        event_attrs.insert("exitCode".to_string(), exit_code.to_string());
-        EventManager::record(ContainerEvent::new(
-            "container",
-            "die",
-            &container_id,
-            &container_name,
-            event_attrs,
-        ));
-    }
+    event_attrs.insert("exitCode".to_string(), exit_code.to_string());
+    EventManager::record(ContainerEvent::new(
+        "container",
+        "die",
+        &container_id,
+        &container_name,
+        event_attrs,
+    ));
 
     // Health check evaluation if configured
     if !health_cfg.test.is_empty() {
@@ -719,10 +767,9 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
 
     if !args.detach {
         if args.rm {
-            if let Some(ref cb) = cow_bundle {
-                let _ = OverlayDriver::cleanup(cb);
-                let _ = container_store.remove(&container_id);
-            }
+            let _ = OverlayDriver::cleanup(&cow_bundle);
+            let _ = container_store.remove(&container_id);
+            let _ = fs::remove_dir_all(&bundle_dir);
         } else {
             let _ =
                 container_store.update_status(&container_id, ContainerStatus::Exited(exit_code));
@@ -734,45 +781,58 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
 
 pub fn stop_container(container: &str) -> Result<()> {
     let store = ContainerStore::new();
-    if let Some(c) = store.find(container) {
-        #[cfg(target_os = "macos")]
-        {
-            let bundle_path = std::path::PathBuf::from(&c.bundle_path);
-            let pid_file = bundle_path.join("vm.pid");
-            if let Ok(pid_str) = std::fs::read_to_string(&pid_file) {
-                if let Ok(pid) = pid_str.trim().parse::<i32>() {
-                    unsafe {
-                        libc::kill(pid, libc::SIGTERM);
-                    }
-                    for _ in 0..15 {
-                        std::thread::sleep(std::time::Duration::from_millis(100));
-                        if unsafe { libc::kill(pid, 0) != 0 } {
-                            break;
-                        }
-                    }
-                    if unsafe { libc::kill(pid, 0) == 0 } {
-                        unsafe {
-                            libc::kill(pid, libc::SIGKILL);
-                        }
-                    }
-                    let _ = std::fs::remove_file(&pid_file);
+    let c = store
+        .find(container)
+        .ok_or_else(|| anyhow!("Container '{}' not found", container))?;
+
+    #[cfg(unix)]
+    {
+        let bundle_path = std::path::PathBuf::from(&c.bundle_path);
+        let mut pids = Vec::new();
+        if let Ok(pid_str) = std::fs::read_to_string(bundle_path.join("vm.pid")) {
+            if let Ok(pid) = pid_str.trim().parse::<i32>() {
+                pids.push(pid);
+            }
+        }
+        if let Ok(pid_str) = std::fs::read_to_string(bundle_path.join("container.pid")) {
+            if let Ok(pid) = pid_str.trim().parse::<i32>() {
+                pids.push(pid);
+            }
+        }
+        for pid in pids {
+            unsafe {
+                libc::kill(pid, libc::SIGTERM);
+                libc::kill(-pid, libc::SIGTERM);
+            }
+            for _ in 0..10 {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                if unsafe { libc::kill(pid, 0) != 0 } {
+                    break;
+                }
+            }
+            if unsafe { libc::kill(pid, 0) == 0 } {
+                unsafe {
+                    libc::kill(pid, libc::SIGKILL);
+                    libc::kill(-pid, libc::SIGKILL);
                 }
             }
         }
-        #[cfg(target_os = "windows")]
-        {
-            let bundle_path = std::path::PathBuf::from(&c.bundle_path);
-            let pid_file = bundle_path.join("vm.pid");
-            if let Ok(pid_str) = std::fs::read_to_string(pid_file) {
-                if let Ok(pid) = pid_str.trim().parse::<u32>() {
-                    let _ = std::process::Command::new("taskkill")
-                        .args(["/F", "/PID", &pid.to_string()])
-                        .output();
-                }
+        let _ = std::fs::remove_file(bundle_path.join("vm.pid"));
+        let _ = std::fs::remove_file(bundle_path.join("container.pid"));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let bundle_path = std::path::PathBuf::from(&c.bundle_path);
+        let pid_file = bundle_path.join("vm.pid");
+        if let Ok(pid_str) = std::fs::read_to_string(pid_file) {
+            if let Ok(pid) = pid_str.trim().parse::<u32>() {
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/F", "/PID", &pid.to_string()])
+                    .output();
             }
         }
     }
-    store.update_status(container, ContainerStatus::Exited(0))?;
+    store.update_status(&c.id, ContainerStatus::Exited(0))?;
     println!("{}", container);
     Ok(())
 }
@@ -789,8 +849,8 @@ pub async fn start_container(container: &str) -> Result<()> {
     let spec: Spec = serde_json::from_str(&content)?;
 
     store.update_status(&rec.id, ContainerStatus::Running)?;
-    let code = execute_bundle(&bundle_path, &spec, &[], &[], false)?;
-    store.update_status(&rec.id, ContainerStatus::Exited(code))?;
+    let _ = execute_bundle(&bundle_path, &spec, &[], &[], true)?;
+    println!("{}", container);
     Ok(())
 }
 
@@ -874,6 +934,14 @@ pub fn exec_container(args: &ExecArgs) -> Result<i32> {
     let rec = store
         .find(&args.container)
         .ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
+
+    if !matches!(rec.status, ContainerStatus::Running) {
+        return Err(anyhow!(
+            "Container '{}' is not running: {}",
+            args.container,
+            rec.status
+        ));
+    }
 
     if args.command.is_empty() {
         return Err(anyhow!("Command cannot be empty for exec"));
@@ -1125,7 +1193,7 @@ pub fn wait_container(args: &cli::WaitArgs) -> Result<i32> {
                 return Ok(1);
             }
             ContainerStatus::Running | ContainerStatus::Created | ContainerStatus::Paused => {
-                #[cfg(target_os = "macos")]
+                #[cfg(unix)]
                 {
                     let bundle_path = std::path::PathBuf::from(&cont.bundle_path);
                     let pid_file = bundle_path.join("vm.pid");
@@ -1247,15 +1315,16 @@ pub fn attach_container(args: &cli::AttachArgs) -> Result<()> {
     let mut idle_ticks = 0;
     loop {
         // Check if container has exited
-        #[cfg(target_os = "macos")]
+        #[cfg(unix)]
         {
-            if let Ok(output) = std::process::Command::new("docker")
-                .args(["ps", "-q", "-f", &format!("name={}", cont.name)])
-                .output()
-            {
-                if output.stdout.is_empty() {
-                    let _ = c_store.update_status(&cont.id, ContainerStatus::Exited(0));
-                    break;
+            let bundle_path = std::path::PathBuf::from(&cont.bundle_path);
+            let pid_file = bundle_path.join("vm.pid");
+            if let Ok(pid_str) = std::fs::read_to_string(pid_file) {
+                if let Ok(pid) = pid_str.trim().parse::<i32>() {
+                    if unsafe { libc::kill(pid, 0) != 0 } {
+                        let _ = c_store.update_status(&cont.id, ContainerStatus::Exited(0));
+                        break;
+                    }
                 }
             }
         }
@@ -1548,15 +1617,24 @@ pub fn list_containers(args: PsArgs) -> Result<()> {
 pub fn remove_container(container: &str) -> Result<()> {
     let store = ContainerStore::new();
     let removed = store.remove(container)?;
-    #[cfg(target_os = "macos")]
+    #[cfg(unix)]
     {
         let bundle_path = std::path::PathBuf::from(&removed.bundle_path);
-        let pid_file = bundle_path.join("vm.pid");
-        if let Ok(pid_str) = std::fs::read_to_string(pid_file) {
+        let mut pids = Vec::new();
+        if let Ok(pid_str) = std::fs::read_to_string(bundle_path.join("vm.pid")) {
             if let Ok(pid) = pid_str.trim().parse::<i32>() {
-                unsafe {
-                    libc::kill(pid, libc::SIGKILL);
-                }
+                pids.push(pid);
+            }
+        }
+        if let Ok(pid_str) = std::fs::read_to_string(bundle_path.join("container.pid")) {
+            if let Ok(pid) = pid_str.trim().parse::<i32>() {
+                pids.push(pid);
+            }
+        }
+        for pid in pids {
+            unsafe {
+                libc::kill(pid, libc::SIGKILL);
+                libc::kill(-pid, libc::SIGKILL);
             }
         }
     }
@@ -1628,8 +1706,21 @@ pub async fn create_only_container(args: RunArgs) -> Result<String> {
         None
     };
 
-    let env_override = if !args.env.is_empty() {
-        Some(args.env.as_slice())
+    let mut combined_env = args.env.clone();
+    if let Some(env_file_path) = &args.env_file {
+        if let Ok(content) = fs::read_to_string(env_file_path) {
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() || trimmed.starts_with('#') {
+                    continue;
+                }
+                combined_env.push(trimmed.to_string());
+            }
+        }
+    }
+
+    let env_override = if !combined_env.is_empty() {
+        Some(combined_env.as_slice())
     } else {
         None
     };
@@ -1639,6 +1730,46 @@ pub async fn create_only_container(args: RunArgs) -> Result<String> {
         cmd_override,
         env_override,
     );
+
+    if let Some(h) = &args.hostname {
+        spec.hostname = Some(h.clone());
+    }
+
+    if let Some(u) = &args.user {
+        if let Some((uid_str, gid_str)) = u.split_once(':') {
+            let uid = uid_str.parse::<u32>().unwrap_or(0);
+            let gid = gid_str.parse::<u32>().unwrap_or(0);
+            spec.process.user.uid = uid;
+            spec.process.user.gid = gid;
+        } else {
+            let uid = u.parse::<u32>().unwrap_or(0);
+            spec.process.user.uid = uid;
+        }
+    }
+
+    if args.read_only {
+        spec.root.readonly = true;
+    }
+
+    if let Some(shm) = &args.shm_size {
+        if let Some(m) = spec.mounts.iter_mut().find(|m| m.destination == "/dev/shm") {
+            m.options = Some(vec![
+                "nosuid".to_string(),
+                "noexec".to_string(),
+                "nodev".to_string(),
+                "mode=1777".to_string(),
+                format!("size={}", shm),
+            ]);
+        }
+    }
+
+    if let Some(ep) = &args.entrypoint {
+        let mut new_args = vec![ep.clone()];
+        if !args.command.is_empty() {
+            new_args.extend(args.command.clone());
+        }
+        spec.process.args = new_args;
+    }
 
     if let Some(w) = &args.workdir {
         spec.process.cwd = w.clone();
@@ -1658,6 +1789,10 @@ pub async fn create_only_container(args: RunArgs) -> Result<String> {
     annotations.insert("boxr.network".to_string(), args.network.clone());
     spec.annotations = Some(annotations);
 
+    if !args.add_host.is_empty() {
+        let hosts_json = serde_json::to_string(&args.add_host)?;
+        let _ = fs::write(bundle_dir.join("hosts.json"), hosts_json);
+    }
     spec.save_to_bundle(&bundle_dir)?;
 
     let restart_policy = health::parse_restart_policy(&args.restart)?;
@@ -1964,6 +2099,7 @@ pub fn info_system() -> Result<()> {
     println!(" Volume: local");
     println!(" Network: bridge");
     println!("Architecture: {}", std::env::consts::ARCH);
+    println!("Operating System: {} {}", std::env::consts::OS, std::env::consts::ARCH);
     println!("OSType: {}", std::env::consts::OS);
     #[cfg(unix)]
     println!("Rootless Mode: {}", unsafe { libc::getuid() != 0 });

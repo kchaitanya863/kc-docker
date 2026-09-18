@@ -13,12 +13,13 @@ static BOOL g_should_stop = NO;
 
 static void handle_signal(int sig) {
     if (g_vm && [g_vm canStop]) {
+        dispatch_semaphore_t sem = dispatch_semaphore_create(0);
         [g_vm stopWithCompletionHandler:^(NSError * _Nullable errorOrNil) {
-            exit(128 + sig);
+            dispatch_semaphore_signal(sem);
         }];
-    } else {
-        exit(128 + sig);
+        dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)));
     }
+    exit(128 + sig);
 }
 
 @interface BoxrVMDelegate : NSObject <VZVirtualMachineDelegate>
@@ -109,7 +110,7 @@ int main(int argc, const char *argv[]) {
 
         VZLinuxBootLoader *bootloader = [[VZLinuxBootLoader alloc] initWithKernelURL:kernelURL];
         bootloader.initialRamdiskURL = initrdURL;
-        bootloader.commandLine = @"console=hvc0 quiet loglevel=3 random.trust_cpu=on random.trust_bootloader=on panic=-1";
+        bootloader.commandLine = @"console=hvc0 quiet loglevel=3 random.trust_cpu=on random.trust_bootloader=on panic=0";
 
         VZVirtualMachineConfiguration *config = [[VZVirtualMachineConfiguration alloc] init];
         config.bootLoader = bootloader;

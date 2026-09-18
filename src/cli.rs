@@ -271,6 +271,42 @@ pub struct RunArgs {
     #[arg(long = "gpus")]
     pub gpus: Option<String>,
 
+    /// Overwrite the default ENTRYPOINT of the image
+    #[arg(long = "entrypoint")]
+    pub entrypoint: Option<String>,
+
+    /// Read in a file of environment variables
+    #[arg(long = "env-file")]
+    pub env_file: Option<String>,
+
+    /// Username or UID (format: <name|uid>[:<group|gid>])
+    #[arg(short = 'u', long = "user")]
+    pub user: Option<String>,
+
+    /// Container host name
+    #[arg(long = "hostname")]
+    pub hostname: Option<String>,
+
+    /// Add a custom host-to-IP mapping (host:ip)
+    #[arg(long = "add-host")]
+    pub add_host: Vec<String>,
+
+    /// Size of /dev/shm (e.g. 64m, 1g)
+    #[arg(long = "shm-size")]
+    pub shm_size: Option<String>,
+
+    /// Add Linux capabilities
+    #[arg(long = "cap-add")]
+    pub cap_add: Vec<String>,
+
+    /// Drop Linux capabilities
+    #[arg(long = "cap-drop")]
+    pub cap_drop: Vec<String>,
+
+    /// Mount the container's root filesystem as read only
+    #[arg(long = "read-only")]
+    pub read_only: bool,
+
     pub image: String,
 
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -315,12 +351,14 @@ pub struct StopArgs {
     #[arg(short = 't', long = "time")]
     pub time: Option<i32>,
 
-    pub container: String,
+    #[arg(required = true)]
+    pub containers: Vec<String>,
 }
 
 #[derive(Args, Debug)]
 pub struct StartArgs {
-    pub container: String,
+    #[arg(required = true)]
+    pub containers: Vec<String>,
 }
 
 #[derive(Args, Debug)]
@@ -501,14 +539,20 @@ pub struct RmArgs {
     #[arg(short = 'v', long = "volumes")]
     pub volumes: bool,
 
-    /// Container ID or name to remove
-    pub container: String,
+    /// Container IDs or names to remove
+    #[arg(required = true)]
+    pub containers: Vec<String>,
 }
 
 #[derive(Args, Debug)]
 pub struct RmiArgs {
-    /// Image reference or ID to remove
-    pub image: String,
+    /// Force removal of the image
+    #[arg(short = 'f', long = "force")]
+    pub force: bool,
+
+    /// Image references or IDs to remove
+    #[arg(required = true)]
+    pub images: Vec<String>,
 }
 
 #[derive(Args, Debug)]
@@ -682,6 +726,8 @@ pub enum SystemAction {
     Prune {
         #[arg(short = 'a', long = "all")]
         all: bool,
+        #[arg(short = 'f', long = "force")]
+        force: bool,
         #[arg(long = "volumes")]
         volumes: bool,
     },

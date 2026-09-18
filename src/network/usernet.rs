@@ -542,6 +542,28 @@ pub mod platform {
         Ok(())
     }
 
+    /// Run the pure-Rust user-mode TAP network engine in the current process
+    pub fn run_tap_network_loop(mut tap_file: File, ports: &[PortMapping]) {
+        use std::io::{Read, Write};
+        let engine = UserNetEngine::new(ports);
+        let mut buf = [0u8; 65536];
+
+        loop {
+            match tap_file.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    if let Some(reply) = engine.handle_incoming_frame(&buf[..n]) {
+                        let _ = tap_file.write_all(&reply);
+                    }
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                Err(_) => break,
+            }
+        }
+    }
+
     /// Spawn the pure-Rust user-mode TAP network engine on an active TAP device
     pub fn spawn_tap_network_stack(mut tap_file: File, ports: Vec<PortMapping>) -> Arc<AtomicBool> {
         let running = Arc::new(AtomicBool::new(true));

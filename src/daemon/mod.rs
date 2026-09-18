@@ -75,16 +75,28 @@ pub fn create_router(state: DaemonState) -> Router {
         .route("/v1.45/info", get(info))
         .route("/images/json", get(list_images))
         .route("/v1.45/images/json", get(list_images))
+        .route("/images/{name}/json", get(inspect_image))
+        .route("/v1.45/images/{name}/json", get(inspect_image))
         .route("/images/create", post(create_image))
         .route("/v1.45/images/create", post(create_image))
         .route("/containers/json", get(list_containers))
         .route("/v1.45/containers/json", get(list_containers))
+        .route("/containers/{id}/json", get(inspect_container))
+        .route("/v1.45/containers/{id}/json", get(inspect_container))
         .route("/containers/create", post(create_container))
         .route("/v1.45/containers/create", post(create_container))
         .route("/containers/{id}/start", post(start_container))
         .route("/v1.45/containers/{id}/start", post(start_container))
         .route("/containers/{id}/stop", post(stop_container))
         .route("/v1.45/containers/{id}/stop", post(stop_container))
+        .route("/containers/{id}/restart", post(restart_container))
+        .route("/v1.45/containers/{id}/restart", post(restart_container))
+        .route("/containers/{id}/kill", post(kill_container))
+        .route("/v1.45/containers/{id}/kill", post(kill_container))
+        .route("/containers/{id}/wait", post(wait_container))
+        .route("/v1.45/containers/{id}/wait", post(wait_container))
+        .route("/containers/{id}/logs", get(get_container_logs))
+        .route("/v1.45/containers/{id}/logs", get(get_container_logs))
         .route("/containers/{id}", delete(remove_container))
         .route("/v1.45/containers/{id}", delete(remove_container))
         .route("/networks", get(list_networks))
@@ -211,13 +223,19 @@ async fn create_image(
 
 #[derive(Deserialize)]
 struct ListContainersQuery {
-    all: Option<bool>,
+    all: Option<serde_json::Value>,
 }
 
 async fn list_containers(Query(params): Query<ListContainersQuery>) -> Json<serde_json::Value> {
     let store = ContainerStore::new();
     let mut containers = store.list();
-    if !params.all.unwrap_or(false) {
+    let show_all = match &params.all {
+        Some(serde_json::Value::Bool(b)) => *b,
+        Some(serde_json::Value::Number(n)) => n.as_i64() == Some(1),
+        Some(serde_json::Value::String(s)) => s == "1" || s.to_lowercase() == "true",
+        _ => false,
+    };
+    if !show_all {
         containers.retain(|c| matches!(c.status, ContainerStatus::Running));
     }
     Json(serde_json::to_value(containers).unwrap_or_default())
@@ -347,6 +365,99 @@ async fn create_volume(
     match store.create(payload.name.as_deref(), None) {
         Ok(vol) => Ok(Json(serde_json::to_value(vol).unwrap())),
         Err(_) => Err(StatusCode::BAD_REQUEST),
+    }
+}
+
+async fn inspect_container(Path(id): Path<String>) -> Result<Json<serde_json::Value>, StatusCode> {
+    let store = ContainerStore::new();
+    let c = store.find(&id).ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(serde_json::json!({
+        "Id": c.id,
+        "Created": c.created_at.to_rfc3339(),
+        "Path": c.command.first().cloned().unwrap_or_default(),
+        "Args": if c.command.len() > 1 { c.command[1..].to_vec() } else { vec![] },
+        "State": {
+            "Status": c.status.to_string(),
+            "Running": matches!(c.status, ContainerStatus::Running),
+            "Paused": matches!(c.status, ContainerStatus::Paused),
+            "ExitCode": match c.status {
+                ContainerStatus::Exited(code) => code,
+                _ => 0,
+            }
+        },
+        "Image": c.image,
+        "Name": format!("/{}", c.name),
+        "RestartPolicy": { "Name": c.restart_policy.to_string() },
+        "NetworkSettings": {
+            "Ports": c.ports
+        }
+    })))
+}
+
+async fn inspect_image(Path(name): Path<String>) -> Result<Json<serde_json::Value>, StatusCode> {
+    let store = ImageStore::new();
+    let img = store.find(&name).ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(serde_json::json!({
+        "Id": format!("sha256:{}", img.id),
+        "RepoTags": [format!("{}:{}", img.reference, img.tag)],
+        "Size": img.size_bytes,
+        "Created": img.created_at.to_rfc3339(),
+        "Architecture": img.config.architecture,
+        "Os": img.config.os,
+    })))
+}
+
+async fn restart_container(Path(id): Path<String>) -> StatusCode {
+    let _ = crate::stop_container(&id);
+    match crate::start_container(&id).await {
+        Ok(_) => StatusCode::NO_CONTENT,
+        Err(_) => StatusCode::NOT_FOUND,
+    }
+}
+
+async fn kill_container(Path(id): Path<String>) -> StatusCode {
+    let store = ContainerStore::new();
+    if let Some(c) = store.find(&id) {
+        let _ = crate::runtime::kill::ContainerKiller::kill(&c, None);
+        StatusCode::NO_CONTENT
+    } else {
+        StatusCode::NOT_FOUND
+    }
+}
+
+async fn wait_container(Path(id): Path<String>) -> Result<Json<serde_json::Value>, StatusCode> {
+    let store = ContainerStore::new();
+    let c = store.find(&id).ok_or(StatusCode::NOT_FOUND)?;
+    let bundle_path = PathBuf::from(&c.bundle_path);
+    let pid_file = bundle_path.join("vm.pid");
+    for _ in 0..100 {
+        if let Ok(pid_str) = fs::read_to_string(&pid_file) {
+            if let Ok(pid) = pid_str.trim().parse::<i32>() {
+                #[cfg(unix)]
+                if unsafe { libc::kill(pid, 0) == 0 } {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                    continue;
+                }
+            }
+        }
+        break;
+    }
+    let exit_code = if let Ok(c) = fs::read_to_string(bundle_path.join("boxr-exitcode")) {
+        c.trim().parse::<i32>().unwrap_or(0)
+    } else {
+        0
+    };
+    Ok(Json(serde_json::json!({ "StatusCode": exit_code })))
+}
+
+async fn get_container_logs(Path(id): Path<String>) -> Result<String, StatusCode> {
+    let store = ContainerStore::new();
+    let c = store.find(&id).ok_or(StatusCode::NOT_FOUND)?;
+    let log_path = PathBuf::from(&c.bundle_path).join("logs.txt");
+    if log_path.exists() {
+        fs::read_to_string(&log_path).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    } else {
+        Ok(String::new())
     }
 }
 

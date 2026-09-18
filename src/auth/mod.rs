@@ -4,7 +4,7 @@ use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tar::{Archive, Builder, Header};
 
 const B64_CHARS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -190,7 +190,7 @@ impl ImageArchiver {
             let mut layer_builder = Builder::new(File::create(temp_layer.path())?);
             let rootfs_dir = Path::new(&image.rootfs_path);
             if rootfs_dir.exists() {
-                layer_builder.append_dir_all(".", rootfs_dir)?;
+                Self::append_dir_resilient(&mut layer_builder, rootfs_dir, Path::new(""))?;
             }
             layer_builder.finish()?;
         }
@@ -302,6 +302,42 @@ impl ImageArchiver {
         }
 
         Ok(loaded)
+    }
+
+    fn append_dir_resilient(
+        builder: &mut Builder<File>,
+        base: &Path,
+        rel: &Path,
+    ) -> Result<()> {
+        let current = if rel.as_os_str().is_empty() {
+            base.to_path_buf()
+        } else {
+            base.join(rel)
+        };
+        let entries = match fs::read_dir(&current) {
+            Ok(e) => e,
+            Err(_) => return Ok(()),
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let file_name = entry.file_name();
+            let entry_rel = if rel.as_os_str().is_empty() {
+                PathBuf::from(file_name)
+            } else {
+                rel.join(file_name)
+            };
+            let ft = match entry.file_type() {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            if ft.is_dir() {
+                let _ = builder.append_dir(&entry_rel, &path);
+                let _ = Self::append_dir_resilient(builder, base, &entry_rel);
+            } else {
+                let _ = builder.append_path_with_name(&path, &entry_rel);
+            }
+        }
+        Ok(())
     }
 }
 

@@ -41,6 +41,7 @@ pub fn execute_bundle(
             .spawn()
             .context("Failed to spawn container trampoline process")?;
 
+        let _ = fs::write(bundle_path.join("vm.pid"), child.id().to_string());
         let _ = fs::write(bundle_path.join("pid"), child.id().to_string());
         Ok(0)
     } else {
@@ -120,6 +121,7 @@ pub fn run_trampoline(args: &[String]) -> Result<i32> {
 
         match unsafe { fork() }? {
             ForkResult::Parent { child } => {
+                let _ = fs::write(bundle_path.join("container.pid"), child.as_raw().to_string());
                 drop(child_sock);
                 // 1. Wait for child to unshare user namespace
                 let mut sync_buf = [0u8; 5];
@@ -167,6 +169,9 @@ pub fn run_trampoline(args: &[String]) -> Result<i32> {
                 status
             }
             ForkResult::Child => {
+                unsafe {
+                    libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+                }
                 drop(parent_sock);
                 // 1. Unshare user namespace cleanly in single-threaded child
                 if let Err(e) = unshare(CloneFlags::CLONE_NEWUSER) {
@@ -187,19 +192,14 @@ pub fn run_trampoline(args: &[String]) -> Result<i32> {
                     std::process::exit(1);
                 }
 
-                // 4. Child is now root in user namespace. Unshare remaining namespaces
-                let mut flags = CloneFlags::CLONE_NEWPID
-                    | CloneFlags::CLONE_NEWNS
-                    | CloneFlags::CLONE_NEWUTS
-                    | CloneFlags::CLONE_NEWIPC;
-
+                // 4. Child is now root in user namespace.
+                // First unshare network namespace if required, so we can configure networking
+                // with external helper commands (ip) before creating the container PID namespace.
                 if requires_netns {
-                    flags |= CloneFlags::CLONE_NEWNET;
-                }
-
-                if let Err(e) = unshare(flags) {
-                    eprintln!("Failed to unshare container namespaces: {:?}", e);
-                    std::process::exit(1);
+                    if let Err(e) = unshare(CloneFlags::CLONE_NEWNET) {
+                        eprintln!("Failed to unshare network namespace: {:?}", e);
+                        std::process::exit(1);
+                    }
                 }
 
                 // If using pasta, notify parent that netns has been unshared so pasta can attach
@@ -211,7 +211,7 @@ pub fn run_trampoline(args: &[String]) -> Result<i32> {
                 drop(child_sock);
 
                 // If using native pure-Rust user-mode networking stack:
-                let mut _tap_running = None;
+                let mut tap_worker_pid = None;
                 if network_mode.should_use_native_usernet() {
                     use crate::network::usernet::{
                         DEFAULT_CONTAINER_IP, DEFAULT_GATEWAY_IP, platform,
@@ -222,23 +222,56 @@ pub fn run_trampoline(args: &[String]) -> Result<i32> {
                             DEFAULT_CONTAINER_IP,
                             DEFAULT_GATEWAY_IP,
                         );
-                        _tap_running =
-                            Some(platform::spawn_tap_network_stack(tap_file, ports.clone()));
+                        // Fork background TAP engine worker before unsharing PID namespace
+                        match unsafe { fork() } {
+                            Ok(ForkResult::Child) => {
+                                platform::run_tap_network_loop(tap_file, &ports);
+                                std::process::exit(0);
+                            }
+                            Ok(ForkResult::Parent { child: tap_child }) => {
+                                tap_worker_pid = Some(tap_child);
+                            }
+                            Err(_) => {}
+                        }
                     }
+                }
+
+                // Now unshare container namespaces: PID, Mount, UTS, IPC
+                let flags = CloneFlags::CLONE_NEWPID
+                    | CloneFlags::CLONE_NEWNS
+                    | CloneFlags::CLONE_NEWUTS
+                    | CloneFlags::CLONE_NEWIPC;
+
+                if let Err(e) = unshare(flags) {
+                    eprintln!("Failed to unshare container namespaces: {:?}", e);
+                    std::process::exit(1);
                 }
 
                 // 5. Fork so grandchild becomes PID 1 inside new PID namespace
                 match unsafe { fork() } {
                     Ok(ForkResult::Parent { child: grandchild }) => {
-                        match waitpid(grandchild, None) {
-                            Ok(WaitStatus::Exited(_, code)) => std::process::exit(code),
-                            Ok(WaitStatus::Signaled(_, sig, _)) => {
-                                std::process::exit(128 + sig as i32)
-                            }
-                            _ => std::process::exit(1),
+                        let _ = fs::write(bundle_path.join("container.pid"), grandchild.as_raw().to_string());
+                        let status = match waitpid(grandchild, None) {
+                            Ok(WaitStatus::Exited(_, code)) => code,
+                            Ok(WaitStatus::Signaled(_, sig, _)) => 128 + sig as i32,
+                            _ => 1,
+                        };
+
+                        if let Some(tap_pid) = tap_worker_pid {
+                            let _ = nix::sys::signal::kill(
+                                tap_pid,
+                                nix::sys::signal::Signal::SIGKILL,
+                            );
+                            let _ = waitpid(tap_pid, None);
                         }
+
+                        let _ = fs::write(bundle_path.join("boxr-exitcode"), status.to_string());
+                        std::process::exit(status);
                     }
                     Ok(ForkResult::Child) => {
+                        unsafe {
+                            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+                        }
                         if let Err(err) = run_container_child(&abs_rootfs, &spec, &mounts) {
                             eprintln!("Container child failed: {:?}", err);
                             std::process::exit(1);
@@ -346,6 +379,51 @@ pub fn run_trampoline_exec(args: &[String]) -> Result<i32> {
 }
 
 pub fn exec_in_bundle(bundle_path: &Path, command: &[String], env: &[String]) -> Result<i32> {
+    let target_pid = if let Ok(pid_str) = fs::read_to_string(bundle_path.join("container.pid")) {
+        pid_str.trim().parse::<i32>().ok()
+    } else {
+        None
+    };
+
+    let target_pid = target_pid.or_else(|| {
+        if let Ok(pid_str) = fs::read_to_string(bundle_path.join("vm.pid")) {
+            let pid = pid_str.trim().parse::<i32>().ok()?;
+            let proc_task = format!("/proc/{}/task/{}/children", pid, pid);
+            if let Ok(children) = fs::read_to_string(&proc_task) {
+                if let Some(first_child) = children.split_whitespace().next() {
+                    return first_child.parse::<i32>().ok();
+                }
+            }
+            Some(pid)
+        } else {
+            None
+        }
+    });
+
+    if let Some(pid) = target_pid {
+        if unsafe { libc::kill(pid, 0) == 0 } {
+            let mut cmd = std::process::Command::new("nsenter");
+            cmd.args([
+                "-t",
+                &pid.to_string(),
+                "-U",
+                "-m",
+                "-p",
+                "-u",
+                "--preserve-credentials",
+                "--",
+            ]);
+            for e in env {
+                if let Some((k, v)) = e.split_once('=') {
+                    cmd.env(k, v);
+                }
+            }
+            cmd.args(command);
+            let status = cmd.status()?;
+            return Ok(status.code().unwrap_or(0));
+        }
+    }
+
     let rootfs = bundle_path.join("rootfs");
     let abs_rootfs = rootfs.canonicalize()?;
 
@@ -443,6 +521,37 @@ fn run_container_child(rootfs: &Path, spec: &Spec, mounts: &[MountSpec]) -> Resu
         Some("mode=755"),
     );
 
+    // Populate essential device nodes via bind mount from host
+    for dev in &["null", "zero", "full", "random", "urandom", "tty"] {
+        let host_dev = Path::new("/dev").join(dev);
+        let guest_dev = dev_path.join(dev);
+        if host_dev.exists() {
+            let _ = fs::File::create(&guest_dev);
+            let _ = mount(
+                Some(&host_dev),
+                &guest_dev,
+                None::<&str>,
+                MsFlags::MS_BIND,
+                None::<&str>,
+            );
+        }
+    }
+    let pts_path = dev_path.join("pts");
+    let _ = fs::create_dir_all(&pts_path);
+    let _ = mount(
+        Some("devpts"),
+        &pts_path,
+        Some("devpts"),
+        MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC,
+        Some("newinstance,ptmxmode=0666,mode=0620"),
+    );
+    let ptmx_path = dev_path.join("ptmx");
+    let _ = std::os::unix::fs::symlink("pts/ptmx", &ptmx_path);
+    let _ = std::os::unix::fs::symlink("/proc/self/fd", dev_path.join("fd"));
+    let _ = std::os::unix::fs::symlink("/proc/self/fd/0", dev_path.join("stdin"));
+    let _ = std::os::unix::fs::symlink("/proc/self/fd/1", dev_path.join("stdout"));
+    let _ = std::os::unix::fs::symlink("/proc/self/fd/2", dev_path.join("stderr"));
+
     // Mount external volumes/binds
     for m in mounts {
         let target = rootfs.join(m.destination.trim_start_matches('/'));
@@ -457,12 +566,45 @@ fn run_container_child(rootfs: &Path, spec: &Spec, mounts: &[MountSpec]) -> Resu
     // Ensure DNS configuration exists in container rootfs
     let resolv_path = rootfs.join("etc/resolv.conf");
     let _ = fs::create_dir_all(rootfs.join("etc"));
-    if !resolv_path.exists() {
-        let _ = fs::write(
-            &resolv_path,
-            "nameserver 10.0.2.3\nnameserver 1.1.1.1\nnameserver 8.8.8.8\n",
-        );
+    let mut dns_content = String::new();
+    if let Ok(host_resolv) = fs::read_to_string("/etc/resolv.conf") {
+        for line in host_resolv.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("nameserver") {
+                dns_content.push_str(trimmed);
+                dns_content.push('\n');
+            }
+        }
     }
+    if !dns_content.contains("1.1.1.1") {
+        dns_content.push_str("nameserver 1.1.1.1\n");
+    }
+    if !dns_content.contains("8.8.8.8") {
+        dns_content.push_str("nameserver 8.8.8.8\n");
+    }
+    let _ = fs::write(&resolv_path, dns_content);
+
+    // Ensure /etc/hosts exists and contains localhost and container hostname
+    let hosts_path = rootfs.join("etc/hosts");
+    let mut hosts_content = String::from("127.0.0.1 localhost\n::1 localhost ip6-localhost ip6-loopback\n");
+    if let Some(h) = &spec.hostname {
+        hosts_content.push_str(&format!("127.0.0.1 {}\n", h));
+    }
+    // Also include any custom hosts from bundle
+    let bundle_dir = rootfs.parent().unwrap_or(rootfs);
+    let custom_hosts_file = bundle_dir.join("hosts.json");
+    if custom_hosts_file.exists() {
+        if let Ok(content) = fs::read_to_string(&custom_hosts_file) {
+            if let Ok(add_hosts) = serde_json::from_str::<Vec<String>>(&content) {
+                for entry in add_hosts {
+                    if let Some((host, ip)) = entry.split_once(':') {
+                        hosts_content.push_str(&format!("{} {}\n", ip.trim(), host.trim()));
+                    }
+                }
+            }
+        }
+    }
+    let _ = fs::write(&hosts_path, hosts_content);
 
     // Setup pivot_root
     let oldroot_path = rootfs.join(".oldroot");
@@ -478,6 +620,16 @@ fn run_container_child(rootfs: &Path, spec: &Spec, mounts: &[MountSpec]) -> Resu
         let _ = fs::remove_dir("/.oldroot");
     }
 
+    // Mount proc inside the new container rootfs (now isolated from host proc)
+    let _ = fs::create_dir_all("/proc");
+    let _ = mount(
+        Some("proc"),
+        "/proc",
+        Some("proc"),
+        MsFlags::empty(),
+        None::<&str>,
+    );
+
     // Change to requested working directory
     let cwd = if spec.process.cwd.is_empty() {
         Path::new("/")
@@ -486,6 +638,8 @@ fn run_container_child(rootfs: &Path, spec: &Spec, mounts: &[MountSpec]) -> Resu
     };
     let _ = chdir(cwd);
 
+    let host_term = std::env::var("TERM").ok();
+
     // Clear environment and populate with spec environment
     for (k, _) in std::env::vars() {
         unsafe {
@@ -493,10 +647,14 @@ fn run_container_child(rootfs: &Path, spec: &Spec, mounts: &[MountSpec]) -> Resu
         }
     }
     let mut has_path = false;
+    let mut has_term = false;
     for e in &spec.process.env {
         if let Some((k, v)) = e.split_once('=') {
             if k == "PATH" {
                 has_path = true;
+            }
+            if k == "TERM" {
+                has_term = true;
             }
             unsafe {
                 std::env::set_var(k, v);
@@ -510,6 +668,30 @@ fn run_container_child(rootfs: &Path, spec: &Spec, mounts: &[MountSpec]) -> Resu
                 "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
             );
         }
+    }
+    if !has_term {
+        if let Some(t) = host_term {
+            unsafe {
+                std::env::set_var("TERM", t);
+            }
+        }
+    }
+
+    if spec.root.readonly {
+        let _ = mount(
+            None::<&str>,
+            "/",
+            None::<&str>,
+            MsFlags::MS_REMOUNT | MsFlags::MS_RDONLY | MsFlags::MS_BIND,
+            None::<&str>,
+        );
+    }
+
+    if spec.process.user.gid != 0 {
+        let _ = nix::unistd::setgid(nix::unistd::Gid::from_raw(spec.process.user.gid));
+    }
+    if spec.process.user.uid != 0 {
+        let _ = nix::unistd::setuid(nix::unistd::Uid::from_raw(spec.process.user.uid));
     }
 
     // Execute container binary
