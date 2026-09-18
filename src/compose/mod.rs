@@ -85,6 +85,17 @@ pub struct ComposeProject {
 }
 
 impl ComposeProject {
+    pub fn from_str(content: &str, project_name: &str) -> Result<Self> {
+        let compose: ComposeFile =
+            serde_yaml::from_str(content).context("Failed to parse YAML compose file")?;
+
+        Ok(Self {
+            name: project_name.to_string(),
+            compose_file_path: PathBuf::from("docker-compose.yml"),
+            compose,
+        })
+    }
+
     pub fn load(path: &Path) -> Result<Self> {
         let content = fs::read_to_string(path)
             .with_context(|| format!("Failed to read compose file at {:?}", path))?;
