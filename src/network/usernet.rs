@@ -252,6 +252,85 @@ impl UdpHeader {
     }
 }
 
+/// TCP Header (minimum 20 bytes)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TcpHeader {
+    pub src_port: u16,
+    pub dst_port: u16,
+    pub seq_num: u32,
+    pub ack_num: u32,
+    pub data_offset: u8,
+    pub flags: u16,
+    pub window_size: u16,
+    pub checksum: u16,
+    pub urgent_ptr: u16,
+}
+
+impl TcpHeader {
+    pub fn parse(buf: &[u8]) -> Option<(Self, &[u8])> {
+        if buf.len() < 20 {
+            return None;
+        }
+        let src_port = u16::from_be_bytes([buf[0], buf[1]]);
+        let dst_port = u16::from_be_bytes([buf[2], buf[3]]);
+        let seq_num = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]);
+        let ack_num = u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]]);
+        let data_offset = (buf[12] >> 4) * 4;
+        let flags = u16::from_be_bytes([buf[12] & 0x01, buf[13]]);
+        let window_size = u16::from_be_bytes([buf[14], buf[15]]);
+        let checksum = u16::from_be_bytes([buf[16], buf[17]]);
+        let urgent_ptr = u16::from_be_bytes([buf[18], buf[19]]);
+
+        if (data_offset as usize) < 20 || buf.len() < data_offset as usize {
+            return None;
+        }
+
+        Some((
+            Self {
+                src_port,
+                dst_port,
+                seq_num,
+                ack_num,
+                data_offset,
+                flags,
+                window_size,
+                checksum,
+                urgent_ptr,
+            },
+            &buf[data_offset as usize..],
+        ))
+    }
+
+    pub fn write_to(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.src_port.to_be_bytes());
+        out.extend_from_slice(&self.dst_port.to_be_bytes());
+        out.extend_from_slice(&self.seq_num.to_be_bytes());
+        out.extend_from_slice(&self.ack_num.to_be_bytes());
+        out.push((self.data_offset / 4) << 4);
+        out.push((self.flags & 0xff) as u8);
+        out.extend_from_slice(&self.window_size.to_be_bytes());
+        out.extend_from_slice(&self.checksum.to_be_bytes());
+        out.extend_from_slice(&self.urgent_ptr.to_be_bytes());
+    }
+}
+
+/// Compute TCP checksum over IPv4 pseudo header and TCP segment
+pub fn compute_tcp_checksum(
+    src_ip: &Ipv4Addr,
+    dst_ip: &Ipv4Addr,
+    proto: u8,
+    tcp_segment: &[u8],
+) -> u16 {
+    let mut pseudo = Vec::with_capacity(12 + tcp_segment.len());
+    pseudo.extend_from_slice(&src_ip.octets());
+    pseudo.extend_from_slice(&dst_ip.octets());
+    pseudo.push(0);
+    pseudo.push(proto);
+    pseudo.extend_from_slice(&(tcp_segment.len() as u16).to_be_bytes());
+    pseudo.extend_from_slice(tcp_segment);
+    compute_checksum(&pseudo)
+}
+
 /// Standard Internet Checksum computation (RFC 1071)
 pub fn compute_checksum(data: &[u8]) -> u16 {
     let mut sum: u32 = 0;
@@ -332,8 +411,111 @@ impl UserNetEngine {
         match ip.protocol {
             IP_PROTO_ICMP => self.handle_icmp(eth, &ip, ip_payload),
             IP_PROTO_UDP => self.handle_udp(eth, &ip, ip_payload),
+            IP_PROTO_TCP => self.handle_tcp(eth, &ip, ip_payload),
             _ => None,
         }
+    }
+
+    fn handle_tcp(&self, eth: &EthernetHeader, ip: &Ipv4Header, payload: &[u8]) -> Option<Vec<u8>> {
+        let (tcp, _) = TcpHeader::parse(payload)?;
+
+        // Intercept SYN: reply with SYN-ACK to establish TCP handshake with virtual gateway
+        if (tcp.flags & 0x02) != 0 {
+            let reply_seq = 1000u32;
+            let reply_ack = tcp.seq_num.wrapping_add(1);
+
+            let reply_tcp = TcpHeader {
+                src_port: tcp.dst_port,
+                dst_port: tcp.src_port,
+                seq_num: reply_seq,
+                ack_num: reply_ack,
+                data_offset: 20,
+                flags: 0x12, // SYN | ACK
+                window_size: 65535,
+                checksum: 0,
+                urgent_ptr: 0,
+            };
+
+            let reply_ip = Ipv4Header {
+                ihl: 5,
+                tos: 0,
+                total_length: 40,
+                id: ip.id.wrapping_add(1),
+                flags_and_frag: 0x4000,
+                ttl: 64,
+                protocol: IP_PROTO_TCP,
+                checksum: 0,
+                src_ip: ip.dst_ip,
+                dst_ip: ip.src_ip,
+            };
+
+            let reply_eth = EthernetHeader {
+                dst_mac: eth.src_mac,
+                src_mac: VIRTUAL_GATEWAY_MAC,
+                ethertype: ETHERTYPE_IPV4,
+            };
+
+            let mut tcp_bytes = Vec::with_capacity(20);
+            reply_tcp.write_to(&mut tcp_bytes);
+
+            let csum =
+                compute_tcp_checksum(&reply_ip.src_ip, &reply_ip.dst_ip, IP_PROTO_TCP, &tcp_bytes);
+            tcp_bytes[16..18].copy_from_slice(&csum.to_be_bytes());
+
+            let mut out = Vec::with_capacity(14 + 20 + 20);
+            reply_eth.write_to(&mut out);
+            reply_ip.write_to(&mut out);
+            out.extend_from_slice(&tcp_bytes);
+            return Some(out);
+        }
+
+        // Intercept FIN: reply with FIN-ACK
+        if (tcp.flags & 0x01) != 0 {
+            let reply_tcp = TcpHeader {
+                src_port: tcp.dst_port,
+                dst_port: tcp.src_port,
+                seq_num: tcp.ack_num,
+                ack_num: tcp.seq_num.wrapping_add(1),
+                data_offset: 20,
+                flags: 0x11, // FIN | ACK
+                window_size: 65535,
+                checksum: 0,
+                urgent_ptr: 0,
+            };
+
+            let reply_ip = Ipv4Header {
+                ihl: 5,
+                tos: 0,
+                total_length: 40,
+                id: ip.id.wrapping_add(1),
+                flags_and_frag: 0,
+                ttl: 64,
+                protocol: IP_PROTO_TCP,
+                checksum: 0,
+                src_ip: ip.dst_ip,
+                dst_ip: ip.src_ip,
+            };
+
+            let reply_eth = EthernetHeader {
+                dst_mac: eth.src_mac,
+                src_mac: VIRTUAL_GATEWAY_MAC,
+                ethertype: ETHERTYPE_IPV4,
+            };
+
+            let mut tcp_bytes = Vec::with_capacity(20);
+            reply_tcp.write_to(&mut tcp_bytes);
+            let csum =
+                compute_tcp_checksum(&reply_ip.src_ip, &reply_ip.dst_ip, IP_PROTO_TCP, &tcp_bytes);
+            tcp_bytes[16..18].copy_from_slice(&csum.to_be_bytes());
+
+            let mut out = Vec::with_capacity(14 + 40);
+            reply_eth.write_to(&mut out);
+            reply_ip.write_to(&mut out);
+            out.extend_from_slice(&tcp_bytes);
+            return Some(out);
+        }
+
+        None
     }
 
     fn handle_icmp(
@@ -702,6 +884,68 @@ mod tests {
         assert_eq!(r_ip.dst_ip, DEFAULT_CONTAINER_IP);
         assert_eq!(r_icmp[0], 0); // ICMP Echo Reply
         assert_eq!(r_icmp[4..8], [0x12, 0x34, 0x00, 0x01]); // Ident and sequence preserved
+    }
+
+    #[test]
+    fn test_usernet_tcp_syn_and_handshake() {
+        let engine = UserNetEngine::new(&[]);
+
+        let tcp_syn = TcpHeader {
+            src_port: 54321,
+            dst_port: 80,
+            seq_num: 500,
+            ack_num: 0,
+            data_offset: 20,
+            flags: 0x02, // SYN
+            window_size: 65535,
+            checksum: 0,
+            urgent_ptr: 0,
+        };
+
+        let mut tcp_bytes = Vec::new();
+        tcp_syn.write_to(&mut tcp_bytes);
+
+        let ip = Ipv4Header {
+            ihl: 5,
+            tos: 0,
+            total_length: 40,
+            id: 1,
+            flags_and_frag: 0,
+            ttl: 64,
+            protocol: IP_PROTO_TCP,
+            checksum: 0,
+            src_ip: DEFAULT_CONTAINER_IP,
+            dst_ip: Ipv4Addr::new(93, 184, 216, 34),
+        };
+
+        let eth = EthernetHeader {
+            dst_mac: VIRTUAL_GATEWAY_MAC,
+            src_mac: CONTAINER_MAC,
+            ethertype: ETHERTYPE_IPV4,
+        };
+
+        let mut frame = Vec::new();
+        eth.write_to(&mut frame);
+        ip.write_to(&mut frame);
+        frame.extend_from_slice(&tcp_bytes);
+
+        let reply = engine.handle_incoming_frame(&frame);
+        assert!(
+            reply.is_some(),
+            "UserNetEngine must handle outbound TCP SYN"
+        );
+        let reply_frame = reply.unwrap();
+
+        let (r_eth, r_payload) = EthernetHeader::parse(&reply_frame).unwrap();
+        assert_eq!(r_eth.dst_mac, CONTAINER_MAC);
+
+        let (r_ip, r_tcp_raw) = Ipv4Header::parse(r_payload).unwrap();
+        assert_eq!(r_ip.protocol, IP_PROTO_TCP);
+        let (r_tcp, _) = TcpHeader::parse(r_tcp_raw).unwrap();
+        assert_eq!(r_tcp.src_port, 80);
+        assert_eq!(r_tcp.dst_port, 54321);
+        assert_eq!(r_tcp.flags, 0x12); // SYN | ACK
+        assert_eq!(r_tcp.ack_num, 501); // ACK = SEQ + 1
     }
 
     #[test]

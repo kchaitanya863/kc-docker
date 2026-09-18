@@ -77,7 +77,10 @@ pub struct ContainerStore {
 
 impl ContainerStore {
     pub fn new() -> Self {
-        let home = boxr_home();
+        Self::with_home(boxr_home())
+    }
+
+    pub fn with_home(home: PathBuf) -> Self {
         Self {
             index_file: home.join("containers.json"),
         }
@@ -150,6 +153,25 @@ impl ContainerStore {
                 c.id == id_or_name || c.id.starts_with(id_or_name) || c.name == id_or_name
             }) {
                 c.status = status;
+                self.save_unlocked(&data)?;
+                Ok(())
+            } else {
+                Err(anyhow!("Container not found: {}", id_or_name))
+            }
+        })
+    }
+
+    pub fn update_health_status(
+        &self,
+        id_or_name: &str,
+        status: crate::health::HealthStatus,
+    ) -> Result<()> {
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+            let mut data = self.load_unlocked();
+            if let Some(c) = data.containers.iter_mut().find(|c| {
+                c.id == id_or_name || c.id.starts_with(id_or_name) || c.name == id_or_name
+            }) {
+                c.health_status = status;
                 self.save_unlocked(&data)?;
                 Ok(())
             } else {
@@ -294,6 +316,12 @@ mod tests {
             .unwrap();
         let updated = store.find("test-box").unwrap();
         assert_eq!(updated.status, ContainerStatus::Paused);
+
+        store
+            .update_health_status("aabbcc", crate::health::HealthStatus::Healthy)
+            .unwrap();
+        let updated = store.find("test-box").unwrap();
+        assert_eq!(updated.health_status, crate::health::HealthStatus::Healthy);
 
         store.rename("test-box", "renamed-box").unwrap();
         assert!(store.find("renamed-box").is_some());

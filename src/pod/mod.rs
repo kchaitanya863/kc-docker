@@ -28,7 +28,10 @@ pub struct PodStore {
 
 impl PodStore {
     pub fn new() -> Self {
-        let home = boxr_home();
+        Self::with_home(boxr_home())
+    }
+
+    pub fn with_home(home: PathBuf) -> Self {
         Self {
             index_file: home.join("pods.json"),
         }

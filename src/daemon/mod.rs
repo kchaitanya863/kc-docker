@@ -4,7 +4,7 @@ use crate::volume::VolumeStore;
 use anyhow::{Context, Result};
 use axum::{
     Json, Router,
-    extract::{Path, Query},
+    extract::{Path, Query, State},
     http::StatusCode,
     routing::{delete, get, post},
 };
@@ -67,6 +67,9 @@ pub struct InfoResponse {
 }
 
 pub fn create_router(state: DaemonState) -> Router {
+    unsafe {
+        std::env::set_var("BOXR_HOME", &state.home);
+    }
     Router::new()
         .route("/_ping", get(ping))
         .route("/version", get(version))
@@ -209,9 +212,9 @@ async fn version() -> Json<VersionResponse> {
     })
 }
 
-async fn info() -> Json<InfoResponse> {
-    let c_store = ContainerStore::new();
-    let i_store = ImageStore::new();
+async fn info(State(state): State<DaemonState>) -> Json<InfoResponse> {
+    let c_store = ContainerStore::with_home(state.home.clone());
+    let i_store = ImageStore::with_home(state.home.clone());
     let containers = c_store.list();
     let running = containers
         .iter()
@@ -235,8 +238,8 @@ async fn info() -> Json<InfoResponse> {
     })
 }
 
-async fn list_images() -> Json<serde_json::Value> {
-    let store = ImageStore::new();
+async fn list_images(State(state): State<DaemonState>) -> Json<serde_json::Value> {
+    let store = ImageStore::with_home(state.home.clone());
     let images = store.list();
     let val = serde_json::to_value(images).unwrap_or_default();
     Json(val)
@@ -262,8 +265,11 @@ struct ListContainersQuery {
     all: Option<serde_json::Value>,
 }
 
-async fn list_containers(Query(params): Query<ListContainersQuery>) -> Json<serde_json::Value> {
-    let store = ContainerStore::new();
+async fn list_containers(
+    State(state): State<DaemonState>,
+    Query(params): Query<ListContainersQuery>,
+) -> Json<serde_json::Value> {
+    let store = ContainerStore::with_home(state.home.clone());
     let mut containers = store.list();
     let show_all = match &params.all {
         Some(serde_json::Value::Bool(b)) => *b,
@@ -299,9 +305,13 @@ struct CreateContainerRequest {
 }
 
 async fn create_container(
+    State(state): State<DaemonState>,
     Query(query): Query<CreateContainerQuery>,
     Json(payload): Json<CreateContainerRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    unsafe {
+        std::env::set_var("BOXR_HOME", &state.home);
+    }
     let run_args = crate::cli::RunArgs {
         interactive: false,
         tty: false,
@@ -422,14 +432,20 @@ async fn create_container(
     }
 }
 
-async fn start_container(Path(id): Path<String>) -> StatusCode {
+async fn start_container(State(state): State<DaemonState>, Path(id): Path<String>) -> StatusCode {
+    unsafe {
+        std::env::set_var("BOXR_HOME", &state.home);
+    }
     match crate::start_container(&id).await {
         Ok(_) => StatusCode::NO_CONTENT,
         Err(_) => StatusCode::NOT_FOUND,
     }
 }
 
-async fn stop_container(Path(id): Path<String>) -> StatusCode {
+async fn stop_container(State(state): State<DaemonState>, Path(id): Path<String>) -> StatusCode {
+    unsafe {
+        std::env::set_var("BOXR_HOME", &state.home);
+    }
     match crate::stop_container(&id, None) {
         Ok(_) => StatusCode::NO_CONTENT,
         Err(_) => StatusCode::NOT_FOUND,
@@ -451,10 +467,11 @@ struct CreateExecRequest {
 }
 
 async fn create_container_exec(
+    State(state): State<DaemonState>,
     Path(id): Path<String>,
     Json(payload): Json<CreateExecRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let store = ContainerStore::new();
+    let store = ContainerStore::with_home(state.home.clone());
     let c = store.find(&id).ok_or(StatusCode::NOT_FOUND)?;
     let exec_id = hex::encode(crate::storage::container_store::rand_id());
 
@@ -477,8 +494,11 @@ async fn create_container_exec(
     })))
 }
 
-async fn start_exec_instance(Path(exec_id): Path<String>) -> Result<String, StatusCode> {
-    let store = ContainerStore::new();
+async fn start_exec_instance(
+    State(state): State<DaemonState>,
+    Path(exec_id): Path<String>,
+) -> Result<String, StatusCode> {
+    let store = ContainerStore::with_home(state.home.clone());
     for c in store.list() {
         let bundle = PathBuf::from(&c.bundle_path);
         let exec_file = bundle.join(format!("exec-{}.json", exec_id));
@@ -522,9 +542,10 @@ async fn start_exec_instance(Path(exec_id): Path<String>) -> Result<String, Stat
 }
 
 async fn inspect_exec_instance(
+    State(state): State<DaemonState>,
     Path(exec_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let store = ContainerStore::new();
+    let store = ContainerStore::with_home(state.home.clone());
     for c in store.list() {
         let bundle = PathBuf::from(&c.bundle_path);
         let exec_file = bundle.join(format!("exec-{}.json", exec_id));
@@ -535,9 +556,9 @@ async fn inspect_exec_instance(
                     .ok()
                     .and_then(|s| s.trim().parse::<i32>().ok())
                     .unwrap_or(0);
-                (false, code)
+                (false, serde_json::json!(code))
             } else {
-                (false, 0)
+                (true, serde_json::Value::Null)
             };
             return Ok(Json(serde_json::json!({
                 "ID": exec_id,
@@ -550,15 +571,16 @@ async fn inspect_exec_instance(
     Err(StatusCode::NOT_FOUND)
 }
 
-async fn remove_container(Path(id): Path<String>) -> StatusCode {
-    match crate::remove_container(&id, true) {
+async fn remove_container(State(state): State<DaemonState>, Path(id): Path<String>) -> StatusCode {
+    let store = ContainerStore::with_home(state.home.clone());
+    match store.remove(&id) {
         Ok(_) => StatusCode::NO_CONTENT,
         Err(_) => StatusCode::NOT_FOUND,
     }
 }
 
-async fn list_networks() -> Json<serde_json::Value> {
-    let store = NetworkStore::new();
+async fn list_networks(State(state): State<DaemonState>) -> Json<serde_json::Value> {
+    let store = NetworkStore::with_home(state.home.clone());
     Json(serde_json::to_value(store.list()).unwrap_or_default())
 }
 
@@ -569,17 +591,18 @@ struct CreateNetworkRequest {
 }
 
 async fn create_network(
+    State(state): State<DaemonState>,
     Json(payload): Json<CreateNetworkRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let store = NetworkStore::new();
+    let store = NetworkStore::with_home(state.home.clone());
     match store.create(&payload.name, None, None) {
         Ok(net) => Ok(Json(serde_json::to_value(net).unwrap())),
         Err(_) => Err(StatusCode::BAD_REQUEST),
     }
 }
 
-async fn list_volumes() -> Json<serde_json::Value> {
-    let store = VolumeStore::new();
+async fn list_volumes(State(state): State<DaemonState>) -> Json<serde_json::Value> {
+    let store = VolumeStore::with_home(state.home.clone());
     #[derive(Serialize)]
     struct VolResp {
         #[serde(rename = "Volumes")]
@@ -600,17 +623,21 @@ struct CreateVolumeRequest {
 }
 
 async fn create_volume(
+    State(state): State<DaemonState>,
     Json(payload): Json<CreateVolumeRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let store = VolumeStore::new();
+    let store = VolumeStore::with_home(state.home.clone());
     match store.create(payload.name.as_deref(), None) {
         Ok(vol) => Ok(Json(serde_json::to_value(vol).unwrap())),
         Err(_) => Err(StatusCode::BAD_REQUEST),
     }
 }
 
-async fn inspect_container(Path(id): Path<String>) -> Result<Json<serde_json::Value>, StatusCode> {
-    let store = ContainerStore::new();
+async fn inspect_container(
+    State(state): State<DaemonState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let store = ContainerStore::with_home(state.home.clone());
     let c = store.find(&id).ok_or(StatusCode::NOT_FOUND)?;
     Ok(Json(serde_json::json!({
         "Id": c.id,
@@ -635,8 +662,11 @@ async fn inspect_container(Path(id): Path<String>) -> Result<Json<serde_json::Va
     })))
 }
 
-async fn inspect_image(Path(name): Path<String>) -> Result<Json<serde_json::Value>, StatusCode> {
-    let store = ImageStore::new();
+async fn inspect_image(
+    State(state): State<DaemonState>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let store = ImageStore::with_home(state.home.clone());
     let img = store.find(&name).ok_or(StatusCode::NOT_FOUND)?;
     Ok(Json(serde_json::json!({
         "Id": format!("sha256:{}", img.id),
@@ -656,8 +686,8 @@ async fn restart_container(Path(id): Path<String>) -> StatusCode {
     }
 }
 
-async fn kill_container(Path(id): Path<String>) -> StatusCode {
-    let store = ContainerStore::new();
+async fn kill_container(State(state): State<DaemonState>, Path(id): Path<String>) -> StatusCode {
+    let store = ContainerStore::with_home(state.home.clone());
     if let Some(c) = store.find(&id) {
         let _ = crate::runtime::kill::ContainerKiller::kill(&c, None);
         StatusCode::NO_CONTENT
@@ -666,8 +696,11 @@ async fn kill_container(Path(id): Path<String>) -> StatusCode {
     }
 }
 
-async fn wait_container(Path(id): Path<String>) -> Result<Json<serde_json::Value>, StatusCode> {
-    let store = ContainerStore::new();
+async fn wait_container(
+    State(state): State<DaemonState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let store = ContainerStore::with_home(state.home.clone());
     let c = store.find(&id).ok_or(StatusCode::NOT_FOUND)?;
     let bundle_path = PathBuf::from(&c.bundle_path);
     let pid_file = bundle_path.join("vm.pid");
@@ -691,8 +724,11 @@ async fn wait_container(Path(id): Path<String>) -> Result<Json<serde_json::Value
     Ok(Json(serde_json::json!({ "StatusCode": exit_code })))
 }
 
-async fn get_container_logs(Path(id): Path<String>) -> Result<String, StatusCode> {
-    let store = ContainerStore::new();
+async fn get_container_logs(
+    State(state): State<DaemonState>,
+    Path(id): Path<String>,
+) -> Result<String, StatusCode> {
+    let store = ContainerStore::with_home(state.home.clone());
     let c = store.find(&id).ok_or(StatusCode::NOT_FOUND)?;
     let log_path = PathBuf::from(&c.bundle_path).join("logs.txt");
     if log_path.exists() {
@@ -702,8 +738,8 @@ async fn get_container_logs(Path(id): Path<String>) -> Result<String, StatusCode
     }
 }
 
-async fn prune_containers_endpoint() -> Json<serde_json::Value> {
-    let c_store = ContainerStore::new();
+async fn prune_containers_endpoint(State(state): State<DaemonState>) -> Json<serde_json::Value> {
+    let c_store = ContainerStore::with_home(state.home.clone());
     let containers = c_store.list();
     let mut deleted = Vec::new();
     for c in containers {
@@ -718,9 +754,9 @@ async fn prune_containers_endpoint() -> Json<serde_json::Value> {
     }))
 }
 
-async fn prune_images_endpoint() -> Json<serde_json::Value> {
-    let i_store = ImageStore::new();
-    let c_store = ContainerStore::new();
+async fn prune_images_endpoint(State(state): State<DaemonState>) -> Json<serde_json::Value> {
+    let i_store = ImageStore::with_home(state.home.clone());
+    let c_store = ContainerStore::with_home(state.home.clone());
     let images = i_store.list();
     let containers = c_store.list();
     let used_images: std::collections::HashSet<String> =
@@ -743,8 +779,8 @@ async fn prune_images_endpoint() -> Json<serde_json::Value> {
     }))
 }
 
-async fn prune_volumes_endpoint() -> Json<serde_json::Value> {
-    let store = VolumeStore::new();
+async fn prune_volumes_endpoint(State(state): State<DaemonState>) -> Json<serde_json::Value> {
+    let store = VolumeStore::with_home(state.home.clone());
     let pruned = store.prune().unwrap_or_default();
     Json(serde_json::json!({
         "VolumesDeleted": pruned,
@@ -752,8 +788,8 @@ async fn prune_volumes_endpoint() -> Json<serde_json::Value> {
     }))
 }
 
-async fn prune_networks_endpoint() -> Json<serde_json::Value> {
-    let store = NetworkStore::new();
+async fn prune_networks_endpoint(State(state): State<DaemonState>) -> Json<serde_json::Value> {
+    let store = NetworkStore::with_home(state.home.clone());
     let mut deleted = Vec::new();
     for net in store.list() {
         if net.name != NetworkStore::DEFAULT_NETWORK && net.containers.is_empty() {
@@ -766,32 +802,38 @@ async fn prune_networks_endpoint() -> Json<serde_json::Value> {
     }))
 }
 
-async fn inspect_network(Path(id): Path<String>) -> Result<Json<serde_json::Value>, StatusCode> {
-    let store = NetworkStore::new();
+async fn inspect_network(
+    State(state): State<DaemonState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let store = NetworkStore::with_home(state.home.clone());
     let net = store.find(&id).ok_or(StatusCode::NOT_FOUND)?;
     Ok(Json(
         serde_json::to_value(net).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
     ))
 }
 
-async fn remove_network(Path(id): Path<String>) -> StatusCode {
-    let store = NetworkStore::new();
+async fn remove_network(State(state): State<DaemonState>, Path(id): Path<String>) -> StatusCode {
+    let store = NetworkStore::with_home(state.home.clone());
     match store.remove(&id) {
         Ok(_) => StatusCode::NO_CONTENT,
         Err(_) => StatusCode::NOT_FOUND,
     }
 }
 
-async fn inspect_volume(Path(name): Path<String>) -> Result<Json<serde_json::Value>, StatusCode> {
-    let store = VolumeStore::new();
+async fn inspect_volume(
+    State(state): State<DaemonState>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let store = VolumeStore::with_home(state.home.clone());
     let vol = store.find(&name).ok_or(StatusCode::NOT_FOUND)?;
     Ok(Json(
         serde_json::to_value(vol).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
     ))
 }
 
-async fn remove_volume(Path(name): Path<String>) -> StatusCode {
-    let store = VolumeStore::new();
+async fn remove_volume(State(state): State<DaemonState>, Path(name): Path<String>) -> StatusCode {
+    let store = VolumeStore::with_home(state.home.clone());
     match store.remove(&name) {
         Ok(_) => StatusCode::NO_CONTENT,
         Err(_) => StatusCode::NOT_FOUND,
@@ -840,9 +882,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_daemon_prune_and_crud_endpoints() {
-        let state = DaemonState {
-            home: PathBuf::from("/tmp/test-boxr-daemon-prune"),
-        };
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().to_path_buf();
+        let base_home = boxr_home();
+        for dir_name in &["images", "layers", "vm", "bin"] {
+            let src = base_home.join(dir_name);
+            if src.exists() {
+                let dst = home.join(dir_name);
+                #[cfg(unix)]
+                let _ = std::os::unix::fs::symlink(&src, &dst);
+                #[cfg(windows)]
+                let _ = std::os::windows::fs::symlink_dir(&src, &dst);
+            }
+        }
+        let state = DaemonState { home: home.clone() };
         let app = create_router(state);
 
         // Test POST /containers/prune
@@ -943,7 +996,7 @@ mod tests {
         let exec_json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         let exec_id = exec_json.get("Id").unwrap().as_str().unwrap();
 
-        // Test GET /exec/{id}/json
+        // Test GET /exec/{id}/json while still running
         let response = app
             .clone()
             .oneshot(
@@ -956,6 +1009,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let inspect_val: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(inspect_val.get("Running").unwrap().as_bool(), Some(true));
+        assert!(inspect_val.get("ExitCode").unwrap().is_null());
 
         // Cleanup created container
         let _ = crate::remove_container(cont_id, true);

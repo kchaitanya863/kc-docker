@@ -870,13 +870,6 @@ fn run_container_child(rootfs: &Path, spec: &Spec, mounts: &[MountSpec]) -> Resu
         );
     }
 
-    if spec.process.user.gid != 0 {
-        let _ = nix::unistd::setgid(nix::unistd::Gid::from_raw(spec.process.user.gid));
-    }
-    if spec.process.user.uid != 0 {
-        let _ = nix::unistd::setuid(nix::unistd::Uid::from_raw(spec.process.user.uid));
-    }
-
     #[cfg(target_os = "linux")]
     if let Some(linux) = &spec.linux {
         if linux.seccomp.is_some() {
@@ -939,6 +932,13 @@ fn run_container_child(rootfs: &Path, spec: &Spec, mounts: &[MountSpec]) -> Resu
                 }
             }
         }
+    }
+
+    if spec.process.user.gid != 0 {
+        let _ = nix::unistd::setgid(nix::unistd::Gid::from_raw(spec.process.user.gid));
+    }
+    if spec.process.user.uid != 0 {
+        let _ = nix::unistd::setuid(nix::unistd::Uid::from_raw(spec.process.user.uid));
     }
 
     // Execute container binary

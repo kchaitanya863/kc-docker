@@ -295,6 +295,59 @@ pub fn unpack_archive_safely<R: Read>(
         }
 
         let dest = target_dir.join(&entry_path);
+
+        // If entry is a symlink, validate target doesn't escape target_dir
+        if entry.header().entry_type().is_symlink() {
+            if let Ok(Some(link_target)) = entry.link_name() {
+                let target_path = link_target.as_ref();
+                // Reject absolute symlink targets
+                if target_path.is_absolute() {
+                    return Err(anyhow!(
+                        "Tar-slip symlink escape rejected: absolute symlink target {:?}",
+                        target_path
+                    ));
+                }
+                // Resolve symlink target relative to entry parent
+                let parent_dir = if let Some(parent) = entry_path.parent() {
+                    target_dir.join(parent)
+                } else {
+                    target_dir.to_path_buf()
+                };
+                let mut resolved = parent_dir;
+                for comp in target_path.components() {
+                    match comp {
+                        std::path::Component::Normal(c) => resolved.push(c),
+                        std::path::Component::ParentDir => {
+                            if !resolved.pop() || !resolved.starts_with(&canon_target) {
+                                return Err(anyhow!(
+                                    "Tar-slip symlink escape rejected: target {:?} escapes {:?}",
+                                    target_path,
+                                    target_dir
+                                ));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        // Validate that no existing ancestor of dest is a symlink resolving outside target_dir
+        let mut curr = dest.as_path();
+        while let Some(parent) = curr.parent() {
+            if parent.exists() {
+                let canon_parent = parent.canonicalize()?;
+                if !canon_parent.starts_with(&canon_target) {
+                    return Err(anyhow!(
+                        "Tar-slip path traversal rejected: ancestor {:?} resolves outside target directory",
+                        parent
+                    ));
+                }
+                break;
+            }
+            curr = parent;
+        }
+
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -304,6 +357,7 @@ pub fn unpack_archive_safely<R: Read>(
         if dest.exists() {
             let canon_dest = dest.canonicalize()?;
             if !canon_dest.starts_with(&canon_target) {
+                let _ = fs::remove_file(&dest);
                 return Err(anyhow!(
                     "Archive entry escapes target directory: {:?}",
                     entry_path
@@ -417,6 +471,35 @@ mod tests {
             res.unwrap_err()
                 .to_string()
                 .contains("Tar-slip path traversal rejected in layer entry")
+        );
+    }
+
+    #[test]
+    fn test_unpack_archive_safely_symlink_escape_rejection() {
+        let temp = tempdir().unwrap();
+        let target_dir = temp.path().join("target");
+        fs::create_dir_all(&target_dir).unwrap();
+
+        // Create an archive containing a symlink pointing to an absolute path outside target
+        let mut builder = tar::Builder::new(Vec::new());
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(tar::EntryType::Symlink);
+        header.set_size(0);
+        header.set_mode(0o777);
+        let _ = header.set_link_name("/etc");
+        header.set_cksum();
+        builder
+            .append_data(&mut header, "evil_link", &[][..])
+            .unwrap();
+        let tar_bytes = builder.into_inner().unwrap();
+
+        let mut archive = tar::Archive::new(&tar_bytes[..]);
+        let res = unpack_archive_safely(&mut archive, &target_dir);
+        assert!(res.is_err());
+        assert!(
+            res.unwrap_err()
+                .to_string()
+                .contains("Tar-slip symlink escape rejected")
         );
     }
 }

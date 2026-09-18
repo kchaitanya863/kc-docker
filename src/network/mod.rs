@@ -101,7 +101,10 @@ impl NetworkStore {
     pub const DEFAULT_NETWORK: &'static str = "boxr0";
 
     pub fn new() -> Self {
-        let home = boxr_home();
+        Self::with_home(boxr_home())
+    }
+
+    pub fn with_home(home: PathBuf) -> Self {
         let store = Self {
             index_file: home.join("networks.json"),
         };

@@ -1165,6 +1165,7 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
         if !health_cfg.test.is_empty() {
             let mut health_res = health::HealthCheckResult::default();
             let _ = health::check_container_health(&bundle_dir, &health_cfg, &mut health_res);
+            let _ = container_store.update_health_status(&container_id, health_res.status);
         }
         return Ok(exit_code);
     }

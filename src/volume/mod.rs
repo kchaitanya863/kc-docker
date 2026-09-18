@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VolumeRecord {
@@ -36,7 +36,10 @@ pub struct MountSpec {
 
 impl VolumeStore {
     pub fn new() -> Self {
-        let home = boxr_home();
+        Self::with_home(boxr_home())
+    }
+
+    pub fn with_home(home: PathBuf) -> Self {
         let volumes_dir = home.join("volumes");
         let _ = fs::create_dir_all(&volumes_dir);
         Self {
@@ -171,16 +174,50 @@ impl VolumeStore {
     }
 
     pub fn prune(&self) -> Result<Vec<String>> {
-        crate::storage::index_lock::with_index_lock(&self.index_file, || {
-            let mut data = self.load_unlocked();
-            let pruned: Vec<String> = data.volumes.iter().map(|v| v.name.clone()).collect();
-            for name in &pruned {
-                let vol_dir = self.volumes_dir.join(name);
-                if vol_dir.exists() {
-                    let _ = fs::remove_dir_all(vol_dir);
+        let home = self
+            .index_file
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let c_store = crate::storage::ContainerStore::with_home(home);
+        let containers = c_store.list();
+        let mut used_volume_names = std::collections::HashSet::new();
+
+        for c in containers {
+            let bundle_path = PathBuf::from(&c.bundle_path);
+            let config_file = bundle_path.join("config.json");
+            if let Ok(content) = fs::read_to_string(&config_file) {
+                if let Ok(spec) = serde_json::from_str::<crate::oci::runtime::Spec>(&content) {
+                    for m in spec.mounts {
+                        let m_src = m.source;
+                        for v in self.list() {
+                            if m_src.contains(&format!("volumes/{}/_data", v.name))
+                                || m_src.contains(&format!("volumes/{}", v.name))
+                                || m_src.ends_with(&v.name)
+                            {
+                                used_volume_names.insert(v.name);
+                            }
+                        }
+                    }
                 }
             }
-            data.volumes.clear();
+        }
+
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+            let mut data = self.load_unlocked();
+            let mut pruned = Vec::new();
+            data.volumes.retain(|v| {
+                if !used_volume_names.contains(&v.name) {
+                    let vol_dir = self.volumes_dir.join(&v.name);
+                    if vol_dir.exists() {
+                        let _ = fs::remove_dir_all(vol_dir);
+                    }
+                    pruned.push(v.name.clone());
+                    false
+                } else {
+                    true
+                }
+            });
             self.save_unlocked(&data)?;
             Ok(pruned)
         })
@@ -374,5 +411,52 @@ mod tests {
                 .to_string()
                 .contains("Invalid volume name")
         );
+    }
+
+    #[test]
+    fn test_volume_prune_preserves_active_containers() {
+        let temp = tempdir().unwrap();
+        let home = temp.path().to_path_buf();
+        let store = VolumeStore::with_home(home.clone());
+        let c_store = crate::storage::ContainerStore::with_home(home.clone());
+
+        // Create two volumes: one used, one unused
+        store.create(Some("used-vol"), None).unwrap();
+        store.create(Some("unused-vol"), None).unwrap();
+
+        // Create a dummy container that mounts "used-vol"
+        let bundle_dir = home.join("containers").join("c1");
+        fs::create_dir_all(&bundle_dir).unwrap();
+        let spec_content = r#"
+        {
+            "ociVersion": "1.0.2",
+            "process": { "terminal": false, "user": { "uid": 0, "gid": 0 }, "args": ["sh"], "env": [], "cwd": "/" },
+            "root": { "path": "rootfs", "readonly": false },
+            "mounts": [
+                { "destination": "/data", "type": "bind", "source": "/test/volumes/used-vol/_data" }
+            ]
+        }"#;
+        fs::write(bundle_dir.join("config.json"), spec_content).unwrap();
+
+        let c_record = crate::storage::ContainerRecord {
+            id: "c1".to_string(),
+            name: "test-c1".to_string(),
+            image: "alpine".to_string(),
+            command: vec!["sh".to_string()],
+            created_at: chrono::Utc::now(),
+            status: crate::storage::ContainerStatus::Running,
+            bundle_path: bundle_dir.to_string_lossy().to_string(),
+            restart_policy: crate::health::RestartPolicy::No,
+            health_status: crate::health::HealthStatus::None,
+            restart_count: 0,
+            ports: Vec::new(),
+        };
+        c_store.add(c_record).unwrap();
+
+        // Prune: only unused-vol must be deleted, used-vol must be preserved!
+        let pruned = store.prune().unwrap();
+        assert_eq!(pruned, vec!["unused-vol".to_string()]);
+        assert!(store.find("used-vol").is_some());
+        assert!(store.find("unused-vol").is_none());
     }
 }

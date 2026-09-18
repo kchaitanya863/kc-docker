@@ -77,8 +77,10 @@ impl FilesystemDiff {
             let path = entry.path();
             let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
-            // Skip internal runtime mount points
-            if file_name == "proc" || file_name == "sys" || file_name == "dev" {
+            // Skip top-level internal runtime mount points (/proc, /sys, /dev)
+            if current_dir == root_dir
+                && (file_name == "proc" || file_name == "sys" || file_name == "dev")
+            {
                 continue;
             }
 
@@ -155,7 +157,9 @@ impl FilesystemDiff {
             let path = entry.path();
             let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
-            if file_name == "proc" || file_name == "sys" || file_name == "dev" {
+            if current_dir == base_root
+                && (file_name == "proc" || file_name == "sys" || file_name == "dev")
+            {
                 continue;
             }
 
@@ -202,6 +206,11 @@ mod tests {
         // Deleted file
         fs::write(base.join("old.txt"), b"old")?;
 
+        // Nested dev directory (should NOT be skipped like root /dev)
+        let nested_dev = container.join("app").join("dev");
+        fs::create_dir_all(&nested_dev)?;
+        fs::write(nested_dev.join("config.json"), b"nested dev content")?;
+
         let diffs = FilesystemDiff::compare(&base, &container).unwrap();
         assert!(
             diffs
@@ -217,6 +226,12 @@ mod tests {
             diffs
                 .iter()
                 .any(|d| d.change_type == DiffChangeType::Deleted && d.path == "/old.txt")
+        );
+        assert!(
+            diffs
+                .iter()
+                .any(|d| d.change_type == DiffChangeType::Added && d.path == "/app/dev/config.json"),
+            "Nested directories named dev must not be skipped"
         );
 
         Ok(())

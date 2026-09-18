@@ -4,6 +4,9 @@ use std::path::Path;
 
 /// Run `f` while holding an exclusive lock on the JSON index file.
 pub fn with_index_lock<T>(index_file: &Path, f: impl FnOnce() -> Result<T>) -> Result<T> {
+    if let Some(parent) = index_file.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
     let lock_path = index_file.with_extension("lock");
     let _lock_file = OpenOptions::new()
         .create(true)
