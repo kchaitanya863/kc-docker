@@ -678,6 +678,27 @@ test_step "cleanup windows container" \
     "$DOCKER_CMD rm $WIN_NAME"
 
 # ------------------------------------------------------------------------------
+# 24. Extended CLI Flags Parity (images --digests, inspect --type, stop -s)
+# ------------------------------------------------------------------------------
+echo -e "\n${BOLD}24. Extended CLI Flags Parity${NC}"
+EXT_NAME="ext-$(rand_id)"
+
+test_step "docker images --digests" \
+    "$DOCKER_CMD images --digests | grep 'DIGEST' >/dev/null"
+
+test_step "docker run -d --name <name> ubuntu sleep 30" \
+    "$DOCKER_CMD run -d --name $EXT_NAME ubuntu sleep 30"
+
+test_step "docker inspect --type container <name>" \
+    "$DOCKER_CMD inspect --type container $EXT_NAME | grep '$EXT_NAME' >/dev/null"
+
+test_step "docker stop -s SIGTERM <name>" \
+    "$DOCKER_CMD stop -s SIGTERM $EXT_NAME"
+
+test_step "cleanup extended container" \
+    "$DOCKER_CMD rm $EXT_NAME"
+
+# ------------------------------------------------------------------------------
 # Summary Report
 # ------------------------------------------------------------------------------
 END_TIME=$(date +%s)

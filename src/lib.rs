@@ -155,7 +155,7 @@ pub async fn run_cli(cli: Cli) -> Result<i32> {
         }
         Commands::Stop(args) => {
             for c in &args.containers {
-                stop_container(c)?;
+                stop_container(c, args.signal.as_deref())?;
             }
             Ok(0)
         }
@@ -174,7 +174,7 @@ pub async fn run_cli(cli: Cli) -> Result<i32> {
             Ok(code)
         }
         Commands::Inspect(args) => {
-            inspect_target(&args.target)?;
+            inspect_target(&args)?;
             Ok(0)
         }
         Commands::Build(args) => {
@@ -256,7 +256,7 @@ pub async fn run_cli(cli: Cli) -> Result<i32> {
             }
             cli::ContainerAction::Stop(stop_args) => {
                 for c in &stop_args.containers {
-                    stop_container(c)?;
+                    stop_container(c, stop_args.signal.as_deref())?;
                 }
                 Ok(0)
             }
@@ -303,7 +303,7 @@ pub async fn run_cli(cli: Cli) -> Result<i32> {
                 Ok(0)
             }
             cli::ContainerAction::Inspect(inspect_args) => {
-                inspect_target(&inspect_args.target)?;
+                inspect_target(&inspect_args)?;
                 Ok(0)
             }
             cli::ContainerAction::Top(top_args) => {
@@ -359,7 +359,7 @@ pub async fn run_cli(cli: Cli) -> Result<i32> {
                 Ok(0)
             }
             cli::ImageAction::Inspect(inspect_args) => {
-                inspect_target(&inspect_args.target)?;
+                inspect_target(&inspect_args)?;
                 Ok(0)
             }
             cli::ImageAction::History(history_args) => {
@@ -1066,11 +1066,17 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
     Ok(exit_code)
 }
 
-pub fn stop_container(container: &str) -> Result<()> {
+pub fn stop_container(container: &str, signal: Option<&str>) -> Result<()> {
     let store = ContainerStore::new();
     let c = store
         .find(container)
         .ok_or_else(|| anyhow!("Container '{}' not found", container))?;
+
+    let sig_num = if let Some(s) = signal {
+        runtime::kill::ContainerKiller::parse_signal(s).unwrap_or(libc::SIGTERM)
+    } else {
+        libc::SIGTERM
+    };
 
     #[cfg(unix)]
     {
@@ -1088,8 +1094,8 @@ pub fn stop_container(container: &str) -> Result<()> {
         }
         for pid in pids {
             unsafe {
-                libc::kill(pid, libc::SIGTERM);
-                let _ = libc::kill(-pid, libc::SIGTERM);
+                libc::kill(pid, sig_num);
+                let _ = libc::kill(-pid, sig_num);
             }
             // Wait up to 3.0 seconds (60 * 50ms) for graceful hypervisor/process stop
             for _ in 0..60 {
@@ -1291,115 +1297,128 @@ pub fn exec_container(args: &ExecArgs) -> Result<i32> {
     )
 }
 
-pub fn inspect_target(target: &str) -> Result<()> {
+pub fn inspect_target(args: &cli::InspectArgs) -> Result<()> {
+    let target = &args.target;
+    let only_type = args.obj_type.as_deref().unwrap_or("");
+
     let c_store = ContainerStore::new();
-    if let Some(c) = c_store.find(target) {
-        let is_running = matches!(c.status, ContainerStatus::Running);
-        let mut labels_map = HashMap::new();
-        let labels_file = PathBuf::from(&c.bundle_path).join("labels.json");
-        if labels_file.exists() {
-            if let Ok(content) = fs::read_to_string(&labels_file) {
-                if let Ok(labels_vec) = serde_json::from_str::<Vec<String>>(&content) {
-                    for l in labels_vec {
-                        if let Some((k, v)) = l.split_once('=') {
-                            labels_map.insert(k.to_string(), v.to_string());
-                        } else {
-                            labels_map.insert(l, "".to_string());
+    if only_type.is_empty() || only_type == "container" {
+        if let Some(c) = c_store.find(target) {
+            let is_running = matches!(c.status, ContainerStatus::Running);
+            let mut labels_map = HashMap::new();
+            let labels_file = PathBuf::from(&c.bundle_path).join("labels.json");
+            if labels_file.exists() {
+                if let Ok(content) = fs::read_to_string(&labels_file) {
+                    if let Ok(labels_vec) = serde_json::from_str::<Vec<String>>(&content) {
+                        for l in labels_vec {
+                            if let Some((k, v)) = l.split_once('=') {
+                                labels_map.insert(k.to_string(), v.to_string());
+                            } else {
+                                labels_map.insert(l, "".to_string());
+                            }
                         }
                     }
                 }
             }
-        }
-        let docker_compat_inspect = serde_json::json!([{
-            "Id": c.id,
-            "Created": c.created_at.to_rfc3339(),
-            "Path": c.command.first().cloned().unwrap_or_default(),
-            "Args": if c.command.len() > 1 { c.command[1..].to_vec() } else { Vec::new() },
-            "State": {
-                "Status": if is_running { "running" } else { "exited" },
-                "Running": is_running,
-                "Paused": matches!(c.status, ContainerStatus::Paused),
-                "Restarting": false,
-                "OOMKilled": false,
-                "Dead": false,
-                "Pid": 0,
-                "ExitCode": match c.status {
-                    ContainerStatus::Exited(code) => code,
-                    _ => 0,
+            let size_bytes = if args.size {
+                crate::system::dir_size(&PathBuf::from(&c.bundle_path))
+            } else {
+                0
+            };
+            let docker_compat_inspect = serde_json::json!([{
+                "Id": c.id,
+                "Created": c.created_at.to_rfc3339(),
+                "Path": c.command.first().cloned().unwrap_or_default(),
+                "Args": if c.command.len() > 1 { c.command[1..].to_vec() } else { Vec::new() },
+                "State": {
+                    "Status": if is_running { "running" } else { "exited" },
+                    "Running": is_running,
+                    "Paused": matches!(c.status, ContainerStatus::Paused),
+                    "Restarting": false,
+                    "OOMKilled": false,
+                    "Dead": false,
+                    "Pid": 0,
+                    "ExitCode": match c.status {
+                        ContainerStatus::Exited(code) => code,
+                        _ => 0,
+                    },
+                    "Error": "",
+                    "StartedAt": c.created_at.to_rfc3339(),
+                    "FinishedAt": c.created_at.to_rfc3339(),
                 },
-                "Error": "",
-                "StartedAt": c.created_at.to_rfc3339(),
-                "FinishedAt": c.created_at.to_rfc3339(),
-            },
-            "Image": c.image,
-            "Name": format!("/{}", c.name),
-            "RestartCount": c.restart_count,
-            "Config": {
                 "Image": c.image,
-                "Labels": labels_map,
-            },
-            "HostConfig": {
-                "PortBindings": {},
-                "RestartPolicy": {
-                    "Name": "no",
-                    "MaximumRetryCount": 0
-                }
-            },
-            "NetworkSettings": {
-                "Bridge": "",
-                "SandboxID": "",
-                "HairpinMode": false,
-                "LinkLocalIPv6Address": "",
-                "LinkLocalIPv6PrefixLen": 0,
-                "Ports": {},
-                "SandboxKey": "",
-                "SecondaryIPAddresses": null,
-                "SecondaryIPv6Addresses": null,
-                "EndpointID": "",
-                "Gateway": "172.17.0.1",
-                "GlobalIPv6Address": "",
-                "GlobalIPv6PrefixLen": 0,
-                "IPAddress": "172.17.0.2",
-                "IPPrefixLen": 16,
-                "IPv6Gateway": "",
-                "MacAddress": "02:42:ac:11:00:02",
-                "Networks": {
-                    "bridge": {
-                        "IPAMConfig": null,
-                        "Links": null,
-                        "Aliases": null,
-                        "NetworkID": "boxr00000000",
-                        "EndpointID": "",
-                        "Gateway": "172.17.0.1",
-                        "IPAddress": "172.17.0.2",
-                        "IPPrefixLen": 16,
-                        "IPv6Gateway": "",
-                        "GlobalIPv6Address": "",
-                        "GlobalIPv6PrefixLen": 0,
-                        "MacAddress": "02:42:ac:11:00:02",
-                        "DriverOpts": null
+                "Name": format!("/{}", c.name),
+                "RestartCount": c.restart_count,
+                "SizeRw": size_bytes,
+                "Config": {
+                    "Image": c.image,
+                    "Labels": labels_map,
+                },
+                "HostConfig": {
+                    "PortBindings": {},
+                    "RestartPolicy": {
+                        "Name": "no",
+                        "MaximumRetryCount": 0
                     }
-                }
-            },
-            "boxr_raw": c
-        }]);
-        println!("{}", serde_json::to_string_pretty(&docker_compat_inspect)?);
-        return Ok(());
+                },
+                "NetworkSettings": {
+                    "Bridge": "",
+                    "SandboxID": "",
+                    "HairpinMode": false,
+                    "LinkLocalIPv6Address": "",
+                    "LinkLocalIPv6PrefixLen": 0,
+                    "Ports": {},
+                    "SandboxKey": "",
+                    "SecondaryIPAddresses": null,
+                    "SecondaryIPv6Addresses": null,
+                    "EndpointID": "",
+                    "Gateway": "172.17.0.1",
+                    "GlobalIPv6Address": "",
+                    "GlobalIPv6PrefixLen": 0,
+                    "IPAddress": "172.17.0.2",
+                    "IPPrefixLen": 16,
+                    "IPv6Gateway": "",
+                    "MacAddress": "02:42:ac:11:00:02",
+                    "Networks": {
+                        "bridge": {
+                            "IPAMConfig": null,
+                            "Links": null,
+                            "Aliases": null,
+                            "NetworkID": "boxr00000000",
+                            "EndpointID": "",
+                            "Gateway": "172.17.0.1",
+                            "IPAddress": "172.17.0.2",
+                            "IPPrefixLen": 16,
+                            "IPv6Gateway": "",
+                            "GlobalIPv6Address": "",
+                            "GlobalIPv6PrefixLen": 0,
+                            "MacAddress": "02:42:ac:11:00:02",
+                            "DriverOpts": null
+                        }
+                    }
+                },
+                "boxr_raw": c
+            }]);
+            println!("{}", serde_json::to_string_pretty(&docker_compat_inspect)?);
+            return Ok(());
+        }
     }
 
     let i_store = ImageStore::new();
-    if let Some(i) = i_store.find(target) {
-        let docker_compat_image = serde_json::json!([{
-            "Id": format!("sha256:{}", i.id),
-            "RepoTags": [format!("{}:{}", i.reference, i.tag)],
-            "Size": i.size_bytes,
-            "Created": i.created_at.to_rfc3339(),
-            "Architecture": i.config.architecture,
-            "Os": i.config.os,
-            "boxr_raw": i
-        }]);
-        println!("{}", serde_json::to_string_pretty(&docker_compat_image)?);
-        return Ok(());
+    if only_type.is_empty() || only_type == "image" {
+        if let Some(i) = i_store.find(target) {
+            let docker_compat_image = serde_json::json!([{
+                "Id": format!("sha256:{}", i.id),
+                "RepoTags": [format!("{}:{}", i.reference, i.tag)],
+                "Size": i.size_bytes,
+                "Created": i.created_at.to_rfc3339(),
+                "Architecture": i.config.architecture,
+                "Os": i.config.os,
+                "boxr_raw": i
+            }]);
+            println!("{}", serde_json::to_string_pretty(&docker_compat_image)?);
+            return Ok(());
+        }
     }
 
     Err(anyhow!("No such container or image: '{}'", target))
@@ -1622,10 +1641,28 @@ pub fn update_container(args: &cli::UpdateArgs) -> Result<()> {
             limits.cpu_period_us = Some(period);
         }
     }
+    if let (Some(q), Some(p)) = (args.cpu_quota, args.cpu_period) {
+        limits.cpu_quota_us = Some(q);
+        limits.cpu_period_us = Some(p);
+    }
+    if let Some(shares) = args.cpu_shares {
+        limits.cpu_shares = Some(shares);
+    }
+    if let Some(swap_str) = &args.memory_swap {
+        limits.memory_swap_max_bytes = cgroups::ResourceLimits::parse_memory(swap_str).ok();
+    }
     limits.pids_max = args.pids_limit;
 
     if let Ok(cgroup_mgr) = cgroups::CgroupV2Manager::new(&cont.id) {
         cgroup_mgr.apply_limits(&limits)?;
+    }
+
+    if let Some(r_policy_str) = &args.restart {
+        if let Ok(policy) = health::parse_restart_policy(r_policy_str) {
+            let mut updated_cont = cont.clone();
+            updated_cont.restart_policy = policy;
+            let _ = c_store.add(updated_cont);
+        }
     }
 
     let mut attrs = HashMap::new();
@@ -1966,15 +2003,47 @@ pub fn list_images(args: cli::ImagesArgs) -> Result<()> {
 
     if args.quiet {
         for img in &filtered {
-            println!("{}", &img.id[..12.min(img.id.len())]);
+            if args.no_trunc {
+                println!("{}", img.id);
+            } else {
+                println!("{}", &img.id[..12.min(img.id.len())]);
+            }
         }
         return Ok(());
     }
 
-    println!(
-        "{:<28} {:<12} {:<16} {:<24} {:<10}",
-        "REPOSITORY", "TAG", "IMAGE ID", "CREATED", "SIZE"
-    );
+    if let Some(fmt) = &args.format {
+        if fmt == "json" {
+            println!("{}", serde_json::to_string_pretty(&filtered)?);
+            return Ok(());
+        }
+        for img in &filtered {
+            let mut line = fmt.clone();
+            let id_str = if args.no_trunc {
+                img.id.clone()
+            } else {
+                img.id[..12.min(img.id.len())].to_string()
+            };
+            line = line.replace("{{.ID}}", &id_str);
+            line = line.replace("{{.Repository}}", &img.reference);
+            line = line.replace("{{.Tag}}", &img.tag);
+            line = line.replace("{{.Digest}}", &img.manifest_digest);
+            println!("{}", line);
+        }
+        return Ok(());
+    }
+
+    if args.digests {
+        println!(
+            "{:<24} {:<12} {:<32} {:<16} {:<24} {:<10}",
+            "REPOSITORY", "TAG", "DIGEST", "IMAGE ID", "CREATED", "SIZE"
+        );
+    } else {
+        println!(
+            "{:<28} {:<12} {:<16} {:<24} {:<10}",
+            "REPOSITORY", "TAG", "IMAGE ID", "CREATED", "SIZE"
+        );
+    }
 
     for img in filtered {
         let size_mb = (img.size_bytes as f64) / (1024.0 * 1024.0);
@@ -1984,14 +2053,32 @@ pub fn list_images(args: cli::ImagesArgs) -> Result<()> {
             format!("{:.2} MB", size_mb)
         };
 
-        println!(
-            "{:<28} {:<12} {:<16} {:<24} {:<10}",
-            img.reference,
-            img.tag,
-            img.id,
-            img.created_at.format("%Y-%m-%d %H:%M:%S"),
-            size_str
-        );
+        let id_str = if args.no_trunc {
+            img.id.clone()
+        } else {
+            img.id[..12.min(img.id.len())].to_string()
+        };
+
+        if args.digests {
+            println!(
+                "{:<24} {:<12} {:<32} {:<16} {:<24} {:<10}",
+                img.reference,
+                img.tag,
+                &img.manifest_digest[..32.min(img.manifest_digest.len())],
+                id_str,
+                img.created_at.format("%Y-%m-%d %H:%M:%S"),
+                size_str
+            );
+        } else {
+            println!(
+                "{:<28} {:<12} {:<16} {:<24} {:<10}",
+                img.reference,
+                img.tag,
+                id_str,
+                img.created_at.format("%Y-%m-%d %H:%M:%S"),
+                size_str
+            );
+        }
     }
 
     Ok(())
@@ -2161,7 +2248,7 @@ pub fn remove_container(container: &str, force: bool) -> Result<()> {
     }
 
     if matches!(c.status, ContainerStatus::Running) {
-        let _ = stop_container(container);
+        let _ = stop_container(container, None);
     }
 
     let removed = store.remove(container)?;
@@ -2546,7 +2633,7 @@ pub async fn create_only_container(args: RunArgs) -> Result<String> {
 }
 
 pub async fn restart_container(args: &cli::RestartArgs) -> Result<()> {
-    let _ = stop_container(&args.container);
+    let _ = stop_container(&args.container, None);
     std::thread::sleep(std::time::Duration::from_millis(300));
     start_container(&args.container).await?;
     println!("{}", args.container);
@@ -2874,7 +2961,7 @@ pub fn handle_pod(args: PodSubcommands) -> Result<()> {
                 .find(&pod)
                 .ok_or_else(|| anyhow!("Pod '{}' not found", pod))?;
             for cid in &p.containers {
-                let _ = stop_container(cid);
+                let _ = stop_container(cid, None);
             }
             println!("{}", pod);
         }
@@ -3019,17 +3106,32 @@ pub fn handle_context(args: cli::ContextSubcommands) -> Result<()> {
             name,
             description,
             docker,
+            from,
         } => {
             if data.contexts.contains_key(&name) {
                 return Err(anyhow!("context \"{}\" already exists", name));
             }
+            let (target_desc, target_ep) = if let Some(from_ctx_name) = from {
+                if let Some(src) = data.contexts.get(&from_ctx_name) {
+                    (
+                        description.unwrap_or_else(|| src.description.clone()),
+                        docker.unwrap_or_else(|| src.docker_endpoint.clone()),
+                    )
+                } else {
+                    return Err(anyhow!("source context \"{}\" not found", from_ctx_name));
+                }
+            } else {
+                (
+                    description.unwrap_or_default(),
+                    docker.unwrap_or_else(|| "unix:///var/run/docker.sock".to_string()),
+                )
+            };
             data.contexts.insert(
                 name.clone(),
                 ContextConfig {
                     name: name.clone(),
-                    description: description.unwrap_or_default(),
-                    docker_endpoint: docker
-                        .unwrap_or_else(|| "unix:///var/run/docker.sock".to_string()),
+                    description: target_desc,
+                    docker_endpoint: target_ep,
                 },
             );
             let content = serde_json::to_string_pretty(&data)?;

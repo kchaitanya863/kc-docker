@@ -583,6 +583,10 @@ pub struct StopArgs {
     #[arg(short = 't', long = "time")]
     pub time: Option<i32>,
 
+    /// Signal to send to the container
+    #[arg(short = 's', long = "signal")]
+    pub signal: Option<String>,
+
     #[arg(required = true)]
     pub containers: Vec<String>,
 }
@@ -677,6 +681,10 @@ pub struct InspectArgs {
     /// Display total file sizes if the type is container
     #[arg(short = 's', long = "size")]
     pub size: bool,
+
+    /// Return JSON for specified type (container|image)
+    #[arg(long = "type")]
+    pub obj_type: Option<String>,
 
     pub target: String,
 }
@@ -1010,6 +1018,18 @@ pub struct ImagesArgs {
     #[arg(short = 'a', long = "all")]
     pub all: bool,
 
+    /// Show digests
+    #[arg(long = "digests")]
+    pub digests: bool,
+
+    /// Don't truncate output
+    #[arg(long = "no-trunc")]
+    pub no_trunc: bool,
+
+    /// Format output using a custom template (e.g. json, table)
+    #[arg(long = "format")]
+    pub format: Option<String>,
+
     /// Filter output based on conditions provided
     #[arg(short = 'f', long = "filter")]
     pub filter: Vec<String>,
@@ -1025,6 +1045,10 @@ pub struct RmArgs {
     #[arg(short = 'v', long = "volumes")]
     pub volumes: bool,
 
+    /// Remove the specified link
+    #[arg(short = 'l', long = "link")]
+    pub link: bool,
+
     /// Container IDs or names to remove
     #[arg(required = true)]
     pub containers: Vec<String>,
@@ -1035,6 +1059,14 @@ pub struct RmiArgs {
     /// Force removal of the image
     #[arg(short = 'f', long = "force")]
     pub force: bool,
+
+    /// Do not delete untagged parents
+    #[arg(long = "no-prune")]
+    pub no_prune: bool,
+
+    /// Remove only the given platform variant
+    #[arg(long = "platform")]
+    pub platform: Option<String>,
 
     /// Image references or IDs to remove
     #[arg(required = true)]
@@ -1121,6 +1153,9 @@ pub enum ContextAction {
         description: Option<String>,
         #[arg(long = "docker")]
         docker: Option<String>,
+        /// Create context from a named context
+        #[arg(long = "from")]
+        from: Option<String>,
     },
     /// Remove one or more contexts
     Rm { name: String },
@@ -1225,13 +1260,41 @@ pub struct UpdateArgs {
     #[arg(short = 'm', long = "memory")]
     pub memory: Option<String>,
 
+    /// Memory soft limit
+    #[arg(long = "memory-reservation")]
+    pub memory_reservation: Option<String>,
+
+    /// Swap limit equal to memory plus swap
+    #[arg(long = "memory-swap")]
+    pub memory_swap: Option<String>,
+
     /// CPU limit
     #[arg(long = "cpus")]
     pub cpus: Option<String>,
 
+    /// CPU shares (relative weight)
+    #[arg(short = 'c', long = "cpu-shares")]
+    pub cpu_shares: Option<u64>,
+
+    /// Limit CPU CFS (Completely Fair Scheduler) period
+    #[arg(long = "cpu-period")]
+    pub cpu_period: Option<u64>,
+
+    /// Limit CPU CFS (Completely Fair Scheduler) quota
+    #[arg(long = "cpu-quota")]
+    pub cpu_quota: Option<i64>,
+
+    /// CPUs in which to allow execution (0-3, 0,1)
+    #[arg(long = "cpuset-cpus")]
+    pub cpuset_cpus: Option<String>,
+
     /// Maximum number of PIDs
     #[arg(long = "pids-limit")]
     pub pids_limit: Option<i64>,
+
+    /// Restart policy to apply when a container exits
+    #[arg(long = "restart")]
+    pub restart: Option<String>,
 
     /// Container to update
     pub container: String,

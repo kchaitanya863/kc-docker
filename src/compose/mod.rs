@@ -383,7 +383,7 @@ impl ComposeProject {
         for c in store.list() {
             if c.name.starts_with(&prefix) || custom_names.contains(&c.name) {
                 println!("Stopping container {}", c.name);
-                let _ = crate::stop_container(&c.id);
+                let _ = crate::stop_container(&c.id, None);
                 println!("Removing container {}", c.name);
                 let _ = crate::remove_container(&c.id, true);
             }

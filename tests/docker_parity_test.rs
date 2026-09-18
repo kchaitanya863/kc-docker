@@ -1172,3 +1172,65 @@ fn test_docker_parity_windows_flags() {
     let _ = boxr_cmd(&bin).args(["rm", &name]).output();
 }
 
+/// Docker Parity Test: Stop with -s/--signal and Inspect with --type
+#[test]
+fn test_docker_parity_stop_signal_and_inspect_type() {
+    let bin = boxr_bin();
+    if !bin.exists() {
+        return;
+    }
+
+    let name = format!("dockertest-sig-{}", unique_id());
+
+    // 1. Run container
+    let out = boxr_cmd(&bin)
+        .args(["run", "-d", "--name", &name, "alpine", "sleep", "60"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    // 2. Inspect with --type container
+    let out = boxr_cmd(&bin)
+        .args(["inspect", "--type", "container", &name])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains(&name));
+
+    // 3. Stop container with -s SIGTERM
+    let out = boxr_cmd(&bin)
+        .args(["stop", "-s", "SIGTERM", &name])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    // 4. Cleanup
+    let _ = boxr_cmd(&bin).args(["rm", &name]).output();
+}
+
+/// Docker Parity Test: Images --digests, --format, and --no-trunc
+#[test]
+fn test_docker_parity_images_digests_and_format() {
+    let bin = boxr_bin();
+    if !bin.exists() {
+        return;
+    }
+
+    // 1. images --digests
+    let out = boxr_cmd(&bin).args(["images", "--digests"]).output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("DIGEST"));
+
+    // 2. images --format json
+    let out = boxr_cmd(&bin).args(["images", "--format", "json"]).output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("["));
+
+    // 3. images --no-trunc
+    let out = boxr_cmd(&bin).args(["images", "--no-trunc"]).output().unwrap();
+    assert!(out.status.success());
+}
+

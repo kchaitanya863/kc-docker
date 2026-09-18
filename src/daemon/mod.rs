@@ -410,7 +410,7 @@ async fn start_container(Path(id): Path<String>) -> StatusCode {
 }
 
 async fn stop_container(Path(id): Path<String>) -> StatusCode {
-    match crate::stop_container(&id) {
+    match crate::stop_container(&id, None) {
         Ok(_) => StatusCode::NO_CONTENT,
         Err(_) => StatusCode::NOT_FOUND,
     }
@@ -630,7 +630,7 @@ async fn inspect_image(Path(name): Path<String>) -> Result<Json<serde_json::Valu
 }
 
 async fn restart_container(Path(id): Path<String>) -> StatusCode {
-    let _ = crate::stop_container(&id);
+    let _ = crate::stop_container(&id, None);
     match crate::start_container(&id).await {
         Ok(_) => StatusCode::NO_CONTENT,
         Err(_) => StatusCode::NOT_FOUND,

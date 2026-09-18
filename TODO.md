@@ -165,3 +165,12 @@ Tracked tasks to reach 100% production readiness and drop-in parity with Docker 
   - Added `--cpu-count`, `--cpu-percent`, `--io-maxbandwidth`, and `--io-maxiops` to `docker run/create`.
   - Added Windows OCI Runtime Specification structs (`WindowsCPUResources`, `WindowsStorageResources`, `WindowsResources`, `Windows`) in `config.json`.
   - Verified with integration test `test_docker_parity_windows_flags` and section 23 of `run_parity_tests.sh`.
+
+- [x] **33. Extended Operational Flags & Inspection Parity (`extended-cli-parity`)**
+  - Added `-s / --signal` to `docker stop`.
+  - Added `--type` filtering to `docker inspect`.
+  - Added `--digests`, `--format`, and `--no-trunc` to `docker images`.
+  - Added `-l / --link` to `docker rm` and `--no-prune`, `--platform` to `docker rmi`.
+  - Added `--from` to `docker context create`.
+  - Expanded `docker update` with `--cpu-period`, `--cpu-quota`, `--cpu-shares`, `--cpuset-cpus`, `--memory-reservation`, `--memory-swap`, and `--restart`.
+  - Verified with integration tests `test_docker_parity_stop_signal_and_inspect_type`, `test_docker_parity_images_digests_and_format`, and section 24 of `run_parity_tests.sh`.
