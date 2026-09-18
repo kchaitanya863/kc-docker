@@ -6,6 +6,7 @@ computes parity percentages across commands, and displays a formatted audit repo
 
 import sys
 import os
+import re
 import json
 import subprocess
 
@@ -115,8 +116,9 @@ DAILY_DRIVER_FLAGS = {
 
 def clean_flag_name(name_str):
     """Parse raw flag string into list of clean flags e.g. '-d, --detach' -> ['-d', '--detach']"""
+    clean_str = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", name_str)
     flags = []
-    for part in name_str.split(","):
+    for part in clean_str.split(","):
         p = part.strip()
         if p.startswith("-"):
             flags.append(p.split()[0])

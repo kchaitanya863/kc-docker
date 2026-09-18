@@ -395,6 +395,134 @@ pub struct RunArgs {
     #[arg(long = "ulimit")]
     pub ulimits: Vec<String>,
 
+    /// IPC mode to use (host|private|shareable)
+    #[arg(long = "ipc")]
+    pub ipc: Option<String>,
+
+    /// PID namespace to use (host|container:<id>)
+    #[arg(long = "pid")]
+    pub pid: Option<String>,
+
+    /// UTS namespace to use (host|private)
+    #[arg(long = "uts")]
+    pub uts: Option<String>,
+
+    /// User namespace to use (host|private)
+    #[arg(long = "userns")]
+    pub userns: Option<String>,
+
+    /// Cgroup namespace to use (host|private)
+    #[arg(long = "cgroupns")]
+    pub cgroupns: Option<String>,
+
+    /// Optional parent cgroup for the container
+    #[arg(long = "cgroup-parent")]
+    pub cgroup_parent: Option<String>,
+
+    /// Container isolation technology (default|process|hyperv)
+    #[arg(long = "isolation")]
+    pub isolation: Option<String>,
+
+    /// Publish all exposed ports to random ports
+    #[arg(short = 'P', long = "publish-all")]
+    pub publish_all: bool,
+
+    /// IPv4 address (e.g., 172.30.100.104)
+    #[arg(long = "ip")]
+    pub ip: Option<String>,
+
+    /// IPv6 address (e.g., 2001:db8::33)
+    #[arg(long = "ip6")]
+    pub ip6: Option<String>,
+
+    /// Container MAC address (e.g., 92:d0:c6:0a:29:33)
+    #[arg(long = "mac-address")]
+    pub mac_address: Option<String>,
+
+    /// Add link to another container
+    #[arg(long = "link")]
+    pub link: Vec<String>,
+
+    /// Add network-scoped alias for the container
+    #[arg(long = "network-alias", alias = "net-alias")]
+    pub network_alias: Vec<String>,
+
+    /// Attach a filesystem mount to the container
+    #[arg(long = "mount")]
+    pub mount: Vec<String>,
+
+    /// Time between running the check (ms|s|m|h)
+    #[arg(long = "health-interval")]
+    pub health_interval: Option<String>,
+
+    /// Maximum time to allow one check to run (ms|s|m|h)
+    #[arg(long = "health-timeout")]
+    pub health_timeout: Option<String>,
+
+    /// Consecutive failures needed to report unhealthy
+    #[arg(long = "health-retries")]
+    pub health_retries: Option<u32>,
+
+    /// Start period for the container to initialize (ms|s|m|h)
+    #[arg(long = "health-start-period")]
+    pub health_start_period: Option<String>,
+
+    /// Time between running the check during the start period (ms|s|m|h)
+    #[arg(long = "health-start-interval")]
+    pub health_start_interval: Option<String>,
+
+    /// Disable any container-specified HEALTHCHECK
+    #[arg(long = "no-healthcheck")]
+    pub no_healthcheck: bool,
+
+    /// Attach to STDIN, STDOUT or STDERR
+    #[arg(short = 'a', long = "attach")]
+    pub attach: Vec<String>,
+
+    /// Pull image before running (always|missing|never)
+    #[arg(long = "pull")]
+    pub pull: Option<String>,
+
+    /// Suppress the pull output
+    #[arg(short = 'q', long = "quiet")]
+    pub quiet: bool,
+
+    /// Logging driver for the container
+    #[arg(long = "log-driver")]
+    pub log_driver: Option<String>,
+
+    /// Log driver options
+    #[arg(long = "log-opt")]
+    pub log_opt: Vec<String>,
+
+    /// Disable OOM Killer
+    #[arg(long = "oom-kill-disable")]
+    pub oom_kill_disable: bool,
+
+    /// Tune host's OOM preferences (-1000 to 1000)
+    #[arg(long = "oom-score-adj")]
+    pub oom_score_adj: Option<i32>,
+
+    /// Add additional groups to join
+    #[arg(long = "group-add")]
+    pub group_add: Vec<String>,
+
+    /// Read in a line delimited file of labels
+    #[arg(long = "label-file")]
+    pub label_file: Option<String>,
+
+    /// Set umask for the container
+    #[arg(long = "umask")]
+    pub umask: Option<String>,
+
+    /// Container NIS domain name
+    #[arg(long = "domainname")]
+    pub domainname: Option<String>,
+
+    /// Override the key sequence for detaching a container
+    #[arg(long = "detach-keys")]
+    pub detach_keys: Option<String>,
+
     pub image: String,
 
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -571,6 +699,42 @@ pub struct BuildArgs {
     /// Always remove intermediate containers
     #[arg(long = "rm", default_value_t = true)]
     pub rm: bool,
+
+    /// Images to consider as cache sources
+    #[arg(long = "cache-from")]
+    pub cache_from: Vec<String>,
+
+    /// Compress the build context using gzip
+    #[arg(long = "compress")]
+    pub compress: bool,
+
+    /// Always remove intermediate containers
+    #[arg(long = "force-rm")]
+    pub force_rm: bool,
+
+    /// Write the image ID to the file
+    #[arg(long = "iidfile")]
+    pub iidfile: Option<String>,
+
+    /// Set metadata for an image
+    #[arg(long = "label")]
+    pub labels: Vec<String>,
+
+    /// Set platform if server is multi-platform capable
+    #[arg(long = "platform")]
+    pub platform: Option<String>,
+
+    /// Always attempt to pull a newer version of the image
+    #[arg(long = "pull")]
+    pub pull: bool,
+
+    /// Suppress the build output and print image ID on success
+    #[arg(short = 'q', long = "quiet")]
+    pub quiet: bool,
+
+    /// Ulimit options
+    #[arg(long = "ulimit")]
+    pub ulimits: Vec<String>,
 
     #[arg(default_value = ".")]
     pub path: String,

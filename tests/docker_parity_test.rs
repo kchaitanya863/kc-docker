@@ -1088,3 +1088,48 @@ fn test_docker_parity_advanced_run_options() {
     assert!(stdout.contains("adv-run-ok"));
 }
 
+/// Docker Parity Test: Standard Mount & Namespace Flags (--mount, --ipc, --uts, -P)
+#[test]
+fn test_docker_parity_mount_and_namespace_flags() {
+    let bin = boxr_bin();
+    if !bin.exists() {
+        return;
+    }
+
+    let name = format!("dockertest-mount-{}", unique_id());
+    let temp = tempdir().unwrap();
+    let host_dir = temp.path().join("host-data");
+    fs::create_dir_all(&host_dir).unwrap();
+    fs::write(host_dir.join("test.txt"), "mount_ok").unwrap();
+
+    let canonical_host = host_dir.canonicalize().unwrap();
+    let mount_spec = format!("type=bind,source={},target=/data", canonical_host.display());
+
+    let out = boxr_cmd(&bin)
+        .args([
+            "run",
+            "--rm",
+            "--name",
+            &name,
+            "--mount",
+            &mount_spec,
+            "--ipc",
+            "private",
+            "--uts",
+            "private",
+            "-P",
+            "alpine",
+            "cat",
+            "/data/test.txt",
+        ])
+        .output()
+        .unwrap();
+    if !out.status.success() {
+        eprintln!("STDOUT: {}", String::from_utf8_lossy(&out.stdout));
+        eprintln!("STDERR: {}", String::from_utf8_lossy(&out.stderr));
+    }
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("mount_ok"));
+}
+

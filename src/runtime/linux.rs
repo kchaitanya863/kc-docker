@@ -606,6 +606,22 @@ fn run_container_child(rootfs: &Path, spec: &Spec, mounts: &[MountSpec]) -> Resu
         let _ = mount(Some(&m.source), &target, None::<&str>, flags, None::<&str>);
     }
 
+    for m in &spec.mounts {
+        if m.mount_type == "bind" {
+            let target = rootfs.join(m.destination.trim_start_matches('/'));
+            let _ = fs::create_dir_all(&target);
+            let mut flags = MsFlags::MS_BIND | MsFlags::MS_REC;
+            if m.options.as_ref().map(|opts| opts.iter().any(|o| o == "ro")).unwrap_or(false) {
+                flags |= MsFlags::MS_RDONLY;
+            }
+            let _ = mount(Some(Path::new(&m.source)), &target, None::<&str>, flags, None::<&str>);
+        } else if m.mount_type == "tmpfs" && m.destination != "/dev" && m.destination != "/proc" && m.destination != "/sys" {
+            let target = rootfs.join(m.destination.trim_start_matches('/'));
+            let _ = fs::create_dir_all(&target);
+            let _ = mount(Some("tmpfs"), &target, Some("tmpfs"), MsFlags::MS_NOSUID | MsFlags::MS_NODEV, None::<&str>);
+        }
+    }
+
     // Ensure DNS configuration exists in container rootfs
     let resolv_path = rootfs.join("etc/resolv.conf");
     let _ = fs::create_dir_all(rootfs.join("etc"));

@@ -232,7 +232,36 @@ pub fn execute_bundle(
         .push_str("mkdir -p /tmp /data 2>/dev/null; chmod 1777 /tmp /data 2>/dev/null || true\n");
 
     // Volume mounts
-    for (idx, m) in mounts.iter().enumerate() {
+    let mut all_mounts = mounts.to_vec();
+    for m in &spec.mounts {
+        if m.mount_type == "bind" {
+            let src = PathBuf::from(&m.source);
+            if src.exists() {
+                all_mounts.push(MountSpec {
+                    source: src,
+                    destination: m.destination.clone(),
+                    read_only: m
+                        .options
+                        .as_ref()
+                        .map(|opts| opts.iter().any(|o| o == "ro"))
+                        .unwrap_or(false),
+                    is_volume: false,
+                });
+            }
+        } else if m.mount_type == "tmpfs" && m.destination != "/dev" && m.destination != "/proc" && m.destination != "/sys" {
+            let opts_str = m
+                .options
+                .as_ref()
+                .map(|o| o.join(","))
+                .unwrap_or_else(|| "rw".to_string());
+            run_script.push_str(&format!(
+                "mkdir -p \"{}\" 2>/dev/null; mount -t tmpfs -o {} tmpfs \"{}\" 2>/dev/null || true\n",
+                m.destination, opts_str, m.destination
+            ));
+        }
+    }
+
+    for (idx, m) in all_mounts.iter().enumerate() {
         let tag = format!("m{}", idx);
         cmd.arg("--mount")
             .arg(format!("{}={}", tag, m.source.display()));

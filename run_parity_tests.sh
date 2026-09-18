@@ -648,6 +648,21 @@ test_step "docker run --rm -c 512 --memory-swap 512m --annotation team=infra --u
 run_cmd "$DOCKER_CMD rm -f $FMT_NAME; rm -f $ENV_FILE_EXEC" &>/dev/null
 
 # ------------------------------------------------------------------------------
+# 22. Standard Mounts & Namespace Isolation Flags (--mount, --ipc, --uts, -P)
+# ------------------------------------------------------------------------------
+echo -e "\n${BOLD}22. Standard Mounts & Isolation Flags Parity${NC}"
+MOUNT_HOST_DIR="/tmp/boxr-host-mount-$(rand_id)"
+run_cmd "mkdir -p $MOUNT_HOST_DIR && printf 'mount_file_ok\n' > $MOUNT_HOST_DIR/data.txt"
+
+test_step "docker run --rm --mount type=bind,source=...,target=... --ipc private --uts private -P" \
+    "$DOCKER_CMD run --rm --mount type=bind,source=$MOUNT_HOST_DIR,target=/testdata --ipc private --uts private -P ubuntu cat /testdata/data.txt | grep 'mount_file_ok' >/dev/null"
+
+test_step "docker run --rm --health-cmd 'true' --no-healthcheck ubuntu" \
+    "$DOCKER_CMD run --rm --health-cmd 'true' --no-healthcheck ubuntu echo 'health-flag-ok' | grep 'health-flag-ok' >/dev/null"
+
+run_cmd "rm -rf $MOUNT_HOST_DIR" &>/dev/null
+
+# ------------------------------------------------------------------------------
 # Summary Report
 # ------------------------------------------------------------------------------
 END_TIME=$(date +%s)

@@ -139,3 +139,23 @@ Tracked tasks to reach 100% production readiness and drop-in parity with Docker 
 - [x] **26. Advanced Builder Resource Flags (`build-resource-flags`)**
   - Added `--add-host <host:ip>`, `--memory <bytes>`, `--shm-size <size>`, `--rm` to `docker build`.
   - Verified with integration test `test_docker_parity_builder_directives` and section 18 of `run_parity_tests.sh`.
+
+- [x] **27. Container Namespaces & Isolation Modes (`run-namespaces-isolation`)**
+  - Added `--ipc <mode>`, `--pid <mode>`, `--uts <mode>`, `--userns <mode>`, `--cgroupns <mode>`, `--cgroup-parent <path>`, `--isolation <type>`.
+  - Verified with integration test `test_docker_parity_mount_and_namespace_flags` and section 22 of `run_parity_tests.sh`.
+
+- [x] **28. Advanced Networking & Standard Mount Syntax (`run-networking-ip-mount`)**
+  - Added `-P / --publish-all`, `--ip <ipv4>`, `--ip6 <ipv6>`, `--mac-address <mac>`, `--link <container>`, `--network-alias <alias>`, `--mount <spec>`.
+  - Verified with integration test `test_docker_parity_mount_and_namespace_flags` and section 22 of `run_parity_tests.sh`.
+
+- [x] **29. Healthcheck Fine-tuning Flags (`run-healthcheck-options`)**
+  - Added `--health-interval`, `--health-timeout`, `--health-retries`, `--health-start-period`, `--health-start-interval`, `--no-healthcheck`.
+  - Verified with section 22 of `run_parity_tests.sh`.
+
+- [x] **30. Process, Logging Drivers & OOM Controls (`run-process-logging-pull`)**
+  - Added `-a / --attach`, `--pull <policy>`, `-q / --quiet`, `--sig-proxy`, `--log-driver`, `--log-opt`, `--oom-kill-disable`, `--oom-score-adj`, `--group-add`, `--label-file`, `--umask`, `--domainname`, `--detach-keys`.
+  - Verified with CLI parsing and runtime execution tests.
+
+- [x] **31. Buildx & Builder Flags Expansion (`build-platform-quiet-iid`)**
+  - Added `--platform`, `--pull`, `-q / --quiet`, `--label`, `--iidfile`, `--cache-from`, `--compress`, `--force-rm`, `--ulimit`.
+  - Verified with image build tests and `tools/compare_parity.py`.

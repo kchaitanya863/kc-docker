@@ -861,6 +861,37 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
             options: Some(opts.split(',').map(|s| s.to_string()).collect()),
         });
     }
+    for m in &args.mount {
+        let mut mount_type = "bind".to_string();
+        let mut source = String::new();
+        let mut target = String::new();
+        let mut ro = false;
+        for kv in m.split(',') {
+            if let Some((k, v)) = kv.split_once('=') {
+                match k.trim() {
+                    "type" => mount_type = v.trim().to_string(),
+                    "source" | "src" => source = v.trim().to_string(),
+                    "target" | "destination" | "dst" => target = v.trim().to_string(),
+                    "readonly" | "ro" => ro = true,
+                    _ => {}
+                }
+            } else if kv.trim() == "readonly" || kv.trim() == "ro" {
+                ro = true;
+            }
+        }
+        if !target.is_empty() {
+            let mut opts = vec!["rbind".to_string()];
+            if ro {
+                opts.push("ro".to_string());
+            }
+            spec.mounts.push(oci::runtime::Mount {
+                destination: target,
+                mount_type,
+                source,
+                options: Some(opts),
+            });
+        }
+    }
     if args.security_opt.iter().any(|s| s == "seccomp=unconfined") {
         if let Some(l) = &mut spec.linux {
             l.seccomp = None;
@@ -873,8 +904,10 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
 
     let restart_policy = health::parse_restart_policy(&args.restart)?;
     let mut health_cfg = health::HealthConfig::default();
-    if let Some(cmd) = &args.health_cmd {
-        health_cfg.test = cmd.split_whitespace().map(|s| s.to_string()).collect();
+    if !args.no_healthcheck {
+        if let Some(cmd) = &args.health_cmd {
+            health_cfg.test = cmd.split_whitespace().map(|s| s.to_string()).collect();
+        }
     }
     let initial_health = if health_cfg.test.is_empty() {
         health::HealthStatus::None
@@ -984,7 +1017,7 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
     ));
 
     // Health check evaluation if configured
-    if !health_cfg.test.is_empty() {
+    if args.detach && !health_cfg.test.is_empty() {
         let mut health_res = health::HealthCheckResult::default();
         let _ = health::check_container_health(&bundle_dir, &health_cfg, &mut health_res);
     }
@@ -2365,6 +2398,37 @@ pub async fn create_only_container(args: RunArgs) -> Result<String> {
             options: Some(opts.split(',').map(|s| s.to_string()).collect()),
         });
     }
+    for m in &args.mount {
+        let mut mount_type = "bind".to_string();
+        let mut source = String::new();
+        let mut target = String::new();
+        let mut ro = false;
+        for kv in m.split(',') {
+            if let Some((k, v)) = kv.split_once('=') {
+                match k.trim() {
+                    "type" => mount_type = v.trim().to_string(),
+                    "source" | "src" => source = v.trim().to_string(),
+                    "target" | "destination" | "dst" => target = v.trim().to_string(),
+                    "readonly" | "ro" => ro = true,
+                    _ => {}
+                }
+            } else if kv.trim() == "readonly" || kv.trim() == "ro" {
+                ro = true;
+            }
+        }
+        if !target.is_empty() {
+            let mut opts = vec!["rbind".to_string()];
+            if ro {
+                opts.push("ro".to_string());
+            }
+            spec.mounts.push(oci::runtime::Mount {
+                destination: target,
+                mount_type,
+                source,
+                options: Some(opts),
+            });
+        }
+    }
     if args.security_opt.iter().any(|s| s == "seccomp=unconfined") {
         if let Some(l) = &mut spec.linux {
             l.seccomp = None;
@@ -2377,8 +2441,10 @@ pub async fn create_only_container(args: RunArgs) -> Result<String> {
 
     let restart_policy = health::parse_restart_policy(&args.restart)?;
     let mut health_cfg = health::HealthConfig::default();
-    if let Some(cmd) = &args.health_cmd {
-        health_cfg.test = cmd.split_whitespace().map(|s| s.to_string()).collect();
+    if !args.no_healthcheck {
+        if let Some(cmd) = &args.health_cmd {
+            health_cfg.test = cmd.split_whitespace().map(|s| s.to_string()).collect();
+        }
     }
     let initial_health = if health_cfg.test.is_empty() {
         health::HealthStatus::None
