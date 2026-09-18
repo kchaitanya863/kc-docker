@@ -80,6 +80,38 @@ pub struct Linux {
     pub seccomp: Option<serde_json::Value>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WindowsCPUResources {
+    #[serde(rename = "count", skip_serializing_if = "Option::is_none")]
+    pub count: Option<u64>,
+    #[serde(rename = "percent", skip_serializing_if = "Option::is_none")]
+    pub percent: Option<u16>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WindowsStorageResources {
+    #[serde(rename = "bps", skip_serializing_if = "Option::is_none")]
+    pub bps: Option<u64>,
+    #[serde(rename = "iops", skip_serializing_if = "Option::is_none")]
+    pub iops: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WindowsResources {
+    #[serde(rename = "cpu", skip_serializing_if = "Option::is_none")]
+    pub cpu: Option<WindowsCPUResources>,
+    #[serde(rename = "storage", skip_serializing_if = "Option::is_none")]
+    pub storage: Option<WindowsStorageResources>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Windows {
+    #[serde(rename = "resources", skip_serializing_if = "Option::is_none")]
+    pub resources: Option<WindowsResources>,
+    #[serde(rename = "hyperv", skip_serializing_if = "Option::is_none")]
+    pub hyperv: Option<serde_json::Value>,
+}
+
 /// The top-level OCI Runtime Specification bundle configuration (config.json).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Spec {
@@ -94,6 +126,8 @@ pub struct Spec {
     pub annotations: Option<HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub linux: Option<Linux>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub windows: Option<Windows>,
 }
 
 impl Spec {
@@ -260,6 +294,7 @@ impl Spec {
             mounts,
             annotations: None,
             linux: Some(linux),
+            windows: None,
         }
     }
 

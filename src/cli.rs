@@ -423,6 +423,22 @@ pub struct RunArgs {
     #[arg(long = "isolation")]
     pub isolation: Option<String>,
 
+    /// CPU count (Windows only)
+    #[arg(long = "cpu-count")]
+    pub cpu_count: Option<i64>,
+
+    /// CPU percent (Windows only)
+    #[arg(long = "cpu-percent")]
+    pub cpu_percent: Option<i64>,
+
+    /// Maximum IO bandwidth limit for the system drive (Windows only)
+    #[arg(long = "io-maxbandwidth")]
+    pub io_maxbandwidth: Option<String>,
+
+    /// Maximum IOps limit for the system drive (Windows only)
+    #[arg(long = "io-maxiops")]
+    pub io_maxiops: Option<u64>,
+
     /// Publish all exposed ports to random ports
     #[arg(short = 'P', long = "publish-all")]
     pub publish_all: bool,
@@ -735,6 +751,10 @@ pub struct BuildArgs {
     /// Ulimit options
     #[arg(long = "ulimit")]
     pub ulimits: Vec<String>,
+
+    /// Container isolation technology
+    #[arg(long = "isolation")]
+    pub isolation: Option<String>,
 
     #[arg(default_value = ".")]
     pub path: String,

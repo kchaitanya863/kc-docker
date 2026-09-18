@@ -159,3 +159,9 @@ Tracked tasks to reach 100% production readiness and drop-in parity with Docker 
 - [x] **31. Buildx & Builder Flags Expansion (`build-platform-quiet-iid`)**
   - Added `--platform`, `--pull`, `-q / --quiet`, `--label`, `--iidfile`, `--cache-from`, `--compress`, `--force-rm`, `--ulimit`.
   - Verified with image build tests and `tools/compare_parity.py`.
+
+- [x] **32. Windows Containers OCI Specification & CLI Flags (`windows-options-parity`)**
+  - Added `--isolation` to `docker run`, `docker create`, and `docker build`.
+  - Added `--cpu-count`, `--cpu-percent`, `--io-maxbandwidth`, and `--io-maxiops` to `docker run/create`.
+  - Added Windows OCI Runtime Specification structs (`WindowsCPUResources`, `WindowsStorageResources`, `WindowsResources`, `Windows`) in `config.json`.
+  - Verified with integration test `test_docker_parity_windows_flags` and section 23 of `run_parity_tests.sh`.

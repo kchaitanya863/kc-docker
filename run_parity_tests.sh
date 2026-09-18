@@ -663,6 +663,21 @@ test_step "docker run --rm --health-cmd 'true' --no-healthcheck ubuntu" \
 run_cmd "rm -rf $MOUNT_HOST_DIR" &>/dev/null
 
 # ------------------------------------------------------------------------------
+# 23. Windows Options Parity (--isolation, --cpu-count, --cpu-percent, --io-maxbandwidth)
+# ------------------------------------------------------------------------------
+echo -e "\n${BOLD}23. Windows Options Parity${NC}"
+WIN_NAME="win-$(rand_id)"
+
+test_step "docker create --isolation default --cpu-count 4 --cpu-percent 80 --io-maxbandwidth 100m --io-maxiops 5000" \
+    "$DOCKER_CMD create --name $WIN_NAME --isolation default --cpu-count 4 --cpu-percent 80 --io-maxbandwidth 100m --io-maxiops 5000 ubuntu"
+
+test_step "verify windows container created and inspectable" \
+    "$DOCKER_CMD inspect $WIN_NAME >/dev/null"
+
+test_step "cleanup windows container" \
+    "$DOCKER_CMD rm $WIN_NAME"
+
+# ------------------------------------------------------------------------------
 # Summary Report
 # ------------------------------------------------------------------------------
 END_TIME=$(date +%s)

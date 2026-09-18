@@ -900,6 +900,36 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
     if args.security_opt.iter().any(|s| s == "no-new-privileges" || s == "no-new-privileges:true") {
         spec.process.no_new_privileges = Some(true);
     }
+    if args.cpu_count.is_some()
+        || args.cpu_percent.is_some()
+        || args.io_maxbandwidth.is_some()
+        || args.io_maxiops.is_some()
+    {
+        let mut win_cpu = oci::runtime::WindowsCPUResources::default();
+        if let Some(count) = args.cpu_count {
+            win_cpu.count = Some(count as u64);
+        }
+        if let Some(percent) = args.cpu_percent {
+            win_cpu.percent = Some(percent as u16);
+        }
+
+        let mut win_storage = oci::runtime::WindowsStorageResources::default();
+        if let Some(bw_str) = &args.io_maxbandwidth {
+            if let Ok(bw) = cgroups::ResourceLimits::parse_memory(bw_str) {
+                win_storage.bps = Some(bw as u64);
+            }
+        }
+        if let Some(iops) = args.io_maxiops {
+            win_storage.iops = Some(iops);
+        }
+
+        let mut win_spec = oci::runtime::Windows::default();
+        win_spec.resources = Some(oci::runtime::WindowsResources {
+            cpu: Some(win_cpu),
+            storage: Some(win_storage),
+        });
+        spec.windows = Some(win_spec);
+    }
     spec.save_to_bundle(&bundle_dir)?;
 
     let restart_policy = health::parse_restart_policy(&args.restart)?;
@@ -2436,6 +2466,36 @@ pub async fn create_only_container(args: RunArgs) -> Result<String> {
     }
     if args.security_opt.iter().any(|s| s == "no-new-privileges" || s == "no-new-privileges:true") {
         spec.process.no_new_privileges = Some(true);
+    }
+    if args.cpu_count.is_some()
+        || args.cpu_percent.is_some()
+        || args.io_maxbandwidth.is_some()
+        || args.io_maxiops.is_some()
+    {
+        let mut win_cpu = oci::runtime::WindowsCPUResources::default();
+        if let Some(count) = args.cpu_count {
+            win_cpu.count = Some(count as u64);
+        }
+        if let Some(percent) = args.cpu_percent {
+            win_cpu.percent = Some(percent as u16);
+        }
+
+        let mut win_storage = oci::runtime::WindowsStorageResources::default();
+        if let Some(bw_str) = &args.io_maxbandwidth {
+            if let Ok(bw) = cgroups::ResourceLimits::parse_memory(bw_str) {
+                win_storage.bps = Some(bw as u64);
+            }
+        }
+        if let Some(iops) = args.io_maxiops {
+            win_storage.iops = Some(iops);
+        }
+
+        let mut win_spec = oci::runtime::Windows::default();
+        win_spec.resources = Some(oci::runtime::WindowsResources {
+            cpu: Some(win_cpu),
+            storage: Some(win_storage),
+        });
+        spec.windows = Some(win_spec);
     }
     spec.save_to_bundle(&bundle_dir)?;
 

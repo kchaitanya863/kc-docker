@@ -1133,3 +1133,42 @@ fn test_docker_parity_mount_and_namespace_flags() {
     assert!(stdout.contains("mount_ok"));
 }
 
+/// Docker Parity Test: Windows Flags (--isolation, --cpu-count, --cpu-percent, --io-maxbandwidth, --io-maxiops)
+#[test]
+fn test_docker_parity_windows_flags() {
+    let bin = boxr_bin();
+    if !bin.exists() {
+        return;
+    }
+
+    let name = format!("dockertest-win-{}", unique_id());
+
+    let out = boxr_cmd(&bin)
+        .args([
+            "create",
+            "--name",
+            &name,
+            "--isolation",
+            "default",
+            "--cpu-count",
+            "4",
+            "--cpu-percent",
+            "80",
+            "--io-maxbandwidth",
+            "100m",
+            "--io-maxiops",
+            "5000",
+            "alpine",
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    // Inspect container to verify creation
+    let out = boxr_cmd(&bin).args(["inspect", &name]).output().unwrap();
+    assert!(out.status.success());
+
+    // Cleanup
+    let _ = boxr_cmd(&bin).args(["rm", &name]).output();
+}
+
