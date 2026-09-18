@@ -193,18 +193,16 @@ pub fn unpack_layer(layer_archive_path: &Path, target_dir: &Path) -> Result<()> 
             }
         }
 
-        // If a directory was created with restrictive permissions (common in Windows layer archives),
-        // ensure owner write/execute is maintained so subsequent files can be extracted into it.
+        // Restore original permissions from tar header (including sticky bit and world-write permissions)
         #[cfg(unix)]
-        if _is_dir && dest.exists() {
+        if dest.exists() {
             use std::os::unix::fs::PermissionsExt;
-            if let Ok(meta) = fs::metadata(&dest) {
-                let mut perms = meta.permissions();
-                let mode = perms.mode();
-                if mode & 0o700 != 0o700 {
-                    perms.set_mode(mode | 0o755);
-                    let _ = fs::set_permissions(&dest, perms);
+            if let Ok(header_mode) = entry.header().mode() {
+                let mut target_mode = header_mode;
+                if _is_dir && (target_mode & 0o700 != 0o700) {
+                    target_mode |= 0o755;
                 }
+                let _ = fs::set_permissions(&dest, fs::Permissions::from_mode(target_mode));
             }
         }
     }

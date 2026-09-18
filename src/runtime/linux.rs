@@ -595,12 +595,39 @@ fn run_container_child(rootfs: &Path, spec: &Spec, mounts: &[MountSpec]) -> Resu
         MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC,
         Some("newinstance,ptmxmode=0666,mode=0620"),
     );
+    let shm_path = dev_path.join("shm");
+    let _ = fs::create_dir_all(&shm_path);
+    let _ = mount(
+        Some("tmpfs"),
+        &shm_path,
+        Some("tmpfs"),
+        MsFlags::MS_NOSUID | MsFlags::MS_NODEV | MsFlags::MS_NOEXEC,
+        Some("mode=1777,size=67108864"),
+    );
     let ptmx_path = dev_path.join("ptmx");
     let _ = std::os::unix::fs::symlink("pts/ptmx", &ptmx_path);
     let _ = std::os::unix::fs::symlink("/proc/self/fd", dev_path.join("fd"));
     let _ = std::os::unix::fs::symlink("/proc/self/fd/0", dev_path.join("stdin"));
     let _ = std::os::unix::fs::symlink("/proc/self/fd/1", dev_path.join("stdout"));
     let _ = std::os::unix::fs::symlink("/proc/self/fd/2", dev_path.join("stderr"));
+
+    // Ensure /tmp and /var/tmp exist and have standard sticky world-writable (1777) permissions
+    // so unprivileged users (e.g. _apt, nobody) can write temporary files (e.g. gpgv verification)
+    let tmp_path = rootfs.join("tmp");
+    let _ = fs::create_dir_all(&tmp_path);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&tmp_path, fs::Permissions::from_mode(0o1777));
+    }
+
+    let var_tmp_path = rootfs.join("var/tmp");
+    let _ = fs::create_dir_all(&var_tmp_path);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&var_tmp_path, fs::Permissions::from_mode(0o1777));
+    }
 
     // Mount external volumes/binds
     for m in mounts {
