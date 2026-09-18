@@ -466,10 +466,9 @@ pub fn exec_in_bundle(
     }
     match cmd.status() {
         Ok(status) => Ok(status.code().unwrap_or(0)),
-        Err(e) => {
+        Err(_) => {
             // Fallback: enter namespaces via /proc/<pid>/ns using setns if nsenter command is not installed
             use nix::sched::{CloneFlags, setns};
-            use std::os::unix::io::AsRawFd;
 
             let ns_types = [
                 ("user", CloneFlags::CLONE_NEWUSER),
@@ -481,8 +480,8 @@ pub fn exec_in_bundle(
             ];
             for (name, flag) in ns_types {
                 let ns_path = format!("/proc/{}/ns/{}", pid, name);
-                if let Ok(f) = File::open(&ns_path) {
-                    let _ = setns(f.as_raw_fd(), flag);
+                if let Ok(f) = std::fs::File::open(&ns_path) {
+                    let _ = setns(&f, flag);
                 }
             }
 
