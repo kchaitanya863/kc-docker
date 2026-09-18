@@ -316,7 +316,7 @@ pub fn execute_bundle(
     let final_cmd = if spec.process.user.uid != 0 {
         let u = spec.process.user.uid;
         format!(
-            "UNAME=$(id -un {u} 2>/dev/null); if [ -z \"$UNAME\" ]; then adduser -D -u {u} -s /bin/sh \"u{u}\" 2>/dev/null || true; UNAME=\"u{u}\"; fi; su -s /bin/sh \"$UNAME\" -c '{cmd}'",
+            "UNAME=$(grep -E ':[0-9]*:{u}:' /etc/passwd 2>/dev/null | cut -d: -f1 | head -n 1); if [ -z \"$UNAME\" ]; then UNAME=$(grep -E ':{u}:' /etc/passwd 2>/dev/null | cut -d: -f1 | head -n 1); fi; if [ -z \"$UNAME\" ]; then adduser -D -u {u} -s /bin/sh \"u{u}\" 2>/dev/null || useradd -u {u} -s /bin/sh \"u{u}\" 2>/dev/null || true; UNAME=\"u{u}\"; fi; sed -i \"s|:${{u}}:.*$|:${{u}}:${{u}}::/:/bin/sh|\" /etc/passwd 2>/dev/null || true; su -s /bin/sh \"$UNAME\" -c '{cmd}'",
             u = u,
             cmd = cmd_line.replace('\'', "'\\''")
         )
