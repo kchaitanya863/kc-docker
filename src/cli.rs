@@ -72,6 +72,12 @@ pub enum Commands {
     /// Define and run multi-container applications with Boxr Compose
     Compose(ComposeArgs),
 
+    /// Manage containers
+    Container(ContainerSubcommands),
+
+    /// Manage images
+    Image(ImageSubcommands),
+
     /// Manage volumes
     Volume(VolumeSubcommands),
 
@@ -82,7 +88,7 @@ pub enum Commands {
     Daemon(DaemonArgs),
 
     /// List local images
-    Images,
+    Images(ImagesArgs),
 
     /// List containers
     Ps(PsArgs),
@@ -237,8 +243,20 @@ pub struct RunArgs {
     #[arg(short = 'w', long = "workdir")]
     pub workdir: Option<String>,
 
-    #[arg(long = "memory")]
+    #[arg(short = 'm', long = "memory")]
     pub memory: Option<String>,
+
+    /// Set metadata on container (format: <key>=<value>)
+    #[arg(short = 'l', long = "label")]
+    pub labels: Vec<String>,
+
+    /// Set custom DNS servers
+    #[arg(long = "dns")]
+    pub dns: Vec<String>,
+
+    /// Write the container ID to the file
+    #[arg(long = "cidfile")]
+    pub cidfile: Option<String>,
 
     #[arg(long = "cpus")]
     pub cpus: Option<String>,
@@ -378,10 +396,26 @@ pub struct LogsArgs {
     pub container: String,
 }
 
-#[derive(Args, Debug)]
+#[derive(Args, Debug, Clone)]
 pub struct ExecArgs {
     #[arg(short = 'i', long = "interactive")]
     pub interactive: bool,
+
+    /// Allocate a pseudo-TTY
+    #[arg(short = 't', long = "tty")]
+    pub tty: bool,
+
+    /// Detached mode: run command in the background
+    #[arg(short = 'd', long = "detach")]
+    pub detach: bool,
+
+    /// Working directory inside the container
+    #[arg(short = 'w', long = "workdir")]
+    pub workdir: Option<String>,
+
+    /// Username or UID (format: <name|uid>)
+    #[arg(short = 'u', long = "user")]
+    pub user: Option<String>,
 
     #[arg(short = 'e', long = "env")]
     pub env: Vec<String>,
@@ -397,7 +431,7 @@ pub struct InspectArgs {
     pub target: String,
 }
 
-#[derive(Args, Debug)]
+#[derive(Args, Debug, Clone)]
 pub struct BuildArgs {
     #[arg(short = 't', long = "tag")]
     pub tag: Option<String>,
@@ -407,6 +441,14 @@ pub struct BuildArgs {
 
     #[arg(long = "no-cache")]
     pub no_cache: bool,
+
+    /// Set build-time variables
+    #[arg(long = "build-arg")]
+    pub build_args: Vec<String>,
+
+    /// Set the target build stage to build
+    #[arg(long = "target")]
+    pub target: Option<String>,
 
     #[arg(default_value = ".")]
     pub path: String,
@@ -462,6 +504,77 @@ pub struct ComposeLogsArgs {
 }
 
 #[derive(Args, Debug)]
+pub struct ContainerSubcommands {
+    #[command(subcommand)]
+    pub command: ContainerAction,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ContainerAction {
+    Run(RunArgs),
+    Create(RunArgs),
+    Start(StartArgs),
+    Stop(StopArgs),
+    Restart(RestartArgs),
+    Kill(KillArgs),
+    Rm(RmArgs),
+    Pause(PauseArgs),
+    Unpause(UnpauseArgs),
+    Wait(WaitArgs),
+    Exec(ExecArgs),
+    Attach(AttachArgs),
+    Logs(LogsArgs),
+    #[command(alias = "ps")]
+    Ls(PsArgs),
+    Inspect(InspectArgs),
+    Top(TopArgs),
+    Port(PortArgs),
+    Cp(CpArgs),
+    Diff(DiffArgs),
+    Prune(ContainerPruneArgs),
+    Update(UpdateArgs),
+}
+
+#[derive(Args, Debug, Clone, Default)]
+pub struct ContainerPruneArgs {
+    #[arg(short = 'f', long = "force")]
+    pub force: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct ImageSubcommands {
+    #[command(subcommand)]
+    pub command: ImageAction,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ImageAction {
+    #[command(alias = "list")]
+    Ls(ImagesArgs),
+    Build(BuildArgs),
+    Pull(PullArgs),
+    Push(PushArgs),
+    Tag(TagArgs),
+    #[command(alias = "rmi")]
+    Rm(RmiArgs),
+    Inspect(InspectArgs),
+    History(HistoryArgs),
+    Save(SaveArgs),
+    Load(LoadArgs),
+    Import(ImportArgs),
+    Prune(ImagePruneArgs),
+}
+
+#[derive(Args, Debug, Clone, Default)]
+pub struct ImagePruneArgs {
+    #[arg(short = 'a', long = "all")]
+    pub all: bool,
+
+    #[arg(short = 'f', long = "force")]
+    pub force: bool,
+}
+
+#[derive(Args, Debug)]
 pub struct VolumeSubcommands {
     #[command(subcommand)]
     pub command: VolumeAction,
@@ -473,7 +586,10 @@ pub enum VolumeAction {
     Ls,
     Inspect { name: String },
     Rm { name: String },
-    Prune,
+    Prune {
+        #[arg(short = 'f', long = "force")]
+        force: bool,
+    },
 }
 
 #[derive(Args, Debug)]
@@ -498,6 +614,10 @@ pub enum NetworkAction {
     Rm {
         name: String,
     },
+    Prune {
+        #[arg(short = 'f', long = "force")]
+        force: bool,
+    },
     Connect {
         network: String,
         container: String,
@@ -514,7 +634,7 @@ pub struct DaemonArgs {
     pub socket: Option<String>,
 }
 
-#[derive(Args, Debug)]
+#[derive(Args, Debug, Clone)]
 pub struct PsArgs {
     /// Show all containers (default shows just running)
     #[arg(short = 'a', long = "all")]
@@ -527,6 +647,33 @@ pub struct PsArgs {
     /// Don't truncate output
     #[arg(long = "no-trunc")]
     pub no_trunc: bool,
+
+    /// Show n last created containers (includes all states)
+    #[arg(short = 'n', long = "last")]
+    pub last: Option<usize>,
+
+    /// Show the latest created container (includes all states)
+    #[arg(short = 'l', long = "latest")]
+    pub latest: bool,
+
+    /// Filter output based on conditions provided
+    #[arg(short = 'f', long = "filter")]
+    pub filter: Vec<String>,
+}
+
+#[derive(Args, Debug, Clone, Default)]
+pub struct ImagesArgs {
+    /// Only show numeric IDs
+    #[arg(short = 'q', long = "quiet")]
+    pub quiet: bool,
+
+    /// Show all images (default hides intermediate images)
+    #[arg(short = 'a', long = "all")]
+    pub all: bool,
+
+    /// Filter output based on conditions provided
+    #[arg(short = 'f', long = "filter")]
+    pub filter: Vec<String>,
 }
 
 #[derive(Args, Debug)]

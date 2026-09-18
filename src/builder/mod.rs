@@ -6,6 +6,7 @@ use crate::storage::{ImageRecord, ImageStore, boxr_home};
 use anyhow::{Context, Result, anyhow};
 use chrono::Utc;
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -38,6 +39,12 @@ pub enum Instruction {
         value: String,
     },
     Healthcheck(HealthConfig),
+    Arg {
+        name: String,
+        default: Option<String>,
+    },
+    User(String),
+    Volume(Vec<String>),
 }
 
 pub struct DockerIgnore {
@@ -248,6 +255,24 @@ impl DockerfileParser {
                     retries: 3,
                 }))
             }
+            "ARG" => {
+                if let Some((k, v)) = rest.split_once('=') {
+                    Ok(Instruction::Arg {
+                        name: k.trim().to_string(),
+                        default: Some(v.trim().trim_matches('"').to_string()),
+                    })
+                } else {
+                    Ok(Instruction::Arg {
+                        name: rest.trim().to_string(),
+                        default: None,
+                    })
+                }
+            }
+            "USER" => Ok(Instruction::User(rest.to_string())),
+            "VOLUME" => {
+                let vols = parse_array_or_words(rest);
+                Ok(Instruction::Volume(vols))
+            }
             other => Err(anyhow!("Unsupported Dockerfile instruction: {}", other)),
         }
     }
@@ -303,6 +328,8 @@ pub struct BuildOptions {
     pub dockerfile_path: PathBuf,
     pub tag: Option<String>,
     pub no_cache: bool,
+    pub build_args: std::collections::HashMap<String, String>,
+    pub target: Option<String>,
 }
 
 pub struct ImageBuilder {
@@ -343,6 +370,13 @@ impl ImageBuilder {
 
             match inst {
                 Instruction::From { image, as_stage } => {
+                    // If target was specified and previous stage matches, stop building
+                    if let Some(target_stage) = &opts.target {
+                        if current_stage_name.as_deref() == Some(target_stage.as_str()) {
+                            break;
+                        }
+                    }
+
                     // If we already had a running stage, save it before starting new one
                     if !stages.is_empty() || current_rootfs.exists() {
                         stages.push(BuildStage {
@@ -565,6 +599,35 @@ impl ImageBuilder {
                     current_config.labels = Some(labels);
                 }
                 Instruction::Healthcheck(_hc) => {}
+                Instruction::Arg { name, default } => {
+                    let val = opts
+                        .build_args
+                        .get(name)
+                        .cloned()
+                        .or(default.clone());
+                    if let Some(v) = val {
+                        let env_entry = format!("{}={}", name, v);
+                        if let Some(envs) = &mut current_config.env {
+                            envs.retain(|e| !e.starts_with(&format!("{}=", name)));
+                            envs.push(env_entry);
+                        } else {
+                            current_config.env = Some(vec![env_entry]);
+                        }
+                    }
+                    cache_key = format!("{}_arg_{}", cache_key, name);
+                }
+                Instruction::User(user) => {
+                    current_config.user = Some(user.clone());
+                    cache_key = format!("{}_user_{}", cache_key, user);
+                }
+                Instruction::Volume(vols) => {
+                    let mut vol_map = HashMap::new();
+                    for v in vols {
+                        vol_map.insert(v.clone(), serde_json::json!({}));
+                    }
+                    current_config.volumes = Some(vol_map);
+                    cache_key = format!("{}_vol_{:?}", cache_key, vols);
+                }
             }
         }
 

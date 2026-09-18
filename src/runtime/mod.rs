@@ -30,6 +30,13 @@ pub fn execute_bundle(
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-pub fn exec_in_bundle(_bundle_path: &Path, _command: &[String], _env: &[String]) -> Result<i32> {
+pub fn exec_in_bundle(
+    _bundle_path: &Path,
+    _command: &[String],
+    _env: &[String],
+    _workdir: Option<&str>,
+    _user: Option<&str>,
+    _detach: bool,
+) -> Result<i32> {
     anyhow::bail!("Container execution is only supported on Linux, macOS, and Windows");
 }

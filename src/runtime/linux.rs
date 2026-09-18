@@ -375,10 +375,17 @@ pub fn run_trampoline_exec(args: &[String]) -> Result<i32> {
     }
     let bundle_path = Path::new(&args[0]);
     let cmd = &args[1..];
-    exec_in_bundle(bundle_path, cmd, &[])
+    exec_in_bundle(bundle_path, cmd, &[], None, None, false)
 }
 
-pub fn exec_in_bundle(bundle_path: &Path, command: &[String], env: &[String]) -> Result<i32> {
+pub fn exec_in_bundle(
+    bundle_path: &Path,
+    command: &[String],
+    env: &[String],
+    workdir: Option<&str>,
+    user: Option<&str>,
+    detach: bool,
+) -> Result<i32> {
     let target_pid = if let Ok(pid_str) = fs::read_to_string(bundle_path.join("container.pid")) {
         pid_str.trim().parse::<i32>().ok()
     } else {
@@ -411,14 +418,29 @@ pub fn exec_in_bundle(bundle_path: &Path, command: &[String], env: &[String]) ->
                 "-p",
                 "-u",
                 "--preserve-credentials",
-                "--",
             ]);
+            if let Some(wd) = workdir {
+                cmd.arg(format!("--wd={}", wd));
+            }
+            if let Some(u) = user {
+                if let Ok(uid) = u.parse::<u32>() {
+                    cmd.args(["--setuid", &uid.to_string(), "--setgid", &uid.to_string()]);
+                }
+            }
+            cmd.arg("--");
             for e in env {
                 if let Some((k, v)) = e.split_once('=') {
                     cmd.env(k, v);
                 }
             }
             cmd.args(command);
+            if detach {
+                cmd.stdin(std::process::Stdio::null());
+                cmd.stdout(std::process::Stdio::null());
+                cmd.stderr(std::process::Stdio::null());
+                let _ = cmd.spawn()?;
+                return Ok(0);
+            }
             let status = cmd.status()?;
             return Ok(status.code().unwrap_or(0));
         }
@@ -567,20 +589,33 @@ fn run_container_child(rootfs: &Path, spec: &Spec, mounts: &[MountSpec]) -> Resu
     let resolv_path = rootfs.join("etc/resolv.conf");
     let _ = fs::create_dir_all(rootfs.join("etc"));
     let mut dns_content = String::new();
-    if let Ok(host_resolv) = fs::read_to_string("/etc/resolv.conf") {
-        for line in host_resolv.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with("nameserver") {
-                dns_content.push_str(trimmed);
-                dns_content.push('\n');
+    let bundle_dir = rootfs.parent().unwrap_or(rootfs);
+    let dns_file = bundle_dir.join("dns.json");
+    if dns_file.exists() {
+        if let Ok(content) = fs::read_to_string(&dns_file) {
+            if let Ok(dns_servers) = serde_json::from_str::<Vec<String>>(&content) {
+                for server in dns_servers {
+                    dns_content.push_str(&format!("nameserver {}\n", server.trim()));
+                }
             }
         }
     }
-    if !dns_content.contains("1.1.1.1") {
-        dns_content.push_str("nameserver 1.1.1.1\n");
-    }
-    if !dns_content.contains("8.8.8.8") {
-        dns_content.push_str("nameserver 8.8.8.8\n");
+    if dns_content.is_empty() {
+        if let Ok(host_resolv) = fs::read_to_string("/etc/resolv.conf") {
+            for line in host_resolv.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("nameserver") {
+                    dns_content.push_str(trimmed);
+                    dns_content.push('\n');
+                }
+            }
+        }
+        if !dns_content.contains("1.1.1.1") {
+            dns_content.push_str("nameserver 1.1.1.1\n");
+        }
+        if !dns_content.contains("8.8.8.8") {
+            dns_content.push_str("nameserver 8.8.8.8\n");
+        }
     }
     let _ = fs::write(&resolv_path, dns_content);
 

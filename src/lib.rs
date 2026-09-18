@@ -238,6 +238,160 @@ pub async fn run_cli(cli: Cli) -> Result<i32> {
             handle_network(args)?;
             Ok(0)
         }
+        Commands::Container(args) => match args.command {
+            cli::ContainerAction::Run(run_args) => {
+                let code = run_container(run_args).await?;
+                Ok(code)
+            }
+            cli::ContainerAction::Create(create_args) => {
+                let id = create_only_container(create_args).await?;
+                println!("{}", id);
+                Ok(0)
+            }
+            cli::ContainerAction::Start(start_args) => {
+                for c in &start_args.containers {
+                    start_container(c).await?;
+                }
+                Ok(0)
+            }
+            cli::ContainerAction::Stop(stop_args) => {
+                for c in &stop_args.containers {
+                    stop_container(c)?;
+                }
+                Ok(0)
+            }
+            cli::ContainerAction::Restart(restart_args) => {
+                restart_container(&restart_args).await?;
+                Ok(0)
+            }
+            cli::ContainerAction::Kill(kill_args) => {
+                kill_container(&kill_args)?;
+                Ok(0)
+            }
+            cli::ContainerAction::Rm(rm_args) => {
+                for c in &rm_args.containers {
+                    remove_container(c, rm_args.force)?;
+                }
+                Ok(0)
+            }
+            cli::ContainerAction::Pause(pause_args) => {
+                pause_container(&pause_args)?;
+                Ok(0)
+            }
+            cli::ContainerAction::Unpause(unpause_args) => {
+                unpause_container(&unpause_args)?;
+                Ok(0)
+            }
+            cli::ContainerAction::Wait(wait_args) => {
+                let code = wait_container(&wait_args)?;
+                Ok(code)
+            }
+            cli::ContainerAction::Exec(exec_args) => {
+                let code = exec_container(&exec_args)?;
+                Ok(code)
+            }
+            cli::ContainerAction::Attach(attach_args) => {
+                attach_container(&attach_args)?;
+                Ok(0)
+            }
+            cli::ContainerAction::Logs(logs_args) => {
+                container_logs(&logs_args)?;
+                Ok(0)
+            }
+            cli::ContainerAction::Ls(ps_args) => {
+                list_containers(ps_args)?;
+                Ok(0)
+            }
+            cli::ContainerAction::Inspect(inspect_args) => {
+                inspect_target(&inspect_args.target)?;
+                Ok(0)
+            }
+            cli::ContainerAction::Top(top_args) => {
+                top_container(&top_args)?;
+                Ok(0)
+            }
+            cli::ContainerAction::Port(port_args) => {
+                port_container(&port_args)?;
+                Ok(0)
+            }
+            cli::ContainerAction::Cp(cp_args) => {
+                cp_container(&cp_args)?;
+                Ok(0)
+            }
+            cli::ContainerAction::Diff(diff_args) => {
+                diff_container(&diff_args)?;
+                Ok(0)
+            }
+            cli::ContainerAction::Prune(_) => {
+                prune_containers()?;
+                Ok(0)
+            }
+            cli::ContainerAction::Update(update_args) => {
+                update_container(&update_args)?;
+                Ok(0)
+            }
+        },
+        Commands::Image(args) => match args.command {
+            cli::ImageAction::Ls(images_args) => {
+                list_images(images_args)?;
+                Ok(0)
+            }
+            cli::ImageAction::Build(build_args) => {
+                build_image(build_args).await?;
+                Ok(0)
+            }
+            cli::ImageAction::Pull(pull_args) => {
+                pull_image_with_platform(&pull_args.image, pull_args.platform.as_deref()).await?;
+                Ok(0)
+            }
+            cli::ImageAction::Push(push_args) => {
+                auth::RegistryPusher::push(&push_args.image).await?;
+                Ok(0)
+            }
+            cli::ImageAction::Tag(tag_args) => {
+                tag_image(&tag_args)?;
+                Ok(0)
+            }
+            cli::ImageAction::Rm(rmi_args) => {
+                for img in &rmi_args.images {
+                    remove_image(img)?;
+                }
+                Ok(0)
+            }
+            cli::ImageAction::Inspect(inspect_args) => {
+                inspect_target(&inspect_args.target)?;
+                Ok(0)
+            }
+            cli::ImageAction::History(history_args) => {
+                history_image(&history_args)?;
+                Ok(0)
+            }
+            cli::ImageAction::Save(save_args) => {
+                let output_path = save_args.output.map(PathBuf::from).unwrap_or_else(|| {
+                    PathBuf::from(format!(
+                        "{}.tar",
+                        save_args.image.replace('/', "_").replace(':', "_")
+                    ))
+                });
+                auth::ImageArchiver::save(&save_args.image, &output_path)?;
+                Ok(0)
+            }
+            cli::ImageAction::Load(load_args) => {
+                let input_path = load_args.input.map(PathBuf::from).ok_or_else(|| {
+                    anyhow::anyhow!("Input tar archive (-i/--input) is required for load")
+                })?;
+                auth::ImageArchiver::load(&input_path)?;
+                Ok(0)
+            }
+            cli::ImageAction::Import(import_args) => {
+                import_image(&import_args)?;
+                Ok(0)
+            }
+            cli::ImageAction::Prune(prune_args) => {
+                prune_images(prune_args.all)?;
+                Ok(0)
+            }
+        },
         Commands::Daemon(args) => {
             daemon::start_daemon(args.socket.as_deref()).await?;
             Ok(0)
@@ -348,8 +502,8 @@ pub async fn run_cli(cli: Cli) -> Result<i32> {
             }
             Ok(0)
         }
-        Commands::Images => {
-            list_images()?;
+        Commands::Images(args) => {
+            list_images(args)?;
             Ok(0)
         }
         Commands::Ps(args) => {
@@ -644,6 +798,17 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
     if !args.add_host.is_empty() {
         let hosts_json = serde_json::to_string(&args.add_host)?;
         let _ = fs::write(bundle_dir.join("hosts.json"), hosts_json);
+    }
+    if !args.dns.is_empty() {
+        let dns_json = serde_json::to_string(&args.dns)?;
+        let _ = fs::write(bundle_dir.join("dns.json"), dns_json);
+    }
+    if !args.labels.is_empty() {
+        let labels_json = serde_json::to_string(&args.labels)?;
+        let _ = fs::write(bundle_dir.join("labels.json"), labels_json);
+    }
+    if let Some(cidfile) = &args.cidfile {
+        fs::write(cidfile, &container_id)?;
     }
     spec.save_to_bundle(&bundle_dir)?;
 
@@ -949,14 +1114,42 @@ pub fn exec_container(args: &ExecArgs) -> Result<i32> {
         return Err(anyhow!("Command cannot be empty for exec"));
     }
 
+    let _term_guard = if args.interactive && args.tty && !args.detach {
+        terminal::TerminalGuard::enter_raw_mode().ok()
+    } else {
+        None
+    };
+
     let bundle_path = PathBuf::from(&rec.bundle_path);
-    exec_in_bundle(&bundle_path, &args.command, &args.env)
+    exec_in_bundle(
+        &bundle_path,
+        &args.command,
+        &args.env,
+        args.workdir.as_deref(),
+        args.user.as_deref(),
+        args.detach,
+    )
 }
 
 pub fn inspect_target(target: &str) -> Result<()> {
     let c_store = ContainerStore::new();
     if let Some(c) = c_store.find(target) {
         let is_running = matches!(c.status, ContainerStatus::Running);
+        let mut labels_map = HashMap::new();
+        let labels_file = PathBuf::from(&c.bundle_path).join("labels.json");
+        if labels_file.exists() {
+            if let Ok(content) = fs::read_to_string(&labels_file) {
+                if let Ok(labels_vec) = serde_json::from_str::<Vec<String>>(&content) {
+                    for l in labels_vec {
+                        if let Some((k, v)) = l.split_once('=') {
+                            labels_map.insert(k.to_string(), v.to_string());
+                        } else {
+                            labels_map.insert(l, "".to_string());
+                        }
+                    }
+                }
+            }
+        }
         let docker_compat_inspect = serde_json::json!([{
             "Id": c.id,
             "Created": c.created_at.to_rfc3339(),
@@ -981,6 +1174,10 @@ pub fn inspect_target(target: &str) -> Result<()> {
             "Image": c.image,
             "Name": format!("/{}", c.name),
             "RestartCount": c.restart_count,
+            "Config": {
+                "Image": c.image,
+                "Labels": labels_map,
+            },
             "HostConfig": {
                 "PortBindings": {},
                 "RestartPolicy": {
@@ -1384,12 +1581,21 @@ pub async fn build_image(args: BuildArgs) -> Result<()> {
         context_dir.join(&args.file)
     };
 
+    let mut build_args = std::collections::HashMap::new();
+    for ba in &args.build_args {
+        if let Some((k, v)) = ba.split_once('=') {
+            build_args.insert(k.trim().to_string(), v.trim().to_string());
+        }
+    }
+
     builder
         .build(builder::BuildOptions {
             context_dir,
             dockerfile_path,
             tag: args.tag,
             no_cache: args.no_cache,
+            build_args,
+            target: args.target,
         })
         .await?;
 
@@ -1467,10 +1673,13 @@ pub fn handle_volume(args: VolumeSubcommands) -> Result<()> {
             store.remove(&name)?;
             println!("{}", name);
         }
-        VolumeAction::Prune => {
+        VolumeAction::Prune { .. } => {
             let pruned = store.prune()?;
-            for p in pruned {
-                println!("{}", p);
+            if !pruned.is_empty() {
+                println!("Deleted Volumes:");
+                for p in pruned {
+                    println!("{}", p);
+                }
             }
         }
     }
@@ -1514,6 +1723,21 @@ pub fn handle_network(args: NetworkSubcommands) -> Result<()> {
             store.remove(&name)?;
             println!("{}", name);
         }
+        NetworkAction::Prune { .. } => {
+            let mut pruned = Vec::new();
+            for net in store.list() {
+                if net.name != NetworkStore::DEFAULT_NETWORK && net.containers.is_empty() {
+                    let _ = store.remove(&net.name);
+                    pruned.push(net.name);
+                }
+            }
+            if !pruned.is_empty() {
+                println!("Deleted Networks:");
+                for p in pruned {
+                    println!("{}", p);
+                }
+            }
+        }
         NetworkAction::Connect { network, container } => {
             let ep = store.connect_container(&network, &container, &container)?;
             println!("Connected {} with IP {}", container, ep.ipv4_address);
@@ -1526,16 +1750,48 @@ pub fn handle_network(args: NetworkSubcommands) -> Result<()> {
     Ok(())
 }
 
-pub fn list_images() -> Result<()> {
+pub fn list_images(args: cli::ImagesArgs) -> Result<()> {
     let store = ImageStore::new();
     let images = store.list();
+
+    let filtered: Vec<_> = images
+        .into_iter()
+        .filter(|img| {
+            for f in &args.filter {
+                if let Some((k, v)) = f.split_once('=') {
+                    match k.trim() {
+                        "reference" | "name" => {
+                            let full = format!("{}:{}", img.reference, img.tag);
+                            if !full.contains(v.trim()) && !img.reference.contains(v.trim()) {
+                                return false;
+                            }
+                        }
+                        "id" => {
+                            if !img.id.starts_with(v.trim()) {
+                                return false;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            true
+        })
+        .collect();
+
+    if args.quiet {
+        for img in &filtered {
+            println!("{}", &img.id[..12.min(img.id.len())]);
+        }
+        return Ok(());
+    }
 
     println!(
         "{:<28} {:<12} {:<16} {:<24} {:<10}",
         "REPOSITORY", "TAG", "IMAGE ID", "CREATED", "SIZE"
     );
 
-    for img in images {
+    for img in filtered {
         let size_mb = (img.size_bytes as f64) / (1024.0 * 1024.0);
         let size_str = if size_mb < 1.0 {
             format!("{:.1} KB", (img.size_bytes as f64) / 1024.0)
@@ -1561,11 +1817,67 @@ pub fn list_containers(args: PsArgs) -> Result<()> {
     let store = ContainerStore::new();
     let containers = store.list();
 
-    if args.quiet {
-        for c in containers {
-            if !args.all && !matches!(c.status, ContainerStatus::Running) {
-                continue;
+    let mut filtered: Vec<_> = containers
+        .into_iter()
+        .filter(|c| {
+            let matches_status = if args.latest || args.last.is_some() || args.all {
+                true
+            } else {
+                matches!(c.status, ContainerStatus::Running)
+            };
+            if !matches_status {
+                return false;
             }
+
+            for f in &args.filter {
+                if let Some((k, v)) = f.split_once('=') {
+                    match k.trim() {
+                        "status" => {
+                            let status_str = match c.status {
+                                ContainerStatus::Running => "running",
+                                ContainerStatus::Exited(_) => "exited",
+                                ContainerStatus::Created => "created",
+                                ContainerStatus::Paused => "paused",
+                                ContainerStatus::Failed(_) => "failed",
+                            };
+                            if status_str != v.trim() {
+                                return false;
+                            }
+                        }
+                        "name" => {
+                            if !c.name.contains(v.trim()) {
+                                return false;
+                            }
+                        }
+                        "ancestor" => {
+                            if !c.image.contains(v.trim()) {
+                                return false;
+                            }
+                        }
+                        "id" => {
+                            if !c.id.starts_with(v.trim()) {
+                                return false;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            true
+        })
+        .collect();
+
+    // Sort by created_at descending (latest first)
+    filtered.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+
+    if args.latest {
+        filtered.truncate(1);
+    } else if let Some(n) = args.last {
+        filtered.truncate(n);
+    }
+
+    if args.quiet {
+        for c in &filtered {
             if args.no_trunc {
                 println!("{}", c.id);
             } else {
@@ -1580,11 +1892,7 @@ pub fn list_containers(args: PsArgs) -> Result<()> {
         "CONTAINER ID", "IMAGE", "COMMAND", "CREATED", "STATUS", "NAMES"
     );
 
-    for c in containers {
-        if !args.all && !matches!(c.status, ContainerStatus::Running) {
-            continue;
-        }
-
+    for c in &filtered {
         let cmd_display = if c.command.is_empty() {
             "".to_string()
         } else {
@@ -1644,6 +1952,56 @@ pub fn remove_image(image: &str) -> Result<()> {
     let removed = store.remove(image)?;
     println!("Untagged: {}:{}", removed.reference, removed.tag);
     println!("Deleted: {}", removed.id);
+    Ok(())
+}
+
+pub fn prune_containers() -> Result<()> {
+    let c_store = ContainerStore::new();
+    let containers = c_store.list();
+    let mut deleted = Vec::new();
+    for c in containers {
+        if !matches!(c.status, ContainerStatus::Running) {
+            let _ = c_store.remove(&c.id);
+            deleted.push(c.id);
+        }
+    }
+    if !deleted.is_empty() {
+        println!("Deleted Containers:");
+        for id in deleted {
+            println!("{}", id);
+        }
+    }
+    let _ = guardrails::ProcessReaper::reap_stale_containers();
+    Ok(())
+}
+
+pub fn prune_images(all: bool) -> Result<()> {
+    let i_store = ImageStore::new();
+    let c_store = ContainerStore::new();
+    let images = i_store.list();
+    let containers = c_store.list();
+    let used_images: std::collections::HashSet<String> =
+        containers.iter().map(|c| c.image.clone()).collect();
+
+    let mut deleted = Vec::new();
+    for img in images {
+        let tag = format!("{}:{}", img.reference, img.tag);
+        let is_used = used_images.contains(&tag)
+            || used_images.contains(&img.reference)
+            || used_images.contains(&img.id);
+        if !is_used {
+            if all || img.tag == "<none>" || img.reference.is_empty() {
+                let _ = i_store.remove(&img.id);
+                deleted.push(img.id);
+            }
+        }
+    }
+    if !deleted.is_empty() {
+        println!("Deleted Images:");
+        for id in deleted {
+            println!("deleted: sha256:{}", id);
+        }
+    }
     Ok(())
 }
 
@@ -1777,6 +2135,17 @@ pub async fn create_only_container(args: RunArgs) -> Result<String> {
     if !args.add_host.is_empty() {
         let hosts_json = serde_json::to_string(&args.add_host)?;
         let _ = fs::write(bundle_dir.join("hosts.json"), hosts_json);
+    }
+    if !args.dns.is_empty() {
+        let dns_json = serde_json::to_string(&args.dns)?;
+        let _ = fs::write(bundle_dir.join("dns.json"), dns_json);
+    }
+    if !args.labels.is_empty() {
+        let labels_json = serde_json::to_string(&args.labels)?;
+        let _ = fs::write(bundle_dir.join("labels.json"), labels_json);
+    }
+    if let Some(cidfile) = &args.cidfile {
+        fs::write(cidfile, &container_id)?;
     }
     spec.save_to_bundle(&bundle_dir)?;
 

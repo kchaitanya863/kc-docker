@@ -201,6 +201,8 @@ impl ComposeProject {
                             dockerfile_path: build_path.join("Dockerfile"),
                             tag: Some(built_tag.clone()),
                             no_cache: false,
+                            build_args: std::collections::HashMap::new(),
+                            target: None,
                         })
                         .await?;
                     record.reference
@@ -258,6 +260,9 @@ impl ComposeProject {
                 ports: port_vec,
                 volumes: vol_vec,
                 memory: None,
+                labels: Vec::new(),
+                dns: Vec::new(),
+                cidfile: None,
                 cpus: None,
                 pids_limit: None,
                 rootless: true,

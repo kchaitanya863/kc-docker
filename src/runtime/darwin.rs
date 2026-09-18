@@ -198,7 +198,24 @@ pub fn execute_bundle(
     run_script.push_str("mount -t sysfs sysfs /sys 2>/dev/null || true\n");
     run_script.push_str("mount -t devtmpfs devtmpfs /dev 2>/dev/null || true\n");
     run_script.push_str("ip link set lo up 2>/dev/null || ifconfig lo up 2>/dev/null || true\n");
-    run_script.push_str("printf 'nameserver 192.168.64.1\\nnameserver 1.1.1.1\\nnameserver 8.8.8.8\\n' > /etc/resolv.conf 2>/dev/null || true\n");
+    let dns_file = bundle_path.join("dns.json");
+    if dns_file.exists() {
+        if let Ok(content) = fs::read_to_string(&dns_file) {
+            if let Ok(dns_servers) = serde_json::from_str::<Vec<String>>(&content) {
+                let mut dns_str = String::new();
+                for server in dns_servers {
+                    dns_str.push_str(&format!("nameserver {}\\n", server.trim()));
+                }
+                run_script.push_str(&format!("printf '{}' > /etc/resolv.conf 2>/dev/null || true\n", dns_str));
+            } else {
+                run_script.push_str("printf 'nameserver 192.168.64.1\\nnameserver 1.1.1.1\\nnameserver 8.8.8.8\\n' > /etc/resolv.conf 2>/dev/null || true\n");
+            }
+        } else {
+            run_script.push_str("printf 'nameserver 192.168.64.1\\nnameserver 1.1.1.1\\nnameserver 8.8.8.8\\n' > /etc/resolv.conf 2>/dev/null || true\n");
+        }
+    } else {
+        run_script.push_str("printf 'nameserver 192.168.64.1\\nnameserver 1.1.1.1\\nnameserver 8.8.8.8\\n' > /etc/resolv.conf 2>/dev/null || true\n");
+    }
     run_script
         .push_str("mkdir -p /tmp /data 2>/dev/null; chmod 1777 /tmp /data 2>/dev/null || true\n");
 
@@ -249,11 +266,11 @@ pub fn execute_bundle(
     }
 
     let final_cmd = if spec.process.user.uid != 0 {
+        let u = spec.process.user.uid;
         format!(
-            "su -s /bin/sh $(id -un {} 2>/dev/null || echo {}) -c '{}'",
-            spec.process.user.uid,
-            spec.process.user.uid,
-            cmd_line.replace('\'', "'\\''")
+            "UNAME=$(id -un {u} 2>/dev/null); if [ -z \"$UNAME\" ]; then adduser -D -u {u} -s /bin/sh \"u{u}\" 2>/dev/null || true; UNAME=\"u{u}\"; fi; su -s /bin/sh \"$UNAME\" -c '{cmd}'",
+            u = u,
+            cmd = cmd_line.replace('\'', "'\\''")
         )
     } else {
         cmd_line
@@ -336,7 +353,14 @@ pub fn execute_bundle(
 }
 
 /// Execute a command in an existing container bundle
-pub fn exec_in_bundle(bundle_path: &Path, command: &[String], env: &[String]) -> Result<i32> {
+pub fn exec_in_bundle(
+    bundle_path: &Path,
+    command: &[String],
+    env: &[String],
+    workdir: Option<&str>,
+    user: Option<&str>,
+    detach: bool,
+) -> Result<i32> {
     let rootfs_path = bundle_path.join("rootfs");
     let pid_file = bundle_path.join("vm.pid");
 
@@ -365,9 +389,12 @@ pub fn exec_in_bundle(bundle_path: &Path, command: &[String], env: &[String]) ->
                 ));
             }
         }
+        if let Some(wd) = workdir {
+            exec_script.push_str(&format!("cd \"{}\" 2>/dev/null || cd /\n", wd));
+        }
         let binary = &command[0];
         let args = &command[1..];
-        let mut cmd_line = format!("exec {}", binary);
+        let mut cmd_line = format!("{}", binary);
         for a in args {
             let cleaned = a.trim_matches('"');
             cmd_line.push_str(&format!(
@@ -375,7 +402,16 @@ pub fn exec_in_bundle(bundle_path: &Path, command: &[String], env: &[String]) ->
                 cleaned.replace('\\', "\\\\").replace('"', "\\\"")
             ));
         }
-        exec_script.push_str(&format!("{}\n", cmd_line));
+        let final_cmd = if let Some(u) = user {
+            format!(
+                "UNAME=$(id -un {u} 2>/dev/null); if [ -z \"$UNAME\" ]; then adduser -D -u {u} -s /bin/sh \"u{u}\" 2>/dev/null || true; UNAME=\"u{u}\"; fi; su -s /bin/sh \"$UNAME\" -c '{cmd}'",
+                u = u,
+                cmd = cmd_line.replace('\'', "'\\''")
+            )
+        } else {
+            format!("exec {}", cmd_line)
+        };
+        exec_script.push_str(&format!("{}\n", final_cmd));
 
         let exec_id = hex::encode(crate::storage::container_store::rand_id());
         let exec_script_path = rootfs_path.join(format!("boxr-exec-{}.sh", exec_id));
@@ -385,6 +421,10 @@ pub fn exec_in_bundle(bundle_path: &Path, command: &[String], env: &[String]) ->
         let _ = fs::remove_file(&exec_done_path);
         let _ = fs::remove_file(&exec_log_path);
         fs::write(&exec_script_path, &exec_script)?;
+
+        if detach {
+            return Ok(0);
+        }
 
         let start = std::time::Instant::now();
         while !exec_done_path.exists() {

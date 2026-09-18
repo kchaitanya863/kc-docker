@@ -409,3 +409,280 @@ fn test_docker_parity_error_handling() {
         .unwrap();
     assert!(!out.status.success());
 }
+
+/// Docker Parity Test: Exec flags (-t, -w, -u, -d)
+#[test]
+fn test_docker_parity_exec_flags() {
+    let bin = boxr_bin();
+    if !bin.exists() {
+        return;
+    }
+
+    let name = format!("dockertest-exec-{}", unique_id());
+
+    // 1. Run a background container
+    let out = boxr_cmd(&bin)
+        .args(["run", "-d", "--name", &name, "alpine", "sleep", "60"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    // 2. Exec with workdir (-w)
+    let out = boxr_cmd(&bin)
+        .args(["exec", "-w", "/tmp", &name, "pwd"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("/tmp"));
+
+    // 3. Exec with user (-u)
+    let out = boxr_cmd(&bin)
+        .args(["exec", "-u", "1000", &name, "id", "-u"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("1000"));
+
+    // 4. Exec with tty (-t)
+    let out = boxr_cmd(&bin)
+        .args(["exec", "-t", &name, "echo", "tty-ok"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("tty-ok"));
+
+    // 5. Cleanup
+    let _ = boxr_cmd(&bin).args(["stop", &name]).output();
+    let _ = boxr_cmd(&bin).args(["rm", &name]).output();
+}
+
+/// Docker Parity Test: Run flags (-m, -l, --dns, --cidfile)
+#[test]
+fn test_docker_parity_run_flags() {
+    let bin = boxr_bin();
+    if !bin.exists() {
+        return;
+    }
+
+    let temp = tempdir().unwrap();
+    let cid_path = temp.path().join("container.cid");
+    let name = format!("dockertest-flags-{}", unique_id());
+
+    // Run container with -m, -l, --dns, --cidfile
+    let out = boxr_cmd(&bin)
+        .args([
+            "run",
+            "-d",
+            "--name",
+            &name,
+            "-m",
+            "512m",
+            "-l",
+            "env=testing",
+            "-l",
+            "tier=backend",
+            "--dns",
+            "1.0.0.1",
+            "--cidfile",
+            cid_path.to_str().unwrap(),
+            "alpine",
+            "sleep",
+            "60",
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    // Verify cidfile exists and matches container ID
+    assert!(cid_path.exists());
+    let cid = fs::read_to_string(&cid_path).unwrap();
+    assert!(!cid.trim().is_empty());
+
+    // Verify inspect includes labels
+    let out = boxr_cmd(&bin).args(["inspect", &name]).output().unwrap();
+    assert!(out.status.success());
+    let json_str = String::from_utf8_lossy(&out.stdout);
+    assert!(json_str.contains("env") && json_str.contains("testing"));
+
+    // Cleanup
+    let _ = boxr_cmd(&bin).args(["stop", &name]).output();
+    let _ = boxr_cmd(&bin).args(["rm", &name]).output();
+}
+
+/// Docker Parity Test: Ps flags (-n, -l, -f, -q)
+#[test]
+fn test_docker_parity_ps_flags() {
+    let bin = boxr_bin();
+    if !bin.exists() {
+        return;
+    }
+
+    let name = format!("dockertest-ps-{}", unique_id());
+
+    let out = boxr_cmd(&bin)
+        .args(["run", "-d", "--name", &name, "alpine", "sleep", "60"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    // ps -q
+    let out = boxr_cmd(&bin).args(["ps", "-q"]).output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(!stdout.trim().is_empty());
+
+    // ps -n 1
+    let out = boxr_cmd(&bin).args(["ps", "-n", "1"]).output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains(&name));
+
+    // ps -l (latest)
+    let out = boxr_cmd(&bin).args(["ps", "-l"]).output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains(&name));
+
+    // ps -f name=...
+    let out = boxr_cmd(&bin)
+        .args(["ps", "-f", &format!("name={}", name)])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains(&name));
+
+    // Cleanup
+    let _ = boxr_cmd(&bin).args(["stop", &name]).output();
+    let _ = boxr_cmd(&bin).args(["rm", &name]).output();
+}
+
+/// Docker Parity Test: Images flags (-q, -a, -f)
+#[test]
+fn test_docker_parity_images_flags() {
+    let bin = boxr_bin();
+    if !bin.exists() {
+        return;
+    }
+
+    // images -q
+    let out = boxr_cmd(&bin).args(["images", "-q"]).output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(!stdout.is_empty());
+
+    // images -a
+    let out = boxr_cmd(&bin).args(["images", "-a"]).output().unwrap();
+    assert!(out.status.success());
+
+    // images -f reference=alpine
+    let out = boxr_cmd(&bin)
+        .args(["images", "-f", "reference=alpine"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("alpine"));
+}
+
+/// Docker Parity Test: Container & Image management subcommands (docker container ..., docker image ...)
+#[test]
+fn test_docker_parity_management_subcommands() {
+    let bin = boxr_bin();
+    if !bin.exists() {
+        return;
+    }
+
+    let name = format!("dockertest-mgmt-{}", unique_id());
+
+    // 1. docker image ls
+    let out = boxr_cmd(&bin).args(["image", "ls"]).output().unwrap();
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("REPOSITORY"));
+
+    // 2. docker container run -d
+    let out = boxr_cmd(&bin)
+        .args(["container", "run", "-d", "--name", &name, "alpine", "sleep", "60"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    // 3. docker container ls
+    let out = boxr_cmd(&bin).args(["container", "ls"]).output().unwrap();
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains(&name));
+
+    // 4. docker container inspect
+    let out = boxr_cmd(&bin).args(["container", "inspect", &name]).output().unwrap();
+    assert!(out.status.success());
+
+    // 5. docker container stop
+    let out = boxr_cmd(&bin).args(["container", "stop", &name]).output().unwrap();
+    assert!(out.status.success());
+
+    // 6. docker container rm
+    let out = boxr_cmd(&bin).args(["container", "rm", &name]).output().unwrap();
+    assert!(out.status.success());
+
+    // 7. docker container prune
+    let out = boxr_cmd(&bin).args(["container", "prune", "-f"]).output().unwrap();
+    assert!(out.status.success());
+
+    // 8. docker image prune
+    let out = boxr_cmd(&bin).args(["image", "prune", "-f"]).output().unwrap();
+    assert!(out.status.success());
+}
+
+/// Docker Parity Test: Dockerfile ARG, USER, VOLUME builder directives
+#[test]
+fn test_docker_parity_builder_directives() {
+    let bin = boxr_bin();
+    if !bin.exists() {
+        return;
+    }
+
+    let temp = tempdir().unwrap();
+    let dockerfile_path = temp.path().join("Dockerfile");
+    fs::write(
+        &dockerfile_path,
+        r#"
+FROM alpine:latest
+ARG APP_VERSION=1.0.0
+USER 1000
+VOLUME ["/data"]
+CMD ["echo", "test"]
+"#,
+    )
+    .unwrap();
+
+    let tag = format!("dockertest-directives:{}", unique_id());
+
+    // Build with --build-arg
+    let out = boxr_cmd(&bin)
+        .args([
+            "build",
+            "-t",
+            &tag,
+            "-f",
+            dockerfile_path.to_str().unwrap(),
+            "--build-arg",
+            "APP_VERSION=2.5.0",
+            temp.path().to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    // Inspect image config
+    let out = boxr_cmd(&bin).args(["inspect", &tag]).output().unwrap();
+    assert!(out.status.success());
+    let json_str = String::from_utf8_lossy(&out.stdout);
+    assert!(json_str.contains("1000"));
+
+    // Cleanup
+    let _ = boxr_cmd(&bin).args(["rmi", &tag]).output();
+}
+

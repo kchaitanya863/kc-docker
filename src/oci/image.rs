@@ -78,6 +78,8 @@ pub struct ExecutionConfig {
     pub working_dir: Option<String>,
     #[serde(rename = "Labels", skip_serializing_if = "Option::is_none")]
     pub labels: Option<HashMap<String, String>>,
+    #[serde(rename = "Volumes", skip_serializing_if = "Option::is_none")]
+    pub volumes: Option<HashMap<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -14,11 +14,11 @@ impl ContainerTop {
         }
 
         // Run ps in bundle
-        let code = exec_in_bundle(bundle_path, &cmd, &[])?;
+        let code = exec_in_bundle(bundle_path, &cmd, &[], None, None, false)?;
         if code != 0 {
             // Fallback to simple ps without flags
             let fallback = vec!["ps".to_string()];
-            let _ = exec_in_bundle(bundle_path, &fallback, &[]);
+            let _ = exec_in_bundle(bundle_path, &fallback, &[], None, None, false);
         }
 
         Ok("".to_string())

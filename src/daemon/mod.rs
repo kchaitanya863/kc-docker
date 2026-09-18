@@ -99,14 +99,30 @@ pub fn create_router(state: DaemonState) -> Router {
         .route("/v1.45/containers/{id}/logs", get(get_container_logs))
         .route("/containers/{id}", delete(remove_container))
         .route("/v1.45/containers/{id}", delete(remove_container))
+        .route("/containers/prune", post(prune_containers_endpoint))
+        .route("/v1.45/containers/prune", post(prune_containers_endpoint))
+        .route("/images/prune", post(prune_images_endpoint))
+        .route("/v1.45/images/prune", post(prune_images_endpoint))
+        .route("/volumes/prune", post(prune_volumes_endpoint))
+        .route("/v1.45/volumes/prune", post(prune_volumes_endpoint))
+        .route("/networks/prune", post(prune_networks_endpoint))
+        .route("/v1.45/networks/prune", post(prune_networks_endpoint))
         .route("/networks", get(list_networks))
         .route("/v1.45/networks", get(list_networks))
         .route("/networks/create", post(create_network))
         .route("/v1.45/networks/create", post(create_network))
+        .route("/networks/{id}", get(inspect_network))
+        .route("/v1.45/networks/{id}", get(inspect_network))
+        .route("/networks/{id}", delete(remove_network))
+        .route("/v1.45/networks/{id}", delete(remove_network))
         .route("/volumes", get(list_volumes))
         .route("/v1.45/volumes", get(list_volumes))
         .route("/volumes/create", post(create_volume))
         .route("/v1.45/volumes/create", post(create_volume))
+        .route("/volumes/{name}", get(inspect_volume))
+        .route("/v1.45/volumes/{name}", get(inspect_volume))
+        .route("/volumes/{name}", delete(remove_volume))
+        .route("/v1.45/volumes/{name}", delete(remove_volume))
         .with_state(state)
 }
 
@@ -474,6 +490,98 @@ async fn get_container_logs(Path(id): Path<String>) -> Result<String, StatusCode
     }
 }
 
+async fn prune_containers_endpoint() -> Json<serde_json::Value> {
+    let c_store = ContainerStore::new();
+    let containers = c_store.list();
+    let mut deleted = Vec::new();
+    for c in containers {
+        if !matches!(c.status, ContainerStatus::Running) {
+            let _ = c_store.remove(&c.id);
+            deleted.push(c.id);
+        }
+    }
+    Json(serde_json::json!({
+        "ContainersDeleted": deleted,
+        "SpaceReclaimed": 0
+    }))
+}
+
+async fn prune_images_endpoint() -> Json<serde_json::Value> {
+    let i_store = ImageStore::new();
+    let c_store = ContainerStore::new();
+    let images = i_store.list();
+    let containers = c_store.list();
+    let used_images: std::collections::HashSet<String> =
+        containers.iter().map(|c| c.image.clone()).collect();
+
+    let mut deleted = Vec::new();
+    for img in images {
+        let tag = format!("{}:{}", img.reference, img.tag);
+        let is_used = used_images.contains(&tag)
+            || used_images.contains(&img.reference)
+            || used_images.contains(&img.id);
+        if !is_used {
+            let _ = i_store.remove(&img.id);
+            deleted.push(serde_json::json!({ "Deleted": img.id }));
+        }
+    }
+    Json(serde_json::json!({
+        "ImagesDeleted": deleted,
+        "SpaceReclaimed": 0
+    }))
+}
+
+async fn prune_volumes_endpoint() -> Json<serde_json::Value> {
+    let store = VolumeStore::new();
+    let pruned = store.prune().unwrap_or_default();
+    Json(serde_json::json!({
+        "VolumesDeleted": pruned,
+        "SpaceReclaimed": 0
+    }))
+}
+
+async fn prune_networks_endpoint() -> Json<serde_json::Value> {
+    let store = NetworkStore::new();
+    let mut deleted = Vec::new();
+    for net in store.list() {
+        if net.name != NetworkStore::DEFAULT_NETWORK && net.containers.is_empty() {
+            let _ = store.remove(&net.name);
+            deleted.push(net.name);
+        }
+    }
+    Json(serde_json::json!({
+        "NetworksDeleted": deleted
+    }))
+}
+
+async fn inspect_network(Path(id): Path<String>) -> Result<Json<serde_json::Value>, StatusCode> {
+    let store = NetworkStore::new();
+    let net = store.find(&id).ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(serde_json::to_value(net).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?))
+}
+
+async fn remove_network(Path(id): Path<String>) -> StatusCode {
+    let store = NetworkStore::new();
+    match store.remove(&id) {
+        Ok(_) => StatusCode::NO_CONTENT,
+        Err(_) => StatusCode::NOT_FOUND,
+    }
+}
+
+async fn inspect_volume(Path(name): Path<String>) -> Result<Json<serde_json::Value>, StatusCode> {
+    let store = VolumeStore::new();
+    let vol = store.find(&name).ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(serde_json::to_value(vol).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?))
+}
+
+async fn remove_volume(Path(name): Path<String>) -> StatusCode {
+    let store = VolumeStore::new();
+    match store.remove(&name) {
+        Ok(_) => StatusCode::NO_CONTENT,
+        Err(_) => StatusCode::NOT_FOUND,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -511,6 +619,70 @@ mod tests {
             .await
             .unwrap();
 
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_daemon_prune_and_crud_endpoints() {
+        let state = DaemonState {
+            home: PathBuf::from("/tmp/test-boxr-daemon-prune"),
+        };
+        let app = create_router(state);
+
+        // Test POST /containers/prune
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1.45/containers/prune")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Test POST /images/prune
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1.45/images/prune")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Test POST /volumes/prune
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1.45/volumes/prune")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Test POST /networks/prune
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1.45/networks/prune")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
     }
 }

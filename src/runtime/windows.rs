@@ -92,7 +92,14 @@ pub fn execute_bundle(
     Ok(status.code().unwrap_or(0))
 }
 
-pub fn exec_in_bundle(bundle_path: &Path, command: &[String], env: &[String]) -> Result<i32> {
+pub fn exec_in_bundle(
+    bundle_path: &Path,
+    command: &[String],
+    env: &[String],
+    workdir: Option<&str>,
+    _user: Option<&str>,
+    _detach: bool,
+) -> Result<i32> {
     let binary = &command[0];
     let args = &command[1..];
     let mut cmd = Command::new(binary);
@@ -104,7 +111,11 @@ pub fn exec_in_bundle(bundle_path: &Path, command: &[String], env: &[String]) ->
             cmd.env(k, v);
         }
     }
-    cmd.current_dir(bundle_path.join("rootfs"));
+    if let Some(wd) = workdir {
+        cmd.current_dir(bundle_path.join("rootfs").join(wd.trim_start_matches('/')));
+    } else {
+        cmd.current_dir(bundle_path.join("rootfs"));
+    }
     let status = cmd.status()?;
     Ok(status.code().unwrap_or(0))
 }

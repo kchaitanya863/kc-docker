@@ -422,8 +422,104 @@ test_step "GET /v1.45/info (Docker Engine system info)" \
 test_step "GET /v1.45/containers/json (List containers API)" \
     "curl -s --unix-socket $API_SOCK 'http://localhost/v1.45/containers/json?all=1' | grep -F '[' >/dev/null"
 
+test_step "POST /v1.45/containers/prune (Containers Prune API)" \
+    "curl -s -X POST --unix-socket $API_SOCK http://localhost/v1.45/containers/prune | grep 'ContainersDeleted' >/dev/null"
+
+test_step "POST /v1.45/images/prune (Images Prune API)" \
+    "curl -s -X POST --unix-socket $API_SOCK http://localhost/v1.45/images/prune | grep 'ImagesDeleted' >/dev/null"
+
+test_step "POST /v1.45/volumes/prune (Volumes Prune API)" \
+    "curl -s -X POST --unix-socket $API_SOCK http://localhost/v1.45/volumes/prune | grep 'VolumesDeleted' >/dev/null"
+
+test_step "POST /v1.45/networks/prune (Networks Prune API)" \
+    "curl -s -X POST --unix-socket $API_SOCK http://localhost/v1.45/networks/prune | grep 'NetworksDeleted' >/dev/null"
+
 # Cleanup daemon
 run_cmd "if [ -f /tmp/boxr-daemon.pid ]; then kill \$(cat /tmp/boxr-daemon.pid) 2>/dev/null || true; rm -f /tmp/boxr-daemon.pid; fi; rm -f $API_SOCK"
+
+# ------------------------------------------------------------------------------
+# 11. Modern Container & Image Management Command Groups
+# ------------------------------------------------------------------------------
+echo -e "\n${BOLD}11. Modern Management Command Groups (docker container ..., docker image ...)${NC}"
+MGMT_NAME="mgmt-$(rand_id)"
+
+test_step "docker image ls" \
+    "$DOCKER_CMD image ls | grep 'REPOSITORY' >/dev/null"
+
+test_step "docker container create --name <name> ubuntu" \
+    "$DOCKER_CMD container create --name $MGMT_NAME ubuntu"
+
+test_step "docker container ls -a" \
+    "$DOCKER_CMD container ls -a | grep '$MGMT_NAME' >/dev/null"
+
+test_step "docker container inspect <name>" \
+    "$DOCKER_CMD container inspect $MGMT_NAME | grep '$MGMT_NAME' >/dev/null"
+
+test_step "docker container rm <name>" \
+    "$DOCKER_CMD container rm $MGMT_NAME"
+
+# ------------------------------------------------------------------------------
+# 12. Prune Operations Parity
+# ------------------------------------------------------------------------------
+echo -e "\n${BOLD}12. Subsystem Prune Operations Parity${NC}"
+
+test_step "docker container prune --force" \
+    "$DOCKER_CMD container prune --force"
+
+test_step "docker image prune --force" \
+    "$DOCKER_CMD image prune --force"
+
+test_step "docker network prune --force" \
+    "$DOCKER_CMD network prune --force"
+
+test_step "docker volume prune --force" \
+    "$DOCKER_CMD volume prune --force"
+
+# ------------------------------------------------------------------------------
+# 13. Advanced Container Flags (-m, -l, --cidfile)
+# ------------------------------------------------------------------------------
+echo -e "\n${BOLD}13. Advanced Container Flags (-m, -l, --cidfile)${NC}"
+CID_FILE="/tmp/test-cid-$(rand_id).cid"
+FLAGS_NAME="flags-$(rand_id)"
+
+test_step "docker create -m 512m -l role=db --cidfile <file>" \
+    "$DOCKER_CMD create --name $FLAGS_NAME -m 512m -l role=db --cidfile $CID_FILE ubuntu"
+
+test_step "verify cidfile created" \
+    "test -f $CID_FILE && rm -f $CID_FILE"
+
+test_step "verify labels in inspect" \
+    "$DOCKER_CMD inspect $FLAGS_NAME | grep 'role' >/dev/null"
+
+test_step "cleanup flags container" \
+    "$DOCKER_CMD rm $FLAGS_NAME"
+
+# ------------------------------------------------------------------------------
+# 14. Advanced Listing & Query Flags (ps -n, ps -l, ps -f, images -q, images -a)
+# ------------------------------------------------------------------------------
+echo -e "\n${BOLD}14. Advanced Listing & Query Flags${NC}"
+Q_NAME="q-$(rand_id)"
+run_cmd "$DOCKER_CMD create --name $Q_NAME ubuntu" &>/dev/null
+
+test_step "docker ps -q (quiet ID list)" \
+    "$DOCKER_CMD ps -a -q | grep . >/dev/null"
+
+test_step "docker ps -n 1 (last created)" \
+    "$DOCKER_CMD ps -n 1 | grep '$Q_NAME' >/dev/null"
+
+test_step "docker ps -l (latest created)" \
+    "$DOCKER_CMD ps -l | grep '$Q_NAME' >/dev/null"
+
+test_step "docker ps -f name=<name>" \
+    "$DOCKER_CMD ps -a -f name=$Q_NAME | grep '$Q_NAME' >/dev/null"
+
+test_step "docker images -q (quiet image IDs)" \
+    "$DOCKER_CMD images -q | grep . >/dev/null"
+
+test_step "docker images -a (all images)" \
+    "$DOCKER_CMD images -a | grep 'REPOSITORY' >/dev/null"
+
+run_cmd "$DOCKER_CMD rm $Q_NAME" &>/dev/null
 
 # ------------------------------------------------------------------------------
 # Summary Report
