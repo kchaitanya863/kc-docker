@@ -207,6 +207,18 @@ When running on Linux, `boxr` applies cgroups v2 resource controllers:
 
 ---
 
+### 3.7. Enterprise Runtime Guarantees (`docs/ENTERPRISE_RUNTIMES.md`)
+
+To guarantee compatibility with complex enterprise workloads (AI/ML frameworks, headless browser test suites, database engines, and privilege-dropping package managers):
+- **Sticky Bit Invariant**: Automatic enforcement of mode `1777` on `/tmp` and `/var/tmp` so unprivileged workers (`_apt`, `nobody`) never fail with `EACCES`.
+- **POSIX Shared Memory**: Automatic provisioning of `/dev/shm` as an isolated `1777` tmpfs.
+- **Device Node Hardening**: Mandatory `0666` permissions on standard character devices (`/dev/null`, `/dev/zero`, `/dev/urandom`).
+- **Orphan Reaping**: Integrated PID 1 init supervisor (`--init`) preventing zombie process accumulation.
+
+See **[Enterprise Container Runtimes & Hardening Guide](ENTERPRISE_RUNTIMES.md)** for exhaustive details.
+
+---
+
 ## 4. Platform Differences: Linux vs macOS vs Windows
 
 | Capability | Linux | macOS (Darwin) | Windows |

@@ -22,6 +22,7 @@ A fast, lightweight, production-grade **Open Container Initiative (OCI)** compli
 
 Comprehensive engineering guides, architectural diagrams, and command manuals:
 - **[Architecture & Runtime Internals Guide](docs/ARCHITECTURE.md)**: Deep dive into the trampoline, storage hierarchy, and multi-platform hypervisor bridge.
+- **[Enterprise Runtimes & Hardening Guide](docs/ENTERPRISE_RUNTIMES.md)**: Privilege dropping, `/tmp` sticky `1777` permissions, POSIX `/dev/shm`, PID 1 init, and cgroups v2.
 - **[Rootless Container Isolation](docs/ROOTLESS.md)**: Kernel namespaces, single-threaded trampoline, subordinate ID mapping, and capabilities.
 - **[Container Networking & UserNet Stack](docs/NETWORKING.md)**: Pure-Rust embedded TAP network stack, `pasta` integration, and IPAM.
 - **[CLI Command Reference Manual](docs/CLI_REFERENCE.md)**: Exhaustive syntax, flags, and options for all 38+ CLI subcommands.

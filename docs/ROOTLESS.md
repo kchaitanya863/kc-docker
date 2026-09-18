@@ -128,3 +128,15 @@ Boxr ships with an integrated default Seccomp filter profile (`src/security/mod.
 
 - **macOS**: Since Darwin (XNU) does not implement Linux namespaces, Boxr executes rootless containers inside an Apple `Virtualization.framework` micro-VM (`boxr-vz`). The micro-VM is unprivileged and owned by the logged-in user without running root daemons or requiring sudo.
 - **Windows**: Containers run unprivileged via user-space token restrictions, Job Objects, or inside isolated WSL2 lightweight utility VMs.
+
+---
+
+## 6. Enterprise Filesystem & Permission Invariants
+
+In rootless execution, images are extracted by unprivileged host UIDs. To prevent service account failures when applications drop privileges (such as `apt-get` dropping to `_apt`, or `postgres` dropping to `postgres`):
+
+1. **Sticky Bit `1777` on `/tmp` and `/var/tmp`**: Boxr automatically enforces `1777` mode at container startup to prevent `EACCES` when non-root workers create lock or temporary files.
+2. **POSIX Shared Memory (`/dev/shm`)**: Boxr automatically provisions `/dev/shm` as a dedicated `1777` tmpfs (default 64MB, configurable via `--shm-size`) for AI/ML dataloaders (PyTorch) and headless browsers.
+3. **Essential Device Nodes**: Character devices (`/dev/null`, `/dev/zero`, `/dev/urandom`) are provisioned with `0666` permissions so non-root processes can safely redirect I/O.
+
+For in-depth architectural details, see the **[Enterprise Container Runtimes & Hardening Guide](ENTERPRISE_RUNTIMES.md)**.
