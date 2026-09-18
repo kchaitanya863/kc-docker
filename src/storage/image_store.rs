@@ -36,7 +36,7 @@ impl ImageStore {
         }
     }
 
-    fn load(&self) -> ImageStoreData {
+    fn load_unlocked(&self) -> ImageStoreData {
         if let Ok(content) = fs::read_to_string(&self.index_file) {
             serde_json::from_str(&content).unwrap_or_default()
         } else {
@@ -44,7 +44,7 @@ impl ImageStore {
         }
     }
 
-    fn save(&self, data: &ImageStoreData) -> Result<()> {
+    fn save_unlocked(&self, data: &ImageStoreData) -> Result<()> {
         let content = serde_json::to_string_pretty(data)?;
         let rand_suffix = hex::encode(crate::storage::container_store::rand_id());
         let temp_file = self
@@ -56,7 +56,10 @@ impl ImageStore {
     }
 
     pub fn list(&self) -> Vec<ImageRecord> {
-        self.load().images
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+            Ok(self.load_unlocked().images)
+        })
+        .unwrap_or_default()
     }
 
     pub fn find(&self, query: &str) -> Option<ImageRecord> {
@@ -64,139 +67,148 @@ impl ImageStore {
     }
 
     pub fn find_with_platform(&self, query: &str, platform: Option<&str>) -> Option<ImageRecord> {
-        let data = self.load();
-        let query_trimmed = query.trim();
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+            let data = self.load_unlocked();
+            let query_trimmed = query.trim();
 
-        // Normalize query: e.g. "hello-world" -> short name "hello-world", tag "latest"
-        let (q_name, q_tag) = if let Some((n, t)) = query_trimmed.split_once(':') {
-            (n, Some(t))
-        } else {
-            (query_trimmed, None)
-        };
-
-        data.images.into_iter().find(|img| {
-            let id_matches = img.id.starts_with(query_trimmed);
-            let img_short = img
-                .reference
-                .strip_prefix("library/")
-                .unwrap_or(&img.reference);
-            let name_matches = img.reference == q_name || img_short == q_name;
-
-            let matches = if id_matches {
-                true
-            } else if let Some(tag) = q_tag {
-                name_matches && img.tag == tag
+            // Normalize query: e.g. "hello-world" -> short name "hello-world", tag "latest"
+            let (q_name, q_tag) = if let Some((n, t)) = query_trimmed.split_once(':') {
+                (n, Some(t))
             } else {
-                name_matches && (img.tag == "latest" || img.tag == query_trimmed)
+                (query_trimmed, None)
             };
 
-            if !matches {
-                return false;
-            }
+            Ok(data.images.into_iter().find(|img| {
+                let id_matches = img.id.starts_with(query_trimmed);
+                let img_short = img
+                    .reference
+                    .strip_prefix("library/")
+                    .unwrap_or(&img.reference);
+                let name_matches = img.reference == q_name || img_short == q_name;
 
-            let host_arch = match std::env::consts::ARCH {
-                "x86_64" => "amd64",
-                "aarch64" => "arm64",
-                other => other,
-            };
-            let (target_os, norm_arch) = if let Some(target_plat) = platform {
-                let (os, arch) = if let Some((os, arch)) = target_plat.split_once('/') {
-                    (Some(os), arch)
+                let matches = if id_matches {
+                    true
+                } else if let Some(tag) = q_tag {
+                    name_matches && img.tag == tag
                 } else {
-                    (None, target_plat)
+                    name_matches && (img.tag == "latest" || img.tag == query_trimmed)
                 };
-                let norm = match arch {
+
+                if !matches {
+                    return false;
+                }
+
+                let host_arch = match std::env::consts::ARCH {
                     "x86_64" => "amd64",
                     "aarch64" => "arm64",
                     other => other,
                 };
-                (os, norm)
-            } else {
-                let default_os = if cfg!(target_os = "windows") {
-                    Some("windows")
+                let (target_os, norm_arch) = if let Some(target_plat) = platform {
+                    let (os, arch) = if let Some((os, arch)) = target_plat.split_once('/') {
+                        (Some(os), arch)
+                    } else {
+                        (None, target_plat)
+                    };
+                    let norm = match arch {
+                        "x86_64" => "amd64",
+                        "aarch64" => "arm64",
+                        other => other,
+                    };
+                    (os, norm)
                 } else {
-                    Some("linux")
+                    let default_os = if cfg!(target_os = "windows") {
+                        Some("windows")
+                    } else {
+                        Some("linux")
+                    };
+                    (default_os, host_arch)
                 };
-                (default_os, host_arch)
-            };
 
-            let img_arch = match img.config.architecture.as_str() {
-                "x86_64" => "amd64",
-                "aarch64" => "arm64",
-                other => other,
-            };
+                let img_arch = match img.config.architecture.as_str() {
+                    "x86_64" => "amd64",
+                    "aarch64" => "arm64",
+                    other => other,
+                };
 
-            let arch_matches = img_arch == norm_arch;
-            let os_matches = if let Some(tos) = target_os {
-                img.config.os.eq_ignore_ascii_case(tos)
-            } else {
-                true
-            };
+                let arch_matches = img_arch == norm_arch;
+                let os_matches = if let Some(tos) = target_os {
+                    img.config.os.eq_ignore_ascii_case(tos)
+                } else {
+                    true
+                };
 
-            arch_matches && os_matches
+                arch_matches && os_matches
+            }))
         })
+        .ok()
+        .flatten()
     }
 
     pub fn add(&self, record: ImageRecord) -> Result<()> {
-        let mut data = self.load();
-        // Remove previous entry with same reference, tag, architecture, and os if present
-        data.images.retain(|img| {
-            !(img.reference == record.reference
-                && img.tag == record.tag
-                && img.config.architecture == record.config.architecture
-                && img.config.os == record.config.os)
-        });
-        data.images.push(record);
-        self.save(&data)
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+            let mut data = self.load_unlocked();
+            // Remove previous entry with same reference, tag, architecture, and os if present
+            data.images.retain(|img| {
+                !(img.reference == record.reference
+                    && img.tag == record.tag
+                    && img.config.architecture == record.config.architecture
+                    && img.config.os == record.config.os)
+            });
+            data.images.push(record);
+            self.save_unlocked(&data)?;
+            Ok(())
+        })
     }
 
     pub fn remove(&self, query: &str) -> Result<ImageRecord> {
-        let mut data = self.load();
-        let query_trimmed = query.trim();
-        let (q_name, q_tag) = if let Some((n, t)) = query_trimmed.split_once(':') {
-            (n, Some(t))
-        } else {
-            (query_trimmed, None)
-        };
-
-        let pos = data.images.iter().position(|img| {
-            if img.id.starts_with(query_trimmed) {
-                return true;
-            }
-
-            let img_short = img
-                .reference
-                .strip_prefix("library/")
-                .unwrap_or(&img.reference);
-            let name_matches = img.reference == q_name || img_short == q_name;
-
-            if let Some(tag) = q_tag {
-                name_matches && img.tag == tag
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+            let mut data = self.load_unlocked();
+            let query_trimmed = query.trim();
+            let (q_name, q_tag) = if let Some((n, t)) = query_trimmed.split_once(':') {
+                (n, Some(t))
             } else {
-                name_matches && (img.tag == "latest" || img.tag == query_trimmed)
-            }
-        });
+                (query_trimmed, None)
+            };
 
-        if let Some(index) = pos {
-            let removed = data.images.remove(index);
-            self.save(&data)?;
-
-            // Only clean up rootfs directory if NO OTHER image shares this rootfs_path
-            let is_shared = data.images.iter().any(|img| {
-                img.rootfs_path == removed.rootfs_path
-                    || img.manifest_digest == removed.manifest_digest
-            });
-            if !is_shared {
-                let rootfs = PathBuf::from(&removed.rootfs_path);
-                if rootfs.exists() {
-                    let _ = fs::remove_dir_all(rootfs);
+            let pos = data.images.iter().position(|img| {
+                if img.id.starts_with(query_trimmed) {
+                    return true;
                 }
-            }
 
-            Ok(removed)
-        } else {
-            Err(anyhow!("Image not found: {}", query))
-        }
+                let img_short = img
+                    .reference
+                    .strip_prefix("library/")
+                    .unwrap_or(&img.reference);
+                let name_matches = img.reference == q_name || img_short == q_name;
+
+                if let Some(tag) = q_tag {
+                    name_matches && img.tag == tag
+                } else {
+                    name_matches && (img.tag == "latest" || img.tag == query_trimmed)
+                }
+            });
+
+            if let Some(index) = pos {
+                let removed = data.images.remove(index);
+                self.save_unlocked(&data)?;
+
+                // Only clean up rootfs directory if NO OTHER image shares this rootfs_path
+                let is_shared = data.images.iter().any(|img| {
+                    img.rootfs_path == removed.rootfs_path
+                        || img.manifest_digest == removed.manifest_digest
+                });
+                if !is_shared {
+                    let rootfs = PathBuf::from(&removed.rootfs_path);
+                    if rootfs.exists() {
+                        let _ = fs::remove_dir_all(rootfs);
+                    }
+                }
+
+                Ok(removed)
+            } else {
+                Err(anyhow!("Image not found: {}", query))
+            }
+        })
     }
 
     /// Commit a container's current filesystem snapshot into a new image
@@ -291,7 +303,11 @@ mod tests {
             created_at: Utc::now(),
             rootfs_path: temp.path().join("rootfs").to_string_lossy().to_string(),
             config: ImageConfig {
-                architecture: "arm64".to_string(),
+                architecture: match std::env::consts::ARCH {
+                    "x86_64" => "amd64".to_string(),
+                    "aarch64" => "arm64".to_string(),
+                    other => other.to_string(),
+                },
                 os: "linux".to_string(),
                 config: Some(ExecutionConfig::default()),
                 rootfs: None,

@@ -109,7 +109,7 @@ impl NetworkStore {
         store
     }
 
-    fn load(&self) -> NetworkStoreData {
+    fn load_unlocked(&self) -> NetworkStoreData {
         if let Ok(content) = fs::read_to_string(&self.index_file) {
             serde_json::from_str(&content).unwrap_or_default()
         } else {
@@ -117,7 +117,7 @@ impl NetworkStore {
         }
     }
 
-    fn save(&self, data: &NetworkStoreData) -> Result<()> {
+    fn save_unlocked(&self, data: &NetworkStoreData) -> Result<()> {
         let content = serde_json::to_string_pretty(data)?;
         let rand_suffix = hex::encode(crate::storage::container_store::rand_id());
         let temp_file = self
@@ -129,36 +129,47 @@ impl NetworkStore {
     }
 
     fn ensure_default_network(&self) {
-        let mut data = self.load();
-        if !data
-            .networks
-            .iter()
-            .any(|n| n.name == Self::DEFAULT_NETWORK)
-        {
-            let default_net = NetworkRecord {
-                id: "boxr00000000".to_string(),
-                name: Self::DEFAULT_NETWORK.to_string(),
-                driver: "bridge".to_string(),
-                subnet: "172.28.0.0/16".to_string(),
-                gateway: "172.28.0.1".to_string(),
-                internal: false,
-                created_at: Utc::now(),
-                containers: HashMap::new(),
-            };
-            data.networks.push(default_net);
-            let _ = self.save(&data);
-        }
+        let _ = crate::storage::index_lock::with_index_lock(&self.index_file, || {
+            let mut data = self.load_unlocked();
+            if !data
+                .networks
+                .iter()
+                .any(|n| n.name == Self::DEFAULT_NETWORK)
+            {
+                let default_net = NetworkRecord {
+                    id: "boxr00000000".to_string(),
+                    name: Self::DEFAULT_NETWORK.to_string(),
+                    driver: "bridge".to_string(),
+                    subnet: "172.28.0.0/16".to_string(),
+                    gateway: "172.28.0.1".to_string(),
+                    internal: false,
+                    created_at: Utc::now(),
+                    containers: HashMap::new(),
+                };
+                data.networks.push(default_net);
+                let _ = self.save_unlocked(&data);
+            }
+            Ok(())
+        });
     }
 
     pub fn list(&self) -> Vec<NetworkRecord> {
-        self.load().networks
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+            Ok(self.load_unlocked().networks)
+        })
+        .unwrap_or_default()
     }
 
     pub fn find(&self, query: &str) -> Option<NetworkRecord> {
-        let data = self.load();
-        data.networks
-            .into_iter()
-            .find(|n| n.id.starts_with(query) || n.name == query)
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+            Ok(self
+                .load_unlocked()
+                .networks
+                .into_iter()
+                .find(|n| n.id.starts_with(query) || n.name == query))
+        })
+        .ok()
+        .flatten()
     }
 
     pub fn create(
@@ -167,53 +178,57 @@ impl NetworkStore {
         subnet: Option<&str>,
         gateway: Option<&str>,
     ) -> Result<NetworkRecord> {
-        let mut data = self.load();
-        if data.networks.iter().any(|n| n.name == name) {
-            return Err(anyhow!("Network '{}' already exists", name));
-        }
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+            let mut data = self.load_unlocked();
+            if data.networks.iter().any(|n| n.name == name) {
+                return Err(anyhow!("Network '{}' already exists", name));
+            }
 
-        let network_count = data.networks.len();
-        let default_subnet = format!("172.{}.0.0/16", 29 + network_count);
-        let default_gw = format!("172.{}.0.1", 29 + network_count);
+            let network_count = data.networks.len();
+            let default_subnet = format!("172.{}.0.0/16", 29 + network_count);
+            let default_gw = format!("172.{}.0.1", 29 + network_count);
 
-        let chosen_subnet = subnet.unwrap_or(&default_subnet).to_string();
-        let chosen_gw = gateway.unwrap_or(&default_gw).to_string();
+            let chosen_subnet = subnet.unwrap_or(&default_subnet).to_string();
+            let chosen_gw = gateway.unwrap_or(&default_gw).to_string();
 
-        let id = hex::encode(crate::storage::container_store::rand_id());
+            let id = hex::encode(crate::storage::container_store::rand_id());
 
-        let record = NetworkRecord {
-            id,
-            name: name.to_string(),
-            driver: "bridge".to_string(),
-            subnet: chosen_subnet,
-            gateway: chosen_gw,
-            internal: false,
-            created_at: Utc::now(),
-            containers: HashMap::new(),
-        };
+            let record = NetworkRecord {
+                id,
+                name: name.to_string(),
+                driver: "bridge".to_string(),
+                subnet: chosen_subnet,
+                gateway: chosen_gw,
+                internal: false,
+                created_at: Utc::now(),
+                containers: HashMap::new(),
+            };
 
-        data.networks.push(record.clone());
-        self.save(&data)?;
-        Ok(record)
+            data.networks.push(record.clone());
+            self.save_unlocked(&data)?;
+            Ok(record)
+        })
     }
 
     pub fn remove(&self, query: &str) -> Result<NetworkRecord> {
-        let mut data = self.load();
-        if query == Self::DEFAULT_NETWORK {
-            return Err(anyhow!("Cannot remove the default bridge network"));
-        }
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+            let mut data = self.load_unlocked();
+            if query == Self::DEFAULT_NETWORK {
+                return Err(anyhow!("Cannot remove the default bridge network"));
+            }
 
-        if let Some(pos) = data
-            .networks
-            .iter()
-            .position(|n| n.id.starts_with(query) || n.name == query)
-        {
-            let removed = data.networks.remove(pos);
-            self.save(&data)?;
-            Ok(removed)
-        } else {
-            Err(anyhow!("Network '{}' not found", query))
-        }
+            if let Some(pos) = data
+                .networks
+                .iter()
+                .position(|n| n.id.starts_with(query) || n.name == query)
+            {
+                let removed = data.networks.remove(pos);
+                self.save_unlocked(&data)?;
+                Ok(removed)
+            } else {
+                Err(anyhow!("Network '{}' not found", query))
+            }
+        })
     }
 
     /// Allocate next available IP and attach container to network
@@ -223,52 +238,56 @@ impl NetworkStore {
         container_id: &str,
         container_name: &str,
     ) -> Result<NetworkEndpoint> {
-        let mut data = self.load();
-        let net = data
-            .networks
-            .iter_mut()
-            .find(|n| n.name == network_name || n.id.starts_with(network_name))
-            .ok_or_else(|| anyhow!("Network '{}' not found", network_name))?;
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+            let mut data = self.load_unlocked();
+            let net = data
+                .networks
+                .iter_mut()
+                .find(|n| n.name == network_name || n.id.starts_with(network_name))
+                .ok_or_else(|| anyhow!("Network '{}' not found", network_name))?;
 
-        if let Some(ep) = net.containers.get(container_id) {
-            return Ok(ep.clone());
-        }
+            if let Some(ep) = net.containers.get(container_id) {
+                return Ok(ep.clone());
+            }
 
-        // Allocate next IP
-        let ip = allocate_ip_in_subnet(&net.subnet, &net.gateway, &net.containers)?;
-        let mac = format!(
-            "02:42:{:02x}:{:02x}:{:02x}:{:02x}",
-            ip.octets()[0],
-            ip.octets()[1],
-            ip.octets()[2],
-            ip.octets()[3]
-        );
+            // Allocate next IP
+            let ip = allocate_ip_in_subnet(&net.subnet, &net.gateway, &net.containers)?;
+            let mac = format!(
+                "02:42:{:02x}:{:02x}:{:02x}:{:02x}",
+                ip.octets()[0],
+                ip.octets()[1],
+                ip.octets()[2],
+                ip.octets()[3]
+            );
 
-        let endpoint = NetworkEndpoint {
-            container_id: container_id.to_string(),
-            container_name: container_name.to_string(),
-            ipv4_address: ip.to_string(),
-            mac_address: mac,
-        };
+            let endpoint = NetworkEndpoint {
+                container_id: container_id.to_string(),
+                container_name: container_name.to_string(),
+                ipv4_address: ip.to_string(),
+                mac_address: mac,
+            };
 
-        net.containers
-            .insert(container_id.to_string(), endpoint.clone());
-        self.save(&data)?;
-        Ok(endpoint)
+            net.containers
+                .insert(container_id.to_string(), endpoint.clone());
+            self.save_unlocked(&data)?;
+            Ok(endpoint)
+        })
     }
 
     /// Disconnect container from network
     pub fn disconnect_container(&self, network_name: &str, container_id: &str) -> Result<()> {
-        let mut data = self.load();
-        let net = data
-            .networks
-            .iter_mut()
-            .find(|n| n.name == network_name || n.id.starts_with(network_name))
-            .ok_or_else(|| anyhow!("Network '{}' not found", network_name))?;
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+            let mut data = self.load_unlocked();
+            let net = data
+                .networks
+                .iter_mut()
+                .find(|n| n.name == network_name || n.id.starts_with(network_name))
+                .ok_or_else(|| anyhow!("Network '{}' not found", network_name))?;
 
-        net.containers.remove(container_id);
-        self.save(&data)?;
-        Ok(())
+            net.containers.remove(container_id);
+            self.save_unlocked(&data)?;
+            Ok(())
+        })
     }
 
     /// Generate an /etc/hosts content for a container, mapping all other containers in this network
@@ -278,28 +297,30 @@ impl NetworkStore {
         network_name: &str,
         _current_container_id: &str,
     ) -> Result<String> {
-        let mut lines = vec![
-            "127.0.0.1\tlocalhost".to_string(),
-            "::1\tlocalhost ip6-localhost ip6-loopback".to_string(),
-        ];
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+            let mut lines = vec![
+                "127.0.0.1\tlocalhost".to_string(),
+                "::1\tlocalhost ip6-localhost ip6-loopback".to_string(),
+            ];
 
-        let data = self.load();
-        if let Some(net) = data
-            .networks
-            .iter()
-            .find(|n| n.name == network_name || n.id.starts_with(network_name))
-        {
-            for (cid, ep) in &net.containers {
-                lines.push(format!(
-                    "{}\t{}\t{}",
-                    ep.ipv4_address,
-                    ep.container_name,
-                    &cid[..12.min(cid.len())]
-                ));
+            let data = self.load_unlocked();
+            if let Some(net) = data
+                .networks
+                .iter()
+                .find(|n| n.name == network_name || n.id.starts_with(network_name))
+            {
+                for (cid, ep) in &net.containers {
+                    lines.push(format!(
+                        "{}\t{}\t{}",
+                        ep.ipv4_address,
+                        ep.container_name,
+                        &cid[..12.min(cid.len())]
+                    ));
+                }
             }
-        }
 
-        Ok(lines.join("\n") + "\n")
+            Ok(lines.join("\n") + "\n")
+        })
     }
 }
 
