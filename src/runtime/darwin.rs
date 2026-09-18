@@ -195,8 +195,10 @@ pub fn execute_bundle(
 
     for p in ports {
         let host_ip_str = p.host_ip.as_deref().unwrap_or("0.0.0.0");
-        cmd.arg("--port")
-            .arg(format!("{}:{}:{}", host_ip_str, p.host_port, p.container_port));
+        cmd.arg("--port").arg(format!(
+            "{}:{}:{}",
+            host_ip_str, p.host_port, p.container_port
+        ));
     }
 
     if let Some(ann) = &spec.annotations {
@@ -244,7 +246,8 @@ pub fn execute_bundle(
         run_script.push_str("printf 'nameserver 192.168.64.1\\nnameserver 1.1.1.1\\nnameserver 8.8.8.8\\n' > /etc/resolv.conf 2>/dev/null || true\n");
     }
     run_script.push_str("mkdir -p /tmp /run 2>/dev/null; chmod 1777 /tmp 2>/dev/null || true\n");
-    run_script.push_str("mount -t tmpfs -o mode=0777,nodev,nosuid tmpfs /run 2>/dev/null || true\n");
+    run_script
+        .push_str("mount -t tmpfs -o mode=0777,nodev,nosuid tmpfs /run 2>/dev/null || true\n");
     run_script.push_str("if [ ! -L /var/run ]; then mkdir -p /var/run 2>/dev/null; mount -t tmpfs -o mode=0777,nodev,nosuid tmpfs /var/run 2>/dev/null || true; fi\n");
     run_script.push_str("mkdir -p /usr/local/bin 2>/dev/null; printf '#!/bin/sh\\n/bin/busybox chown \"$@\" 2>/dev/null || /bin/chown \"$@\" 2>/dev/null || true\\nexit 0\\n' > /usr/local/bin/chown 2>/dev/null; chmod +x /usr/local/bin/chown 2>/dev/null || true\n");
     let perm_so_path = rootfs_path.join("libboxr_perm.so");

@@ -325,7 +325,9 @@ fn test_enterprise_stateful_postgres_initdb_with_volume() {
     let container_name = format!("test_pg_ctr_{:x}", ts % 0xffffff);
 
     // Create volume
-    let _ = boxr_cmd(&bin).args(["volume", "create", &vol_name]).output();
+    let _ = boxr_cmd(&bin)
+        .args(["volume", "create", &vol_name])
+        .output();
 
     // Start detached Postgres with the persistent volume
     let run_res = boxr_cmd(&bin)
@@ -345,14 +347,25 @@ fn test_enterprise_stateful_postgres_initdb_with_volume() {
         .output()
         .unwrap();
 
-    assert!(run_res.status.success(), "Failed to launch postgres container with volume");
+    assert!(
+        run_res.status.success(),
+        "Failed to launch postgres container with volume"
+    );
 
     // Wait up to 15 seconds for postgres initdb and startup
     let mut ready = false;
     for _ in 0..15 {
         std::thread::sleep(std::time::Duration::from_secs(1));
         let exec_res = boxr_cmd(&bin)
-            .args(["exec", &container_name, "pg_isready", "-U", "postgres", "-d", "enterprise_db"])
+            .args([
+                "exec",
+                &container_name,
+                "pg_isready",
+                "-U",
+                "postgres",
+                "-d",
+                "enterprise_db",
+            ])
             .output();
         if let Ok(out) = exec_res {
             if out.status.success() {
@@ -366,5 +379,8 @@ fn test_enterprise_stateful_postgres_initdb_with_volume() {
     let _ = boxr_cmd(&bin).args(["rm", "-f", &container_name]).output();
     let _ = boxr_cmd(&bin).args(["volume", "rm", &vol_name]).output();
 
-    assert!(ready, "Postgres initdb with persistent volume failed to become ready");
+    assert!(
+        ready,
+        "Postgres initdb with persistent volume failed to become ready"
+    );
 }
