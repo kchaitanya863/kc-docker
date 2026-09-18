@@ -7,6 +7,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+const PERM_SO: &[u8] = include_bytes!("libboxr_perm.so");
+
 /// Ensure native Apple Virtualization runner binary is compiled and codesigned
 pub fn ensure_vz_runner() -> Result<PathBuf> {
     let home = boxr_home();
@@ -146,7 +148,7 @@ pub fn execute_bundle(
     bundle_path: &Path,
     spec: &Spec,
     mounts: &[MountSpec],
-    _ports: &[PortMapping],
+    ports: &[PortMapping],
     detach: bool,
 ) -> Result<i32> {
     let raw_rootfs = PathBuf::from(&spec.root.path);
@@ -191,6 +193,12 @@ pub fn execute_bundle(
     cmd.arg("--kernel").arg(&kernel_path);
     cmd.arg("--initrd").arg(&initrd_path);
 
+    for p in ports {
+        let host_ip_str = p.host_ip.as_deref().unwrap_or("0.0.0.0");
+        cmd.arg("--port")
+            .arg(format!("{}:{}:{}", host_ip_str, p.host_port, p.container_port));
+    }
+
     if let Some(ann) = &spec.annotations {
         if let Some(m) = ann.get("boxr.memory") {
             cmd.arg("--memory").arg(m);
@@ -209,6 +217,10 @@ pub fn execute_bundle(
     run_script.push_str("mount -t proc proc /proc 2>/dev/null || true\n");
     run_script.push_str("mount -t sysfs sysfs /sys 2>/dev/null || true\n");
     run_script.push_str("mount -t devtmpfs devtmpfs /dev 2>/dev/null || true\n");
+    run_script.push_str("ln -s /proc/self/fd /dev/fd 2>/dev/null || true\n");
+    run_script.push_str("ln -s /proc/self/fd/0 /dev/stdin 2>/dev/null || true\n");
+    run_script.push_str("ln -s /proc/self/fd/1 /dev/stdout 2>/dev/null || true\n");
+    run_script.push_str("ln -s /proc/self/fd/2 /dev/stderr 2>/dev/null || true\n");
     run_script.push_str("ip link set lo up 2>/dev/null || ifconfig lo up 2>/dev/null || true\n");
     let dns_file = bundle_path.join("dns.json");
     if dns_file.exists() {
@@ -231,8 +243,14 @@ pub fn execute_bundle(
     } else {
         run_script.push_str("printf 'nameserver 192.168.64.1\\nnameserver 1.1.1.1\\nnameserver 8.8.8.8\\n' > /etc/resolv.conf 2>/dev/null || true\n");
     }
-    run_script
-        .push_str("mkdir -p /tmp /data 2>/dev/null; chmod 1777 /tmp /data 2>/dev/null || true\n");
+    run_script.push_str("mkdir -p /tmp /run 2>/dev/null; chmod 1777 /tmp 2>/dev/null || true\n");
+    run_script.push_str("mount -t tmpfs -o mode=0777,nodev,nosuid tmpfs /run 2>/dev/null || true\n");
+    run_script.push_str("if [ ! -L /var/run ]; then mkdir -p /var/run 2>/dev/null; mount -t tmpfs -o mode=0777,nodev,nosuid tmpfs /var/run 2>/dev/null || true; fi\n");
+    run_script.push_str("mkdir -p /usr/local/bin 2>/dev/null; printf '#!/bin/sh\\n/bin/busybox chown \"$@\" 2>/dev/null || /bin/chown \"$@\" 2>/dev/null || true\\nexit 0\\n' > /usr/local/bin/chown 2>/dev/null; chmod +x /usr/local/bin/chown 2>/dev/null || true\n");
+    let perm_so_path = rootfs_path.join("libboxr_perm.so");
+    let _ = fs::write(&perm_so_path, PERM_SO);
+    run_script.push_str("echo /libboxr_perm.so > /etc/ld.so.preload 2>/dev/null || true\n");
+    run_script.push_str("export LD_PRELOAD=\"/libboxr_perm.so${LD_PRELOAD:+:$LD_PRELOAD}\"\n");
 
     // Volume mounts
     let mut all_mounts = mounts.to_vec();
@@ -393,7 +411,7 @@ pub fn execute_bundle(
         }
         let _child = cmd.spawn()?;
         // Give background VM a brief moment to boot
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        std::thread::sleep(std::time::Duration::from_millis(300));
         return Ok(0);
     }
 

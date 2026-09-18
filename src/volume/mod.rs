@@ -87,6 +87,11 @@ impl VolumeStore {
 
         let mountpoint = self.volumes_dir.join(&vol_name).join("_data");
         fs::create_dir_all(&mountpoint)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&mountpoint, fs::Permissions::from_mode(0o777));
+        }
 
         let record = VolumeRecord {
             name: vol_name,

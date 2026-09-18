@@ -995,6 +995,7 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
 
     if args.detach {
         println!("{}", container_id);
+        #[cfg(not(target_os = "macos"))]
         if !parsed_ports.is_empty() {
             let _ = network::rootless::PortForwardManager::start_forwarding(&parsed_ports).await;
         }

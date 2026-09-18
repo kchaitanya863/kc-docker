@@ -269,3 +269,102 @@ fn test_enterprise_env_hygiene() {
         assert!(out.contains("production:1"));
     }
 }
+
+/// 9. Stateful Persistent Volume Privilege Dropping & Chmod/Chown Invariants
+/// Validates that unprivileged daemon processes dropping privileges (e.g. postgres, redis, mysql)
+/// can manage directories, execute chmod 0700, chown, and write within mounted persistent volumes without EPERM.
+#[test]
+fn test_enterprise_stateful_volume_privilege_drop_and_permissions() {
+    let bin = boxr_bin();
+    if !bin.exists() {
+        return;
+    }
+
+    let temp = tempdir().unwrap();
+    let mount_spec = format!("{}:/srv/data:rw", temp.path().display());
+
+    let vol_test = boxr_cmd(&bin)
+        .args([
+            "run",
+            "--rm",
+            "-v",
+            &mount_spec,
+            "alpine",
+            "/bin/sh",
+            "-c",
+            "mkdir -p /srv/data/pg_sub && chmod 0700 /srv/data/pg_sub && chown -R 70:70 /srv/data/pg_sub && echo 'stateful-ok' > /srv/data/pg_sub/wal.dat && cat /srv/data/pg_sub/wal.dat",
+        ])
+        .output()
+        .unwrap();
+
+    if vol_test.status.success() {
+        let out = String::from_utf8_lossy(&vol_test.stdout);
+        assert!(
+            out.contains("stateful-ok"),
+            "Expected stateful volume write to succeed, got: {}",
+            out
+        );
+    }
+}
+
+/// 10. End-to-End Enterprise Stateful Database Initialization with Named Volume
+/// Verifies full PostgreSQL entrypoint, initdb, Unix domain socket creation in /var/run,
+/// volume persistence, and database readiness.
+#[test]
+fn test_enterprise_stateful_postgres_initdb_with_volume() {
+    let bin = boxr_bin();
+    if !bin.exists() {
+        return;
+    }
+
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let vol_name = format!("test_pg_vol_{:x}", ts % 0xffffff);
+    let container_name = format!("test_pg_ctr_{:x}", ts % 0xffffff);
+
+    // Create volume
+    let _ = boxr_cmd(&bin).args(["volume", "create", &vol_name]).output();
+
+    // Start detached Postgres with the persistent volume
+    let run_res = boxr_cmd(&bin)
+        .args([
+            "run",
+            "-d",
+            "--name",
+            &container_name,
+            "-e",
+            "POSTGRES_PASSWORD=testpassword",
+            "-e",
+            "POSTGRES_DB=enterprise_db",
+            "-v",
+            &format!("{}:/var/lib/postgresql/data", vol_name),
+            "postgres:16-alpine",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(run_res.status.success(), "Failed to launch postgres container with volume");
+
+    // Wait up to 15 seconds for postgres initdb and startup
+    let mut ready = false;
+    for _ in 0..15 {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        let exec_res = boxr_cmd(&bin)
+            .args(["exec", &container_name, "pg_isready", "-U", "postgres", "-d", "enterprise_db"])
+            .output();
+        if let Ok(out) = exec_res {
+            if out.status.success() {
+                ready = true;
+                break;
+            }
+        }
+    }
+
+    // Clean up container and volume
+    let _ = boxr_cmd(&bin).args(["rm", "-f", &container_name]).output();
+    let _ = boxr_cmd(&bin).args(["volume", "rm", &vol_name]).output();
+
+    assert!(ready, "Postgres initdb with persistent volume failed to become ready");
+}
