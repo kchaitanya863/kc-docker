@@ -821,6 +821,27 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
     if let Some(cidfile) = &args.cidfile {
         fs::write(cidfile, &container_id)?;
     }
+    for t in &args.tmpfs {
+        let (dest, opts) = if let Some((d, o)) = t.split_once(':') {
+            (d, o)
+        } else {
+            (t.as_str(), "rw,nosuid,nodev,size=65536k")
+        };
+        spec.mounts.push(oci::runtime::Mount {
+            destination: dest.to_string(),
+            mount_type: "tmpfs".to_string(),
+            source: "tmpfs".to_string(),
+            options: Some(opts.split(',').map(|s| s.to_string()).collect()),
+        });
+    }
+    if args.security_opt.iter().any(|s| s == "seccomp=unconfined") {
+        if let Some(l) = &mut spec.linux {
+            l.seccomp = None;
+        }
+    }
+    if args.security_opt.iter().any(|s| s == "no-new-privileges" || s == "no-new-privileges:true") {
+        spec.process.no_new_privileges = Some(true);
+    }
     spec.save_to_bundle(&bundle_dir)?;
 
     let restart_policy = health::parse_restart_policy(&args.restart)?;
@@ -1599,16 +1620,31 @@ pub async fn build_image(args: BuildArgs) -> Result<()> {
         }
     }
 
-    builder
+    let primary_tag = args.tags.first().cloned();
+    let record = builder
         .build(builder::BuildOptions {
             context_dir,
             dockerfile_path,
-            tag: args.tag,
+            tag: primary_tag,
             no_cache: args.no_cache,
             build_args,
             target: args.target,
         })
         .await?;
+
+    let store = ImageStore::new();
+    for extra_tag in args.tags.iter().skip(1) {
+        let (ref_name, tag_name) = if let Some((r, t)) = extra_tag.split_once(':') {
+            (r.to_string(), t.to_string())
+        } else {
+            (extra_tag.clone(), "latest".to_string())
+        };
+        let mut tagged_record = record.clone();
+        tagged_record.reference = ref_name;
+        tagged_record.tag = tag_name;
+        let _ = store.add(tagged_record);
+        println!("Successfully tagged image as {}", extra_tag);
+    }
 
     Ok(())
 }
@@ -2160,6 +2196,27 @@ pub async fn create_only_container(args: RunArgs) -> Result<String> {
     }
     if let Some(cidfile) = &args.cidfile {
         fs::write(cidfile, &container_id)?;
+    }
+    for t in &args.tmpfs {
+        let (dest, opts) = if let Some((d, o)) = t.split_once(':') {
+            (d, o)
+        } else {
+            (t.as_str(), "rw,nosuid,nodev,size=65536k")
+        };
+        spec.mounts.push(oci::runtime::Mount {
+            destination: dest.to_string(),
+            mount_type: "tmpfs".to_string(),
+            source: "tmpfs".to_string(),
+            options: Some(opts.split(',').map(|s| s.to_string()).collect()),
+        });
+    }
+    if args.security_opt.iter().any(|s| s == "seccomp=unconfined") {
+        if let Some(l) = &mut spec.linux {
+            l.seccomp = None;
+        }
+    }
+    if args.security_opt.iter().any(|s| s == "no-new-privileges" || s == "no-new-privileges:true") {
+        spec.process.no_new_privileges = Some(true);
     }
     spec.save_to_bundle(&bundle_dir)?;
 

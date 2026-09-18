@@ -34,6 +34,8 @@ pub struct ComposeNetworkConfig {
 pub struct ServiceConfig {
     pub image: Option<String>,
     pub build: Option<String>,
+    pub container_name: Option<String>,
+    pub env_file: Option<CommandOrList>,
     pub command: Option<CommandOrList>,
     pub entrypoint: Option<CommandOrList>,
     pub environment: Option<EnvironmentConfig>,
@@ -187,7 +189,10 @@ impl ComposeProject {
 
         for svc_name in order {
             let svc = self.compose.services.get(&svc_name).unwrap();
-            let container_name = format!("{}_{}_1", self.name, svc_name);
+            let container_name = svc
+                .container_name
+                .clone()
+                .unwrap_or_else(|| format!("{}_{}_1", self.name, svc_name));
 
             // Determine image
             let image_name = if let Some(build_path_str) = &svc.build {
@@ -218,11 +223,26 @@ impl ComposeProject {
                 ));
             };
 
-            let env_vec = svc
+            let mut env_vec = svc
                 .environment
                 .as_ref()
                 .map(|e| e.to_vec())
                 .unwrap_or_default();
+
+            if let Some(ef) = &svc.env_file {
+                for path_str in ef.to_vec() {
+                    let p = root_dir.join(&path_str);
+                    if let Ok(content) = fs::read_to_string(&p) {
+                        for line in content.lines() {
+                            let trimmed = line.trim();
+                            if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                                env_vec.push(trimmed.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+
             let cmd_vec = svc.command.as_ref().map(|c| c.to_vec()).unwrap_or_default();
             let port_vec = svc.ports.clone().unwrap_or_default();
             let mut vol_vec = Vec::new();
@@ -266,7 +286,7 @@ impl ComposeProject {
                 cpus: None,
                 pids_limit: None,
                 rootless: true,
-                restart: "no".to_string(),
+                restart: svc.restart.clone().unwrap_or_else(|| "no".to_string()),
                 health_cmd: None,
                 platform: None,
                 privileged: false,
@@ -282,6 +302,9 @@ impl ComposeProject {
                 cap_drop: Vec::new(),
                 read_only: false,
                 init: false,
+                tmpfs: Vec::new(),
+                devices: Vec::new(),
+                security_opt: Vec::new(),
                 workdir: None,
                 image: image_name,
                 command: cmd_vec,
@@ -299,8 +322,15 @@ impl ComposeProject {
         let store = ContainerStore::new();
         let prefix = format!("{}_", self.name);
 
+        let mut custom_names = HashSet::new();
+        for svc in self.compose.services.values() {
+            if let Some(cname) = &svc.container_name {
+                custom_names.insert(cname.clone());
+            }
+        }
+
         for c in store.list() {
-            if c.name.starts_with(&prefix) {
+            if c.name.starts_with(&prefix) || custom_names.contains(&c.name) {
                 println!("Stopping container {}", c.name);
                 let _ = crate::stop_container(&c.id);
                 println!("Removing container {}", c.name);
@@ -327,10 +357,18 @@ impl ComposeProject {
     pub fn ps(&self) -> Result<Vec<ContainerRecord>> {
         let store = ContainerStore::new();
         let prefix = format!("{}_", self.name);
+
+        let mut custom_names = HashSet::new();
+        for svc in self.compose.services.values() {
+            if let Some(cname) = &svc.container_name {
+                custom_names.insert(cname.clone());
+            }
+        }
+
         let containers: Vec<ContainerRecord> = store
             .list()
             .into_iter()
-            .filter(|c| c.name.starts_with(&prefix))
+            .filter(|c| c.name.starts_with(&prefix) || custom_names.contains(&c.name))
             .collect();
         Ok(containers)
     }

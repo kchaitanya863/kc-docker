@@ -83,3 +83,15 @@ Tracked tasks to reach 100% production readiness and drop-in parity with Docker 
 - [x] **15. Multi-Arch Manifest Subcommands (`cli-manifest-cmds`)**
   - Implemented `docker manifest inspect`, `create`, and `push`.
   - Verified with integration test `test_docker_parity_manifest_commands` and section 16 of `run_parity_tests.sh`.
+
+- [x] **16. Advanced Compose v2 Directives (`compose-advanced-directives`)**
+  - Supported `container_name`, single and multi-file `env_file`, and `restart` policies in `docker-compose.yml`.
+  - Verified with integration test `test_docker_parity_compose_advanced`.
+
+- [x] **17. Multi-Tag Image Builds (`builder-multi-tags`)**
+  - Supported multiple `-t / --tag` flags in `docker build` to tag images with multiple references in one build.
+  - Verified with integration test `test_docker_parity_builder_multi_tags` and section 18 of `run_parity_tests.sh`.
+
+- [x] **18. Advanced Runtime Isolation Flags (`cli-runtime-flags`)**
+  - Added `--tmpfs <path[:options]>`, `--device`, and `--security-opt` (`seccomp=unconfined`, `no-new-privileges:true`) to `docker run/create`.
+  - Verified with integration test `test_docker_parity_runtime_flags` and section 19 of `run_parity_tests.sh`.

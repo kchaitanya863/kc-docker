@@ -571,6 +571,35 @@ test_step "docker run --rm --init ubuntu echo 'init-ok'" \
     "$DOCKER_CMD run --rm --init ubuntu echo 'init-ok' | grep 'init-ok' >/dev/null"
 
 # ------------------------------------------------------------------------------
+# 18. Multi-Tag Build Parity (-t tag1 -t tag2)
+# ------------------------------------------------------------------------------
+echo -e "\n${BOLD}18. Multi-Tag Build Parity (-t ... -t ...)${NC}"
+BUILD_DIR_MULTI="/tmp/boxr-build-multi-$(rand_id)"
+TAG1="multiapp:v1-$(rand_id)"
+TAG2="multiapp:latest-$(rand_id)"
+
+run_cmd "mkdir -p $BUILD_DIR_MULTI && printf 'FROM ubuntu:latest\nCMD [\"echo\",\"multi\"]\n' > $BUILD_DIR_MULTI/Dockerfile"
+
+test_step "docker build -t <tag1> -t <tag2> <context>" \
+    "$DOCKER_CMD build -t $TAG1 -t $TAG2 $BUILD_DIR_MULTI"
+
+test_step "verify tag1 exists" \
+    "$DOCKER_CMD inspect $TAG1 >/dev/null"
+
+test_step "verify tag2 exists" \
+    "$DOCKER_CMD inspect $TAG2 >/dev/null"
+
+run_cmd "$DOCKER_CMD rmi $TAG1 $TAG2; rm -rf $BUILD_DIR_MULTI" &>/dev/null
+
+# ------------------------------------------------------------------------------
+# 19. Advanced Runtime Isolation Flags (--tmpfs, --security-opt)
+# ------------------------------------------------------------------------------
+echo -e "\n${BOLD}19. Advanced Runtime Isolation Flags (--tmpfs, --security-opt)${NC}"
+
+test_step "docker run --rm --tmpfs /run --security-opt seccomp=unconfined ubuntu echo ok" \
+    "$DOCKER_CMD run --rm --tmpfs /run:rw,size=64m --security-opt seccomp=unconfined ubuntu echo 'rt-ok' | grep 'rt-ok' >/dev/null"
+
+# ------------------------------------------------------------------------------
 # Summary Report
 # ------------------------------------------------------------------------------
 END_TIME=$(date +%s)

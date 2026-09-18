@@ -795,3 +795,143 @@ fn test_docker_parity_run_init() {
     assert!(stdout.contains("init-ok"));
 }
 
+/// Docker Parity Test: Builder Multi-Tag Support (docker build -t tag1 -t tag2)
+#[test]
+fn test_docker_parity_builder_multi_tags() {
+    let bin = boxr_bin();
+    if !bin.exists() {
+        return;
+    }
+
+    let temp = tempdir().unwrap();
+    let dockerfile_path = temp.path().join("Dockerfile");
+    fs::write(
+        &dockerfile_path,
+        "FROM alpine:latest\nCMD [\"echo\", \"multitag\"]\n",
+    )
+    .unwrap();
+
+    let tag1 = format!("multitag1:{}", unique_id());
+    let tag2 = format!("multitag2:{}", unique_id());
+
+    // Build with two tags
+    let out = boxr_cmd(&bin)
+        .args([
+            "build",
+            "-t",
+            &tag1,
+            "-t",
+            &tag2,
+            "-f",
+            dockerfile_path.to_str().unwrap(),
+            temp.path().to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    // Verify both tags exist
+    let out = boxr_cmd(&bin).args(["inspect", &tag1]).output().unwrap();
+    assert!(out.status.success());
+    let out = boxr_cmd(&bin).args(["inspect", &tag2]).output().unwrap();
+    assert!(out.status.success());
+
+    // Cleanup
+    let _ = boxr_cmd(&bin).args(["rmi", &tag1]).output();
+    let _ = boxr_cmd(&bin).args(["rmi", &tag2]).output();
+}
+
+/// Docker Parity Test: Compose Advanced Directives (container_name, env_file, restart)
+#[test]
+fn test_docker_parity_compose_advanced() {
+    let bin = boxr_bin();
+    if !bin.exists() {
+        return;
+    }
+
+    let temp = tempdir().unwrap();
+    let compose_file = temp.path().join("docker-compose.yml");
+    let env_file = temp.path().join("custom.env");
+    fs::write(&env_file, "CUSTOM_VAR=advanced_compose_ok\n").unwrap();
+
+    let custom_cname = format!("custom-srv-{}", unique_id());
+
+    fs::write(
+        &compose_file,
+        format!(
+            r#"
+version: '3.8'
+services:
+  web:
+    image: alpine:latest
+    container_name: {}
+    env_file:
+      - custom.env
+    restart: unless-stopped
+    command: sleep 30
+"#,
+            custom_cname
+        ),
+    )
+    .unwrap();
+
+    // 1. compose up -d
+    let out = boxr_cmd(&bin)
+        .args(["compose", "-f", compose_file.to_str().unwrap(), "up", "-d"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    // 2. compose ps
+    let out = boxr_cmd(&bin)
+        .args(["compose", "-f", compose_file.to_str().unwrap(), "ps"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains(&custom_cname));
+
+    // 3. inspect container env
+    let out = boxr_cmd(&bin).args(["inspect", &custom_cname]).output().unwrap();
+    assert!(out.status.success());
+
+    // 4. compose down
+    let out = boxr_cmd(&bin)
+        .args(["compose", "-f", compose_file.to_str().unwrap(), "down"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+}
+
+/// Docker Parity Test: Runtime Flags (--tmpfs, --security-opt)
+#[test]
+fn test_docker_parity_runtime_flags() {
+    let bin = boxr_bin();
+    if !bin.exists() {
+        return;
+    }
+
+    let name = format!("dockertest-rt-{}", unique_id());
+
+    // Run container with --tmpfs and --security-opt
+    let out = boxr_cmd(&bin)
+        .args([
+            "run",
+            "--rm",
+            "--name",
+            &name,
+            "--tmpfs",
+            "/run:rw,size=64m",
+            "--security-opt",
+            "seccomp=unconfined",
+            "alpine",
+            "echo",
+            "rt-flags-ok",
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("rt-flags-ok"));
+}
+

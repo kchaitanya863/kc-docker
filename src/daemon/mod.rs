@@ -335,6 +335,9 @@ async fn create_container(
         cap_drop: Vec::new(),
         read_only: false,
         init: false,
+        tmpfs: Vec::new(),
+        devices: Vec::new(),
+        security_opt: Vec::new(),
         image: payload.image,
         command: payload.cmd.unwrap_or_default(),
     };

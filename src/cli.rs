@@ -335,6 +335,18 @@ pub struct RunArgs {
     #[arg(long = "init")]
     pub init: bool,
 
+    /// Mount a tmpfs directory
+    #[arg(long = "tmpfs")]
+    pub tmpfs: Vec<String>,
+
+    /// Add a host device to the container
+    #[arg(long = "device")]
+    pub devices: Vec<String>,
+
+    /// Security Options
+    #[arg(long = "security-opt")]
+    pub security_opt: Vec<String>,
+
     pub image: String,
 
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -444,7 +456,7 @@ pub struct InspectArgs {
 #[derive(Args, Debug, Clone)]
 pub struct BuildArgs {
     #[arg(short = 't', long = "tag")]
-    pub tag: Option<String>,
+    pub tags: Vec<String>,
 
     #[arg(short = 'f', long = "file", default_value = "Dockerfile")]
     pub file: String,

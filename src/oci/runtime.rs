@@ -76,6 +76,8 @@ pub struct Linux {
     pub namespaces: Vec<LinuxNamespace>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resources: Option<LinuxResources>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seccomp: Option<serde_json::Value>,
 }
 
 /// The top-level OCI Runtime Specification bundle configuration (config.json).
@@ -232,6 +234,7 @@ impl Spec {
                 memory: None,
                 pids: Some(LinuxPids { limit: 1024 }),
             }),
+            seccomp: None,
         };
 
         Self {
