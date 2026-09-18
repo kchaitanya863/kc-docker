@@ -935,3 +935,50 @@ fn test_docker_parity_runtime_flags() {
     assert!(stdout.contains("rt-flags-ok"));
 }
 
+/// Docker Parity Test: CPU and Memory Resource Limits (-m, --cpus, --pids-limit, and docker update)
+#[test]
+fn test_docker_parity_resource_limits() {
+    let bin = boxr_bin();
+    if !bin.exists() {
+        return;
+    }
+
+    let name = format!("dockertest-limits-{}", unique_id());
+
+    // 1. Run container with memory, cpu, and pid restrictions
+    let out = boxr_cmd(&bin)
+        .args([
+            "run",
+            "-d",
+            "--name",
+            &name,
+            "-m",
+            "256m",
+            "--cpus",
+            "1.5",
+            "--pids-limit",
+            "100",
+            "alpine",
+            "sleep",
+            "60",
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    // 2. Inspect container
+    let out = boxr_cmd(&bin).args(["inspect", &name]).output().unwrap();
+    assert!(out.status.success());
+
+    // 3. Update container resource limits dynamically (docker update)
+    let out = boxr_cmd(&bin)
+        .args(["update", "--memory", "512m", "--cpus", "2.0", &name])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    // 4. Cleanup
+    let _ = boxr_cmd(&bin).args(["stop", &name]).output();
+    let _ = boxr_cmd(&bin).args(["rm", &name]).output();
+}
+

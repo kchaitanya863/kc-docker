@@ -600,6 +600,27 @@ test_step "docker run --rm --tmpfs /run --security-opt seccomp=unconfined ubuntu
     "$DOCKER_CMD run --rm --tmpfs /run:rw,size=64m --security-opt seccomp=unconfined ubuntu echo 'rt-ok' | grep 'rt-ok' >/dev/null"
 
 # ------------------------------------------------------------------------------
+# 20. CPU & Memory Resource Restrictions & Dynamic Update (docker update)
+# ------------------------------------------------------------------------------
+echo -e "\n${BOLD}20. CPU & Memory Restrictions & Dynamic Update Parity${NC}"
+LIMIT_NAME="limit-$(rand_id)"
+
+test_step "docker run -d -m 256m --cpus 1.5 --pids-limit 100 <name>" \
+    "$DOCKER_CMD run -d --name $LIMIT_NAME -m 256m --cpus 1.5 --pids-limit 100 ubuntu sleep 30"
+
+test_step "verify limit container running" \
+    "$DOCKER_CMD ps | grep '$LIMIT_NAME' >/dev/null"
+
+test_step "docker update --memory 512m --cpus 2.0 <name>" \
+    "$DOCKER_CMD update --memory 512m --cpus 2.0 $LIMIT_NAME | grep '$LIMIT_NAME' >/dev/null"
+
+test_step "verify limit container still running post-update" \
+    "$DOCKER_CMD ps | grep '$LIMIT_NAME' >/dev/null"
+
+test_step "cleanup limit container" \
+    "$DOCKER_CMD stop $LIMIT_NAME && $DOCKER_CMD rm $LIMIT_NAME"
+
+# ------------------------------------------------------------------------------
 # Summary Report
 # ------------------------------------------------------------------------------
 END_TIME=$(date +%s)

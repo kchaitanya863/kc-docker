@@ -191,6 +191,18 @@ pub fn execute_bundle(
     cmd.arg("--kernel").arg(&kernel_path);
     cmd.arg("--initrd").arg(&initrd_path);
 
+    if let Some(ann) = &spec.annotations {
+        if let Some(m) = ann.get("boxr.memory") {
+            cmd.arg("--memory").arg(m);
+        }
+        if let Some(c) = ann.get("boxr.cpus") {
+            if let Ok(cpus_f) = c.parse::<f64>() {
+                let cpu_count = (cpus_f.ceil() as u64).max(1);
+                cmd.arg("--cpus").arg(cpu_count.to_string());
+            }
+        }
+    }
+
     // Build the runner script inside the container's rootfs
     let mut run_script = String::new();
     run_script.push_str("#!/bin/sh\n");

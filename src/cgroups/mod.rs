@@ -79,6 +79,14 @@ impl CgroupV2Manager {
                 if user_slice.exists() {
                     return user_slice;
                 }
+
+                let unified_slice = PathBuf::from(format!(
+                    "/sys/fs/cgroup/unified/user.slice/user-{}.slice/user@{}.service",
+                    uid, uid
+                ));
+                if unified_slice.exists() {
+                    return unified_slice;
+                }
             }
 
             let sys_cgroup = PathBuf::from("/sys/fs/cgroup");
@@ -97,15 +105,24 @@ impl CgroupV2Manager {
             return Ok(());
         }
 
-        // Apply memory limits
+        // Apply memory limits (cgroups v2 and v1)
         if let Some(mem) = limits.memory_max_bytes {
             let _ = fs::write(self.cgroup_path.join("memory.max"), mem.to_string());
+            let _ = fs::write(
+                self.cgroup_path.join("memory.limit_in_bytes"),
+                mem.to_string(),
+            );
         }
 
-        // Apply CPU quota
+        // Apply CPU quota (cgroups v2 and v1)
         if let (Some(quota), Some(period)) = (limits.cpu_quota_us, limits.cpu_period_us) {
             let val = format!("{} {}", quota, period);
             let _ = fs::write(self.cgroup_path.join("cpu.max"), val);
+            let _ = fs::write(self.cgroup_path.join("cpu.cfs_quota_us"), quota.to_string());
+            let _ = fs::write(
+                self.cgroup_path.join("cpu.cfs_period_us"),
+                period.to_string(),
+            );
         }
 
         // Apply PID limits
@@ -126,8 +143,8 @@ impl CgroupV2Manager {
         if !self.cgroup_path.exists() {
             return Ok(());
         }
-        fs::write(self.cgroup_path.join("cgroup.procs"), pid.to_string())
-            .context("Failed to attach pid to cgroup.procs")?;
+        let _ = fs::write(self.cgroup_path.join("cgroup.procs"), pid.to_string());
+        let _ = fs::write(self.cgroup_path.join("tasks"), pid.to_string());
         Ok(())
     }
 

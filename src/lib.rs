@@ -793,6 +793,12 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
     if args.init {
         annotations.insert("boxr.init".to_string(), "true".to_string());
     }
+    if let Some(m) = limits.memory_max_bytes {
+        annotations.insert("boxr.memory".to_string(), m.to_string());
+    }
+    if let Some(c) = &args.cpus {
+        annotations.insert("boxr.cpus".to_string(), c.clone());
+    }
     let net_mode = network::pasta::NetworkMode::parse(&args.network);
     if net_mode == network::pasta::NetworkMode::Pasta
         && !network::pasta::PastaDriver::is_available()
@@ -2165,6 +2171,21 @@ pub async fn create_only_container(args: RunArgs) -> Result<String> {
         spec.process.cwd = w.clone();
     }
 
+    let mut limits = cgroups::ResourceLimits::default();
+    if let Some(mem_str) = &args.memory {
+        limits.memory_max_bytes = cgroups::ResourceLimits::parse_memory(mem_str).ok();
+    }
+    if let Some(cpus_str) = &args.cpus {
+        if let Ok((quota, period)) = cgroups::ResourceLimits::parse_cpus(cpus_str) {
+            limits.cpu_quota_us = Some(quota);
+            limits.cpu_period_us = Some(period);
+        }
+    }
+    limits.pids_max = args.pids_limit;
+    if let Ok(cgroup_mgr) = cgroups::CgroupV2Manager::new(&container_id) {
+        let _ = cgroup_mgr.apply_limits(&limits);
+    }
+
     let mut annotations = HashMap::new();
     annotations.insert(
         "org.opencontainers.image.architecture".to_string(),
@@ -2178,6 +2199,12 @@ pub async fn create_only_container(args: RunArgs) -> Result<String> {
     }
     if args.init {
         annotations.insert("boxr.init".to_string(), "true".to_string());
+    }
+    if let Some(m) = limits.memory_max_bytes {
+        annotations.insert("boxr.memory".to_string(), m.to_string());
+    }
+    if let Some(c) = &args.cpus {
+        annotations.insert("boxr.cpus".to_string(), c.clone());
     }
     annotations.insert("boxr.network".to_string(), args.network.clone());
     spec.annotations = Some(annotations);

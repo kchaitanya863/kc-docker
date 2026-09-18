@@ -41,8 +41,14 @@ pub fn execute_bundle(
             .spawn()
             .context("Failed to spawn container trampoline process")?;
 
-        let _ = fs::write(bundle_path.join("vm.pid"), child.id().to_string());
-        let _ = fs::write(bundle_path.join("pid"), child.id().to_string());
+        let child_pid = child.id() as i32;
+        let _ = fs::write(bundle_path.join("vm.pid"), child_pid.to_string());
+        let _ = fs::write(bundle_path.join("pid"), child_pid.to_string());
+        if let Some(cont_id) = bundle_path.file_name().and_then(|s| s.to_str()) {
+            if let Ok(cgroup_mgr) = crate::cgroups::CgroupV2Manager::new(cont_id) {
+                let _ = cgroup_mgr.add_process(child_pid);
+            }
+        }
         Ok(0)
     } else {
         let status = std::process::Command::new(&exe)
@@ -152,6 +158,13 @@ pub fn run_trampoline(args: &[String]) -> Result<i32> {
                     }
                 }
                 drop(parent_sock);
+
+                let _ = fs::write(bundle_path.join("container.pid"), child.as_raw().to_string());
+                if let Some(cont_id) = bundle_path.file_name().and_then(|s| s.to_str()) {
+                    if let Ok(cgroup_mgr) = crate::cgroups::CgroupV2Manager::new(cont_id) {
+                        let _ = cgroup_mgr.add_process(child.as_raw());
+                    }
+                }
 
                 // 5. Wait for child container process
                 let status = match waitpid(child, None)? {

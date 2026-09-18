@@ -95,3 +95,10 @@ Tracked tasks to reach 100% production readiness and drop-in parity with Docker 
 - [x] **18. Advanced Runtime Isolation Flags (`cli-runtime-flags`)**
   - Added `--tmpfs <path[:options]>`, `--device`, and `--security-opt` (`seccomp=unconfined`, `no-new-privileges:true`) to `docker run/create`.
   - Verified with integration test `test_docker_parity_runtime_flags` and section 19 of `run_parity_tests.sh`.
+
+- [x] **19. CPU & Memory Resource Restrictions & Dynamic Updates (`cgroups-restrictions`)**
+  - Bound child container processes to cgroups v2/v1 hierarchy (`add_process` to `cgroup.procs` and `tasks`).
+  - Supported memory limits (`-m / --memory`), CPU quotas (`--cpus`), and PID limits (`--pids-limit`).
+  - Enabled dynamic updates via `docker update --memory ... --cpus ... <container>`.
+  - Passed `--memory` and `--cpus` to Apple `Virtualization.framework` microVMs on macOS.
+  - Verified with integration test `test_docker_parity_resource_limits` and section 20 of `run_parity_tests.sh`.
