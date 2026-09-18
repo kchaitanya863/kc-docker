@@ -905,7 +905,7 @@ pub struct CpArgs {
 #[derive(Args, Debug)]
 pub struct UpdateArgs {
     /// Memory limit
-    #[arg(long = "memory")]
+    #[arg(short = 'm', long = "memory")]
     pub memory: Option<String>,
 
     /// CPU limit
