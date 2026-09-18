@@ -7,7 +7,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const PERM_SO: &[u8] = include_bytes!("libboxr_perm.so");
+const PERM_SO_ARM64: &[u8] = include_bytes!("libboxr_perm.so");
+const PERM_SO_X86_64: &[u8] = include_bytes!("libboxr_perm_x86_64.so");
 
 /// Ensure native Apple Virtualization runner binary is compiled and codesigned
 pub fn ensure_vz_runner() -> Result<PathBuf> {
@@ -181,6 +182,12 @@ pub fn execute_bundle(
                     "Windows container execution requires a native Windows host (Windows Server or Windows 10/11 with Containers feature enabled). The OCI image was successfully downloaded and stored locally."
                 ));
             }
+            #[cfg(target_arch = "aarch64")]
+            if platform.contains("amd64") || platform.contains("x86_64") {
+                return Err(anyhow!(
+                    "Running linux/amd64 containers on Apple Silicon requires Rosetta 2 for Linux"
+                ));
+            }
         }
     }
 
@@ -250,8 +257,20 @@ pub fn execute_bundle(
         .push_str("mount -t tmpfs -o mode=0777,nodev,nosuid tmpfs /run 2>/dev/null || true\n");
     run_script.push_str("if [ ! -L /var/run ]; then mkdir -p /var/run 2>/dev/null; mount -t tmpfs -o mode=0777,nodev,nosuid tmpfs /var/run 2>/dev/null || true; fi\n");
     run_script.push_str("mkdir -p /usr/local/bin 2>/dev/null; printf '#!/bin/sh\\n/bin/busybox chown \"$@\" 2>/dev/null || /bin/chown \"$@\" 2>/dev/null || true\\nexit 0\\n' > /usr/local/bin/chown 2>/dev/null; chmod +x /usr/local/bin/chown 2>/dev/null || true\n");
+    let is_x86_64 = if let Some(ann) = &spec.annotations {
+        ann.get("boxr.platform")
+            .map(|p| p.contains("amd64") || p.contains("x86_64"))
+            .unwrap_or(false)
+    } else {
+        false
+    };
+    let perm_bytes = if is_x86_64 {
+        PERM_SO_X86_64
+    } else {
+        PERM_SO_ARM64
+    };
     let perm_so_path = rootfs_path.join("libboxr_perm.so");
-    let _ = fs::write(&perm_so_path, PERM_SO);
+    let _ = fs::write(&perm_so_path, perm_bytes);
     run_script.push_str("echo /libboxr_perm.so > /etc/ld.so.preload 2>/dev/null || true\n");
     run_script.push_str("export LD_PRELOAD=\"/libboxr_perm.so${LD_PRELOAD:+:$LD_PRELOAD}\"\n");
 

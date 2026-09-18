@@ -93,7 +93,12 @@ impl ContainerStore {
 
     fn save(&self, data: &ContainerStoreData) -> Result<()> {
         let content = serde_json::to_string_pretty(data)?;
-        fs::write(&self.index_file, content)?;
+        let rand_suffix = hex::encode(rand_id());
+        let temp_file = self
+            .index_file
+            .with_extension(format!("tmp.{}", rand_suffix));
+        fs::write(&temp_file, content)?;
+        fs::rename(&temp_file, &self.index_file)?;
         Ok(())
     }
 

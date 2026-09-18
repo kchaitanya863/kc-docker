@@ -54,7 +54,7 @@ impl OverlayDriver {
             }
         }
 
-        // Fallback: fast CoW hardlink tree
+        // Fallback: safe CoW copy tree isolating container writes from base image layers
         Self::create_hardlink_tree(base_rootfs, &merged_dir)?;
 
         Ok(OverlayBundle {
@@ -120,8 +120,8 @@ impl OverlayDriver {
         Ok(())
     }
 
-    /// Fast CoW fallback: creates a tree of hardlinks to files and real directories.
-    /// This is instant, uses near-zero disk space, and isolates writes.
+    /// CoW fallback: copies files and reproduces directory structure, ensuring container
+    /// writes never modify the base image layer inodes.
     pub fn create_hardlink_tree(src: &Path, dst: &Path) -> Result<()> {
         let _ = fs::create_dir_all(dst);
         let entries = match fs::read_dir(src) {
@@ -150,10 +150,8 @@ impl OverlayDriver {
                     }
                 }
             } else {
-                // Attempt hardlink; if cross-device or permission fails, fallback to copy
-                if fs::hard_link(&from, &to).is_err() {
-                    let _ = fs::copy(&from, &to);
-                }
+                // Always copy to guarantee isolation between container writes and base layer
+                let _ = fs::copy(&from, &to);
             }
         }
         Ok(())
@@ -206,6 +204,11 @@ mod tests {
         // Mutating container file in merged dir does not affect base
         fs::write(&file1, b"modified content")?;
         assert_eq!(fs::read_to_string(&file1).unwrap(), "modified content");
+        assert_eq!(
+            fs::read_to_string(src.join("file1.txt")).unwrap(),
+            "original content",
+            "Base image layer must not be modified when container writes to file"
+        );
 
         OverlayDriver::cleanup(&overlay).unwrap();
         assert!(!overlay.merged_dir.exists());

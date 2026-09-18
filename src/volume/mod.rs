@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VolumeRecord {
@@ -55,7 +55,12 @@ impl VolumeStore {
 
     fn save(&self, data: &VolumeStoreData) -> Result<()> {
         let content = serde_json::to_string_pretty(data)?;
-        fs::write(&self.index_file, content)?;
+        let rand_suffix = hex::encode(crate::storage::container_store::rand_id());
+        let temp_file = self
+            .index_file
+            .with_extension(format!("tmp.{}", rand_suffix));
+        fs::write(&temp_file, content)?;
+        fs::rename(&temp_file, &self.index_file)?;
         Ok(())
     }
 
@@ -186,6 +191,30 @@ impl VolumeStore {
             || source_str.starts_with('~');
 
         if is_host_path {
+            // Guard against relative path traversal escaping current working directory
+            if source_str.contains("..") {
+                let p = Path::new(source_str);
+                if p.is_relative() {
+                    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+                    let resolved = cwd.join(p);
+                    if let Ok(canon_res) = resolved.canonicalize() {
+                        if let Ok(canon_cwd) = cwd.canonicalize() {
+                            if !canon_res.starts_with(&canon_cwd) {
+                                return Err(anyhow!(
+                                    "Path traversal rejected in volume mount: '{}'",
+                                    source_str
+                                ));
+                            }
+                        }
+                    } else {
+                        return Err(anyhow!(
+                            "Path traversal rejected in volume mount: '{}'",
+                            source_str
+                        ));
+                    }
+                }
+            }
+
             let host_path = if source_str.starts_with('~') {
                 let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
                 PathBuf::from(source_str.replacen('~', &home, 1))
@@ -257,5 +286,14 @@ mod tests {
         store.remove("test-data").unwrap();
         assert!(store.find("test-data").is_none());
         assert_eq!(store.list().len(), 0);
+
+        // Path traversal rejection
+        let err = store.resolve_mount("../../../etc:/data");
+        assert!(err.is_err());
+        assert!(
+            err.unwrap_err()
+                .to_string()
+                .contains("Path traversal rejected")
+        );
     }
 }

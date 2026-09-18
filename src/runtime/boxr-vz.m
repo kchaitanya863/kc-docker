@@ -289,7 +289,7 @@ int main(int argc, const char *argv[]) {
 
         VZLinuxBootLoader *bootloader = [[VZLinuxBootLoader alloc] initWithKernelURL:kernelURL];
         bootloader.initialRamdiskURL = initrdURL;
-        bootloader.commandLine = @"console=hvc0 quiet loglevel=3 random.trust_cpu=on random.trust_bootloader=on panic=0";
+        bootloader.commandLine = @"console=hvc0 quiet loglevel=3 random.trust_cpu=on random.trust_bootloader=on panic=1";
 
         VZVirtualMachineConfiguration *config = [[VZVirtualMachineConfiguration alloc] init];
         config.bootLoader = bootloader;

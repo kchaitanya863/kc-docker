@@ -14,6 +14,7 @@ use std::path::Path;
 pub struct RegistryClient {
     client: Client,
     token: Option<String>,
+    basic_auth: Option<String>,
 }
 
 impl RegistryClient {
@@ -24,18 +25,35 @@ impl RegistryClient {
                 .build()
                 .unwrap_or_else(|_| Client::new()),
             token: None,
+            basic_auth: None,
         }
     }
 
-    /// Authenticate against registry if needed (e.g. Docker Hub auth token).
+    /// Authenticate against registry if needed (e.g. Docker Hub auth token or private registry).
     pub async fn authenticate(&mut self, reference: &ImageReference) -> Result<()> {
+        let cred_store = crate::auth::CredentialStore::new();
+        let creds = cred_store.get_credentials(&reference.registry);
+        if let Some((u, p)) = &creds {
+            let encoded = crate::auth::custom_base64_encode(&format!("{}:{}", u, p));
+            self.basic_auth = Some(encoded);
+        }
+
         let ping_url = format!("https://{}/v2/", reference.registry);
-        let resp = self.client.get(&ping_url).send().await?;
+        let mut req = self.client.get(&ping_url);
+        if let Some(auth) = &self.basic_auth {
+            if let Ok(val) = HeaderValue::from_str(&format!("Basic {}", auth)) {
+                req = req.header(AUTHORIZATION, val);
+            }
+        }
+        let resp = req.send().await?;
 
         if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
             if let Some(auth_header) = resp.headers().get("www-authenticate") {
                 let auth_str = auth_header.to_str()?;
-                if let Some(token) = self.fetch_bearer_token(auth_str, reference).await? {
+                if let Some(token) = self
+                    .fetch_bearer_token(auth_str, reference, creds.as_ref())
+                    .await?
+                {
                     self.token = Some(token);
                 }
             }
@@ -47,6 +65,7 @@ impl RegistryClient {
         &self,
         auth_header: &str,
         reference: &ImageReference,
+        creds: Option<&(String, String)>,
     ) -> Result<Option<String>> {
         // Example: Bearer realm="https://auth.docker.io/token",service="registry.docker.io",scope="repository:library/hello-world:pull"
         if !auth_header.starts_with("Bearer ") {
@@ -79,7 +98,11 @@ impl RegistryClient {
             url.push_str(&format!("&service={}", s));
         }
 
-        let resp = self.client.get(&url).send().await?;
+        let mut req = self.client.get(&url);
+        if let Some((u, p)) = creds {
+            req = req.basic_auth(u, Some(p));
+        }
+        let resp = req.send().await?;
         if !resp.status().is_success() {
             return Err(anyhow!(
                 "Failed to obtain registry auth token: status {}",
@@ -102,6 +125,10 @@ impl RegistryClient {
         let mut headers = HeaderMap::new();
         if let Some(token) = &self.token {
             if let Ok(val) = HeaderValue::from_str(&format!("Bearer {}", token)) {
+                headers.insert(AUTHORIZATION, val);
+            }
+        } else if let Some(basic) = &self.basic_auth {
+            if let Ok(val) = HeaderValue::from_str(&format!("Basic {}", basic)) {
                 headers.insert(AUTHORIZATION, val);
             }
         }
@@ -263,8 +290,18 @@ impl RegistryClient {
         dest_path: &Path,
     ) -> Result<()> {
         if dest_path.exists() {
-            // Already cached and downloaded
-            return Ok(());
+            // Verify existing cached file matches the expected SHA-256 digest
+            if let Ok(mut f) = File::open(dest_path) {
+                let mut hasher = Sha256::new();
+                if std::io::copy(&mut f, &mut hasher).is_ok() {
+                    let calculated = format!("sha256:{}", hex::encode(hasher.finalize()));
+                    if calculated == descriptor.digest {
+                        return Ok(());
+                    }
+                }
+            }
+            // Corrupt or partial cache file; purge and re-download
+            let _ = std::fs::remove_file(dest_path);
         }
 
         let url = format!(

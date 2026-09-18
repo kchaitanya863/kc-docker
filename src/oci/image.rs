@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use flate2::read::GzDecoder;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -219,6 +219,54 @@ pub fn unpack_layer(layer_archive_path: &Path, target_dir: &Path) -> Result<()> 
     Ok(())
 }
 
+/// Safely unpack a tar archive into a target directory, preventing tar-slip path traversal.
+pub fn unpack_archive_safely<R: Read>(
+    archive: &mut tar::Archive<R>,
+    target_dir: &Path,
+) -> Result<()> {
+    fs::create_dir_all(target_dir)?;
+    let canon_target = target_dir.canonicalize()?;
+
+    for entry_res in archive.entries()? {
+        let mut entry = entry_res?;
+        let entry_path = entry.path()?.to_path_buf();
+
+        // Reject absolute paths, root directories, drive prefixes, or '..' escaping target_dir
+        for comp in entry_path.components() {
+            if matches!(
+                comp,
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
+            ) {
+                return Err(anyhow!(
+                    "Tar-slip path traversal rejected in archive: {:?}",
+                    entry_path
+                ));
+            }
+        }
+
+        let dest = target_dir.join(&entry_path);
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        entry.unpack_in(target_dir)?;
+
+        if dest.exists() {
+            let canon_dest = dest.canonicalize()?;
+            if !canon_dest.starts_with(&canon_target) {
+                return Err(anyhow!(
+                    "Archive entry escapes target directory: {:?}",
+                    entry_path
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -256,5 +304,40 @@ mod tests {
         assert!(extracted_file.exists());
         let content = fs::read_to_string(extracted_file).unwrap();
         assert_eq!(content, "hello from layer");
+    }
+
+    #[test]
+    fn test_unpack_archive_safely_tar_slip_rejection() {
+        let temp = tempdir().unwrap();
+        let target_dir = temp.path().join("target");
+        fs::create_dir_all(&target_dir).unwrap();
+
+        let malicious_data = b"malicious content";
+        let mut tar_bytes = Vec::new();
+        let mut header = tar::Header::new_gnu();
+        header.set_size(malicious_data.len() as u64);
+        header.set_mode(0o644);
+        let raw_bytes = header.as_mut_bytes();
+        let name_bytes = b"../escaped.txt";
+        raw_bytes[..name_bytes.len()].copy_from_slice(name_bytes);
+        header.set_cksum();
+
+        tar_bytes.extend_from_slice(header.as_bytes());
+        tar_bytes.extend_from_slice(malicious_data);
+        let padding = 512 - (malicious_data.len() % 512);
+        if padding < 512 {
+            tar_bytes.extend(std::iter::repeat(0).take(padding));
+        }
+        tar_bytes.extend(std::iter::repeat(0).take(1024));
+
+        let mut archive = tar::Archive::new(&tar_bytes[..]);
+        let res = unpack_archive_safely(&mut archive, &target_dir);
+        assert!(res.is_err());
+        assert!(
+            res.unwrap_err()
+                .to_string()
+                .contains("Tar-slip path traversal rejected")
+        );
+        assert!(!temp.path().join("escaped.txt").exists());
     }
 }

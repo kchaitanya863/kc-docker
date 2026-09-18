@@ -6,6 +6,48 @@ use std::path::{Path, PathBuf};
 pub struct ContainerCopy;
 
 impl ContainerCopy {
+    /// Securely resolve a container-internal path against the container rootfs,
+    /// strictly preventing any `..` path traversal or symlink escapes outside rootfs.
+    pub fn resolve_container_path(cont_rootfs: &Path, container_path: &str) -> Result<PathBuf> {
+        let clean = container_path.trim_start_matches('/');
+        let mut resolved = cont_rootfs.to_path_buf();
+        for comp in Path::new(clean).components() {
+            match comp {
+                std::path::Component::Normal(c) => resolved.push(c),
+                std::path::Component::ParentDir => {
+                    if resolved > cont_rootfs.to_path_buf() {
+                        resolved.pop();
+                    } else {
+                        return Err(anyhow!(
+                            "Path traversal rejected: container path '{}' escapes rootfs",
+                            container_path
+                        ));
+                    }
+                }
+                std::path::Component::CurDir => {}
+                _ => {
+                    return Err(anyhow!(
+                        "Invalid path component in container path: '{}'",
+                        container_path
+                    ));
+                }
+            }
+        }
+
+        if resolved.exists() {
+            let canon_root = cont_rootfs.canonicalize()?;
+            let canon_res = resolved.canonicalize()?;
+            if !canon_res.starts_with(&canon_root) {
+                return Err(anyhow!(
+                    "Path traversal rejected: container path '{}' resolves outside rootfs",
+                    container_path
+                ));
+            }
+        }
+
+        Ok(resolved)
+    }
+
     /// Parse source and destination strings: e.g. "my-container:/app/file.txt", "./local-file.txt"
     pub fn copy(src: &str, dest: &str) -> Result<()> {
         let store = ContainerStore::new();
@@ -17,8 +59,7 @@ impl ContainerCopy {
                 .ok_or_else(|| anyhow!("Container '{}' not found", container_query))?;
 
             let cont_rootfs = PathBuf::from(&cont.bundle_path).join("rootfs");
-            let clean_cont_path = container_path.trim_start_matches('/');
-            let source_abs = cont_rootfs.join(clean_cont_path);
+            let source_abs = Self::resolve_container_path(&cont_rootfs, container_path)?;
 
             if !source_abs.exists() {
                 return Err(anyhow!(
@@ -47,8 +88,7 @@ impl ContainerCopy {
             }
 
             let cont_rootfs = PathBuf::from(&cont.bundle_path).join("rootfs");
-            let clean_cont_path = container_path.trim_start_matches('/');
-            let dest_abs = cont_rootfs.join(clean_cont_path);
+            let dest_abs = Self::resolve_container_path(&cont_rootfs, container_path)?;
 
             Self::copy_path(&host_src, &dest_abs)?;
             println!(
@@ -128,6 +168,35 @@ mod tests {
         assert_eq!(
             fs::read_to_string(dst_dir.join("file.txt")).unwrap(),
             "test content"
+        );
+    }
+
+    #[test]
+    fn test_resolve_container_path_traversal_rejection() {
+        let temp = tempdir().unwrap();
+        let rootfs = temp.path().join("rootfs");
+        fs::create_dir_all(&rootfs).unwrap();
+
+        // Valid subpath
+        let valid = ContainerCopy::resolve_container_path(&rootfs, "/app/test.txt").unwrap();
+        assert_eq!(valid, rootfs.join("app/test.txt"));
+
+        // Path traversal with .. escaping rootfs
+        let err1 = ContainerCopy::resolve_container_path(&rootfs, "../../../etc/passwd");
+        assert!(err1.is_err());
+        assert!(
+            err1.unwrap_err()
+                .to_string()
+                .contains("Path traversal rejected")
+        );
+
+        // Path traversal sneaking in subfolder
+        let err2 = ContainerCopy::resolve_container_path(&rootfs, "/app/../../../../etc/shadow");
+        assert!(err2.is_err());
+        assert!(
+            err2.unwrap_err()
+                .to_string()
+                .contains("Path traversal rejected")
         );
     }
 }

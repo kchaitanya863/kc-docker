@@ -427,70 +427,99 @@ pub fn exec_in_bundle(
         }
     });
 
-    if let Some(pid) = target_pid {
-        if unsafe { libc::kill(pid, 0) == 0 } {
-            let mut cmd = std::process::Command::new("nsenter");
-            cmd.args([
-                "-t",
-                &pid.to_string(),
-                "-U",
-                "-m",
-                "-p",
-                "-u",
-                "--preserve-credentials",
-            ]);
-            if let Some(wd) = workdir {
-                cmd.arg(format!("--wd={}", wd));
-            }
-            if let Some(u) = user {
-                if let Ok(uid) = u.parse::<u32>() {
-                    cmd.args(["--setuid", &uid.to_string(), "--setgid", &uid.to_string()]);
-                }
-            }
-            cmd.arg("--");
-            for e in env {
-                if let Some((k, v)) = e.split_once('=') {
-                    cmd.env(k, v);
-                }
-            }
-            cmd.args(command);
-            if detach {
-                cmd.stdin(std::process::Stdio::null());
-                cmd.stdout(std::process::Stdio::null());
-                cmd.stderr(std::process::Stdio::null());
-                let _ = cmd.spawn()?;
-                return Ok(0);
-            }
-            let status = cmd.status()?;
-            return Ok(status.code().unwrap_or(0));
+    let pid = match target_pid {
+        Some(p) if unsafe { libc::kill(p, 0) == 0 } => p,
+        _ => return Err(anyhow!("Container is not running")),
+    };
+
+    let mut cmd = std::process::Command::new("nsenter");
+    cmd.args([
+        "-t",
+        &pid.to_string(),
+        "-U",
+        "-m",
+        "-p",
+        "-u",
+        "--preserve-credentials",
+    ]);
+    if let Some(wd) = workdir {
+        cmd.arg(format!("--wd={}", wd));
+    }
+    if let Some(u) = user {
+        if let Ok(uid) = u.parse::<u32>() {
+            cmd.args(["--setuid", &uid.to_string(), "--setgid", &uid.to_string()]);
         }
     }
-
-    let rootfs = bundle_path.join("rootfs");
-    let abs_rootfs = rootfs.canonicalize()?;
-
-    let flags = CloneFlags::CLONE_NEWNS;
-    let _ = unshare(flags);
-
-    let binary = &command[0];
-    let binary_c = CString::new(binary.as_str())?;
-    let args_c: Vec<CString> = command
-        .iter()
-        .map(|s| CString::new(s.as_str()).unwrap())
-        .collect();
-
+    cmd.arg("--");
     for e in env {
         if let Some((k, v)) = e.split_once('=') {
-            unsafe {
-                std::env::set_var(k, v);
+            cmd.env(k, v);
+        }
+    }
+    cmd.args(command);
+    if detach {
+        cmd.stdin(std::process::Stdio::null());
+        cmd.stdout(std::process::Stdio::null());
+        cmd.stderr(std::process::Stdio::null());
+        let _ = cmd.spawn()?;
+        return Ok(0);
+    }
+    match cmd.status() {
+        Ok(status) => Ok(status.code().unwrap_or(0)),
+        Err(e) => {
+            // Fallback: enter namespaces via /proc/<pid>/ns using setns if nsenter command is not installed
+            use nix::sched::{CloneFlags, setns};
+            use std::os::unix::io::AsRawFd;
+
+            let ns_types = [
+                ("user", CloneFlags::CLONE_NEWUSER),
+                ("ipc", CloneFlags::CLONE_NEWIPC),
+                ("uts", CloneFlags::CLONE_NEWUTS),
+                ("net", CloneFlags::CLONE_NEWNET),
+                ("pid", CloneFlags::CLONE_NEWPID),
+                ("mnt", CloneFlags::CLONE_NEWNS),
+            ];
+            for (name, flag) in ns_types {
+                let ns_path = format!("/proc/{}/ns/{}", pid, name);
+                if let Ok(f) = File::open(&ns_path) {
+                    let _ = setns(f.as_raw_fd(), flag);
+                }
+            }
+
+            match unsafe { fork() }? {
+                ForkResult::Parent { child } => match waitpid(child, None)? {
+                    WaitStatus::Exited(_, code) => Ok(code),
+                    WaitStatus::Signaled(_, sig, _) => Ok(128 + sig as i32),
+                    _ => Ok(1),
+                },
+                ForkResult::Child => {
+                    if let Some(wd) = workdir {
+                        let _ = chdir(Path::new(wd));
+                    } else {
+                        let _ = chdir(Path::new("/"));
+                    }
+                    for e in env {
+                        if let Some((k, v)) = e.split_once('=') {
+                            unsafe {
+                                std::env::set_var(k, v);
+                            }
+                        }
+                    }
+                    let binary = &command[0];
+                    let binary_c = match CString::new(binary.as_str()) {
+                        Ok(c) => c,
+                        Err(_) => std::process::exit(1),
+                    };
+                    let args_c: Vec<CString> = command
+                        .iter()
+                        .filter_map(|s| CString::new(s.as_str()).ok())
+                        .collect();
+                    let _ = nix::unistd::execvp(&binary_c, &args_c);
+                    std::process::exit(127);
+                }
             }
         }
     }
-
-    let _ = nix::unistd::chroot(&abs_rootfs);
-    let _ = chdir("/");
-    let _ = nix::unistd::execvp(&binary_c, &args_c);
-    Ok(0)
 }
 
 fn run_container_child(rootfs: &Path, spec: &Spec, mounts: &[MountSpec]) -> Result<()> {
@@ -819,6 +848,63 @@ fn run_container_child(rootfs: &Path, spec: &Spec, mounts: &[MountSpec]) -> Resu
     }
     if spec.process.user.uid != 0 {
         let _ = nix::unistd::setuid(nix::unistd::Uid::from_raw(spec.process.user.uid));
+    }
+
+    #[cfg(target_os = "linux")]
+    if let Some(caps) = &spec.process.capabilities {
+        if let Some(bounding) = &caps.bounding {
+            for cap_num in 0..41 {
+                let cap_name = match cap_num {
+                    0 => "CAP_CHOWN",
+                    1 => "CAP_DAC_OVERRIDE",
+                    2 => "CAP_DAC_READ_SEARCH",
+                    3 => "CAP_FOWNER",
+                    4 => "CAP_FSETID",
+                    5 => "CAP_KILL",
+                    6 => "CAP_SETGID",
+                    7 => "CAP_SETUID",
+                    8 => "CAP_SETPCAP",
+                    9 => "CAP_LINUX_IMMUTABLE",
+                    10 => "CAP_NET_BIND_SERVICE",
+                    11 => "CAP_NET_BROADCAST",
+                    12 => "CAP_NET_ADMIN",
+                    13 => "CAP_NET_RAW",
+                    14 => "CAP_IPC_LOCK",
+                    15 => "CAP_IPC_OWNER",
+                    16 => "CAP_SYS_MODULE",
+                    17 => "CAP_SYS_RAWIO",
+                    18 => "CAP_SYS_CHROOT",
+                    19 => "CAP_SYS_PTRACE",
+                    20 => "CAP_SYS_PACCT",
+                    21 => "CAP_SYS_ADMIN",
+                    22 => "CAP_SYS_BOOT",
+                    23 => "CAP_SYS_NICE",
+                    24 => "CAP_SYS_RESOURCE",
+                    25 => "CAP_SYS_TIME",
+                    26 => "CAP_SYS_TTY_CONFIG",
+                    27 => "CAP_MKNOD",
+                    28 => "CAP_LEASE",
+                    29 => "CAP_AUDIT_WRITE",
+                    30 => "CAP_AUDIT_CONTROL",
+                    31 => "CAP_SETFCAP",
+                    32 => "CAP_MAC_OVERRIDE",
+                    33 => "CAP_MAC_ADMIN",
+                    34 => "CAP_SYSLOG",
+                    35 => "CAP_WAKE_ALARM",
+                    36 => "CAP_BLOCK_SUSPEND",
+                    37 => "CAP_AUDIT_READ",
+                    38 => "CAP_PERFMON",
+                    39 => "CAP_BPF",
+                    40 => "CAP_CHECKPOINT_RESTORE",
+                    _ => "",
+                };
+                if !cap_name.is_empty() && !bounding.contains(&cap_name.to_string()) {
+                    unsafe {
+                        libc::prctl(libc::PR_CAPBSET_DROP, cap_num, 0, 0, 0);
+                    }
+                }
+            }
+        }
     }
 
     // Execute container binary

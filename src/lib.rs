@@ -428,8 +428,8 @@ pub async fn run_cli(cli: Cli) -> Result<i32> {
             Ok(0)
         }
         Commands::Wait(args) => {
-            let code = wait_container(&args)?;
-            Ok(code)
+            let _ = wait_container(&args)?;
+            Ok(0)
         }
         Commands::Cp(args) => {
             cp_container(&args)?;
@@ -642,6 +642,106 @@ pub async fn pull_image_with_platform(
     println!("Digest: {}", manifest_digest);
     println!("Status: Downloaded image for {}", reference.display_name());
     Ok(record)
+}
+
+fn apply_capabilities_and_security(
+    spec: &mut oci::runtime::Spec,
+    privileged: bool,
+    cap_add: &[String],
+    cap_drop: &[String],
+) {
+    let mut cap_profile = security::CapabilityProfile::default();
+    if privileged {
+        let all_caps: Vec<String> = vec![
+            "CAP_CHOWN",
+            "CAP_DAC_OVERRIDE",
+            "CAP_DAC_READ_SEARCH",
+            "CAP_FOWNER",
+            "CAP_FSETID",
+            "CAP_KILL",
+            "CAP_SETGID",
+            "CAP_SETUID",
+            "CAP_SETPCAP",
+            "CAP_LINUX_IMMUTABLE",
+            "CAP_NET_BIND_SERVICE",
+            "CAP_NET_BROADCAST",
+            "CAP_NET_ADMIN",
+            "CAP_NET_RAW",
+            "CAP_IPC_LOCK",
+            "CAP_IPC_OWNER",
+            "CAP_SYS_MODULE",
+            "CAP_SYS_RAWIO",
+            "CAP_SYS_CHROOT",
+            "CAP_SYS_PTRACE",
+            "CAP_SYS_PACCT",
+            "CAP_SYS_ADMIN",
+            "CAP_SYS_BOOT",
+            "CAP_SYS_NICE",
+            "CAP_SYS_RESOURCE",
+            "CAP_SYS_TIME",
+            "CAP_SYS_TTY_CONFIG",
+            "CAP_MKNOD",
+            "CAP_LEASE",
+            "CAP_AUDIT_WRITE",
+            "CAP_AUDIT_CONTROL",
+            "CAP_SETFCAP",
+            "CAP_MAC_OVERRIDE",
+            "CAP_MAC_ADMIN",
+            "CAP_SYSLOG",
+            "CAP_WAKE_ALARM",
+            "CAP_BLOCK_SUSPEND",
+            "CAP_AUDIT_READ",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        cap_profile.bounding = all_caps.clone();
+        cap_profile.effective = all_caps.clone();
+        cap_profile.permitted = all_caps;
+        if let Some(l) = &mut spec.linux {
+            l.seccomp = None;
+        }
+    } else {
+        if cap_drop.iter().any(|c| c.eq_ignore_ascii_case("all")) {
+            cap_profile.bounding.clear();
+            cap_profile.effective.clear();
+            cap_profile.permitted.clear();
+        } else {
+            for drop in cap_drop {
+                let norm = if drop.starts_with("CAP_") {
+                    drop.to_uppercase()
+                } else {
+                    format!("CAP_{}", drop.to_uppercase())
+                };
+                cap_profile.bounding.retain(|c| c != &norm);
+                cap_profile.effective.retain(|c| c != &norm);
+                cap_profile.permitted.retain(|c| c != &norm);
+            }
+        }
+        for add in cap_add {
+            let norm = if add.starts_with("CAP_") {
+                add.to_uppercase()
+            } else {
+                format!("CAP_{}", add.to_uppercase())
+            };
+            if !cap_profile.bounding.contains(&norm) {
+                cap_profile.bounding.push(norm.clone());
+            }
+            if !cap_profile.effective.contains(&norm) {
+                cap_profile.effective.push(norm.clone());
+            }
+            if !cap_profile.permitted.contains(&norm) {
+                cap_profile.permitted.push(norm);
+            }
+        }
+    }
+    spec.process.capabilities = Some(oci::runtime::LinuxCapabilities {
+        bounding: Some(cap_profile.bounding.clone()),
+        effective: Some(cap_profile.effective.clone()),
+        inheritable: Some(cap_profile.bounding.clone()),
+        permitted: Some(cap_profile.permitted.clone()),
+        ambient: Some(cap_profile.effective),
+    });
 }
 
 pub async fn run_container(args: RunArgs) -> Result<i32> {
@@ -910,6 +1010,7 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
     {
         spec.process.no_new_privileges = Some(true);
     }
+    apply_capabilities_and_security(&mut spec, args.privileged, &args.cap_add, &args.cap_drop);
     if args.cpu_count.is_some()
         || args.cpu_percent.is_some()
         || args.io_maxbandwidth.is_some()
@@ -1154,8 +1255,14 @@ pub async fn start_container(container: &str) -> Result<()> {
     let content = fs::read_to_string(&config_file)?;
     let spec: Spec = serde_json::from_str(&content)?;
 
+    // Restore port forwarding for restarted container
+    #[cfg(not(target_os = "macos"))]
+    if !rec.ports.is_empty() {
+        let _ = network::rootless::PortForwardManager::start_forwarding(&rec.ports).await;
+    }
+
     store.update_status(&rec.id, ContainerStatus::Running)?;
-    let _ = execute_bundle(&bundle_path, &spec, &[], &[], true)?;
+    let _ = execute_bundle(&bundle_path, &spec, &[], &rec.ports, true)?;
     println!("{}", container);
     Ok(())
 }
@@ -1585,6 +1692,17 @@ pub fn wait_container(args: &cli::WaitArgs) -> Result<i32> {
                 #[cfg(unix)]
                 {
                     let bundle_path = std::path::PathBuf::from(&cont.bundle_path);
+                    let exitcode_file = bundle_path.join("rootfs").join("boxr-exitcode");
+                    if exitcode_file.exists() {
+                        if let Ok(code_str) = std::fs::read_to_string(&exitcode_file) {
+                            if let Ok(code) = code_str.trim().parse::<i32>() {
+                                let _ =
+                                    c_store.update_status(&cont.id, ContainerStatus::Exited(code));
+                                println!("{}", code);
+                                return Ok(code);
+                            }
+                        }
+                    }
                     let pid_file = bundle_path.join("vm.pid");
                     let is_running = if let Ok(pid_str) = std::fs::read_to_string(pid_file) {
                         if let Ok(pid) = pid_str.trim().parse::<i32>() {
@@ -2575,6 +2693,7 @@ pub async fn create_only_container(args: RunArgs) -> Result<String> {
     {
         spec.process.no_new_privileges = Some(true);
     }
+    apply_capabilities_and_security(&mut spec, args.privileged, &args.cap_add, &args.cap_drop);
     if args.cpu_count.is_some()
         || args.cpu_percent.is_some()
         || args.io_maxbandwidth.is_some()
@@ -2744,8 +2863,7 @@ pub fn import_image(args: &cli::ImportArgs) -> Result<()> {
 
     let home = storage::boxr_home();
     let dest_rootfs = home.join("images").join(&safe_id).join("rootfs");
-    fs::create_dir_all(&dest_rootfs)?;
-    archive.unpack(&dest_rootfs)?;
+    oci::image::unpack_archive_safely(&mut archive, &dest_rootfs)?;
 
     let target_ref = args
         .reference

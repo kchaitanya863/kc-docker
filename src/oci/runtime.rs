@@ -17,6 +17,20 @@ pub struct User {
     pub username: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LinuxCapabilities {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bounding: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effective: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inheritable: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permitted: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ambient: Option<Vec<String>>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Process {
     pub terminal: bool,
@@ -26,6 +40,8 @@ pub struct Process {
     pub cwd: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub no_new_privileges: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<LinuxCapabilities>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -285,6 +301,7 @@ impl Spec {
                 env,
                 cwd,
                 no_new_privileges: Some(true),
+                capabilities: None,
             },
             root: Root {
                 path: "rootfs".to_string(),

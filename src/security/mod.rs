@@ -370,4 +370,23 @@ vagrant:165536:65536
         assert!(blocked.names.contains(&"reboot".to_string()));
         assert!(blocked.names.contains(&"swapon".to_string()));
     }
+
+    #[test]
+    fn test_capability_profile_customization() {
+        let mut profile = CapabilityProfile::default();
+        assert!(profile.bounding.contains(&"CAP_CHOWN".to_string()));
+        assert!(profile.bounding.contains(&"CAP_NET_RAW".to_string()));
+
+        // Drop specific capability
+        profile.bounding.retain(|c| c != "CAP_NET_RAW");
+        assert!(!profile.bounding.contains(&"CAP_NET_RAW".to_string()));
+
+        // Add capability
+        profile.bounding.push("CAP_NET_ADMIN".to_string());
+        assert!(profile.bounding.contains(&"CAP_NET_ADMIN".to_string()));
+
+        // Drop all
+        profile.bounding.clear();
+        assert!(profile.bounding.is_empty());
+    }
 }

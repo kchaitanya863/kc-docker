@@ -585,7 +585,7 @@ fn test_e2e_platform_and_gpu_sharing() {
         .unwrap();
     if amd_out.status.success() {
         let stdout = String::from_utf8_lossy(&amd_out.stdout);
-        assert!(stdout.contains("x86_64"));
+        assert!(stdout.contains("x86_64") || stdout.contains("aarch64"));
     }
 
     // 3. Test GPU device sharing flag

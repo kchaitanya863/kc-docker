@@ -46,7 +46,12 @@ impl ImageStore {
 
     fn save(&self, data: &ImageStoreData) -> Result<()> {
         let content = serde_json::to_string_pretty(data)?;
-        fs::write(&self.index_file, content)?;
+        let rand_suffix = hex::encode(crate::storage::container_store::rand_id());
+        let temp_file = self
+            .index_file
+            .with_extension(format!("tmp.{}", rand_suffix));
+        fs::write(&temp_file, content)?;
+        fs::rename(&temp_file, &self.index_file)?;
         Ok(())
     }
 
@@ -89,35 +94,41 @@ impl ImageStore {
                 return false;
             }
 
-            if let Some(target_plat) = platform {
-                let (target_os, target_arch) = if let Some((os, arch)) = target_plat.split_once('/')
-                {
+            let host_arch = match std::env::consts::ARCH {
+                "x86_64" => "amd64",
+                "aarch64" => "arm64",
+                other => other,
+            };
+            let (target_os, norm_arch) = if let Some(target_plat) = platform {
+                let (os, arch) = if let Some((os, arch)) = target_plat.split_once('/') {
                     (Some(os), arch)
                 } else {
                     (None, target_plat)
                 };
-                let norm_arch = match target_arch {
+                let norm = match arch {
                     "x86_64" => "amd64",
                     "aarch64" => "arm64",
                     other => other,
                 };
-                let img_arch = match img.config.architecture.as_str() {
-                    "x86_64" => "amd64",
-                    "aarch64" => "arm64",
-                    other => other,
-                };
+                (os, norm)
+            } else {
+                (Some("linux"), host_arch)
+            };
 
-                let arch_matches = img_arch == norm_arch;
-                let os_matches = if let Some(tos) = target_os {
-                    img.config.os.eq_ignore_ascii_case(tos)
-                } else {
-                    true
-                };
+            let img_arch = match img.config.architecture.as_str() {
+                "x86_64" => "amd64",
+                "aarch64" => "arm64",
+                other => other,
+            };
 
-                arch_matches && os_matches
+            let arch_matches = img_arch == norm_arch;
+            let os_matches = if let Some(tos) = target_os {
+                img.config.os.eq_ignore_ascii_case(tos)
             } else {
                 true
-            }
+            };
+
+            arch_matches && os_matches
         })
     }
 

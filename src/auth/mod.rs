@@ -95,7 +95,12 @@ impl CredentialStore {
 
     fn save(&self, config: &AuthConfig) -> Result<()> {
         let content = serde_json::to_string_pretty(config)?;
-        fs::write(&self.config_file, content)?;
+        let rand_suffix = hex::encode(crate::storage::container_store::rand_id());
+        let temp_file = self
+            .config_file
+            .with_extension(format!("tmp.{}", rand_suffix));
+        fs::write(&temp_file, content)?;
+        fs::rename(&temp_file, &self.config_file)?;
         Ok(())
     }
 
@@ -252,7 +257,7 @@ impl ImageArchiver {
         let mut archive = Archive::new(file);
 
         let temp_dir = tempfile::tempdir()?;
-        archive.unpack(temp_dir.path())?;
+        crate::oci::image::unpack_archive_safely(&mut archive, temp_dir.path())?;
 
         let manifest_path = temp_dir.path().join("manifest.json");
         if !manifest_path.exists() {
@@ -288,12 +293,12 @@ impl ImageArchiver {
                 .join("rootfs");
             fs::create_dir_all(&dest_rootfs)?;
 
-            // Unpack layers
+            // Unpack layers safely
             for layer in &item.layers {
                 let layer_path = temp_dir.path().join(layer);
                 if layer_path.exists() {
                     let mut layer_archive = Archive::new(File::open(layer_path)?);
-                    layer_archive.unpack(&dest_rootfs)?;
+                    crate::oci::image::unpack_archive_safely(&mut layer_archive, &dest_rootfs)?;
                 }
             }
 

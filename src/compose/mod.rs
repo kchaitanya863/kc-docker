@@ -392,7 +392,25 @@ impl ComposeProject {
                 command: cmd_vec,
             };
 
-            let _ = crate::run_container(run_args).await;
+            match crate::run_container(run_args).await {
+                Ok(code) if code != 0 && !detach => {
+                    return Err(anyhow!(
+                        "Service '{}' in compose project '{}' exited with error code {}",
+                        svc_name,
+                        self.name,
+                        code
+                    ));
+                }
+                Err(err) => {
+                    return Err(anyhow!(
+                        "Failed to start service '{}' in compose project '{}': {:?}",
+                        svc_name,
+                        self.name,
+                        err
+                    ));
+                }
+                _ => {}
+            }
         }
 
         println!("Project '{}' started successfully.", self.name);
