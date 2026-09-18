@@ -1767,8 +1767,14 @@ pub async fn handle_compose(args: ComposeArgs) -> Result<()> {
 pub fn handle_volume(args: VolumeSubcommands) -> Result<()> {
     let store = VolumeStore::new();
     match args.command {
-        VolumeAction::Create { name } => {
-            let vol = store.create(name.as_deref(), None)?;
+        VolumeAction::Create { name, labels, .. } => {
+            let mut label_map = HashMap::new();
+            for l in labels {
+                if let Some((k, v)) = l.split_once('=') {
+                    label_map.insert(k.to_string(), v.to_string());
+                }
+            }
+            let vol = store.create(name.as_deref(), Some(label_map))?;
             println!("{}", vol.name);
         }
         VolumeAction::Ls => {
@@ -1808,6 +1814,7 @@ pub fn handle_network(args: NetworkSubcommands) -> Result<()> {
             name,
             subnet,
             gateway,
+            ..
         } => {
             let net = store.create(&name, subnet.as_deref(), gateway.as_deref())?;
             println!("{}", net.id);

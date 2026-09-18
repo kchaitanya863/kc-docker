@@ -445,6 +445,14 @@ pub struct StopArgs {
 
 #[derive(Args, Debug)]
 pub struct StartArgs {
+    /// Attach STDOUT/STDERR and forward signals
+    #[arg(short = 'a', long = "attach")]
+    pub attach: bool,
+
+    /// Attach container's STDIN
+    #[arg(short = 'i', long = "interactive")]
+    pub interactive: bool,
+
     #[arg(required = true)]
     pub containers: Vec<String>,
 }
@@ -518,6 +526,14 @@ pub struct ExecArgs {
 
 #[derive(Args, Debug)]
 pub struct InspectArgs {
+    /// Format output using a custom template: 'json' or Go template
+    #[arg(short = 'f', long = "format")]
+    pub format: Option<String>,
+
+    /// Display total file sizes if the type is container
+    #[arg(short = 's', long = "size")]
+    pub size: bool,
+
     pub target: String,
 }
 
@@ -688,7 +704,18 @@ pub struct VolumeSubcommands {
 
 #[derive(Subcommand, Debug)]
 pub enum VolumeAction {
-    Create { name: Option<String> },
+    Create {
+        name: Option<String>,
+        /// Specify volume driver name (default "local")
+        #[arg(short = 'd', long = "driver", default_value = "local")]
+        driver: String,
+        /// Set driver specific options
+        #[arg(short = 'o', long = "opt")]
+        opts: Vec<String>,
+        /// Set metadata for a volume
+        #[arg(long = "label")]
+        labels: Vec<String>,
+    },
     Ls,
     Inspect { name: String },
     Rm { name: String },
@@ -708,10 +735,24 @@ pub struct NetworkSubcommands {
 pub enum NetworkAction {
     Create {
         name: String,
+        /// Driver to manage the Network (default "bridge")
+        #[arg(short = 'd', long = "driver", default_value = "bridge")]
+        driver: String,
+        /// Subnet in CIDR format
         #[arg(long = "subnet")]
         subnet: Option<String>,
+        /// IPv4 or IPv6 Gateway for the master subnet
         #[arg(long = "gateway")]
         gateway: Option<String>,
+        /// Restrict external access to the network
+        #[arg(long = "internal")]
+        internal: bool,
+        /// Enable manual container attachment
+        #[arg(long = "attachable")]
+        attachable: bool,
+        /// Set metadata on a network
+        #[arg(long = "label")]
+        labels: Vec<String>,
     },
     Ls,
     Inspect {

@@ -102,9 +102,14 @@ DAILY_DRIVER_FLAGS = {
         "--filter", "-f"
     ],
     "stop": ["--time", "-t"],
+    "start": ["--attach", "-a", "--interactive", "-i"],
     "rm": ["--force", "-f", "--volumes", "-v"],
     "rmi": ["--force", "-f"],
     "logs": ["--follow", "-f", "--timestamps", "-t", "--tail", "-n"],
+    "inspect": ["--format", "-f", "--size", "-s"],
+    "volume_create": ["--driver", "-d", "--opt", "-o", "--label"],
+    "network_create": ["--driver", "-d", "--subnet", "--gateway", "--internal", "--attachable", "--label"],
+    "context_create": ["--description", "--docker"],
     "update": ["--memory", "-m", "--cpus", "--pids-limit"],
 }
 
@@ -146,13 +151,24 @@ def run_parity_comparison():
                 docker_flags_set.add(f)
 
         # Get Boxr flags for this command
-        boxr_info = boxr_data.get(clean_cmd.split()[0], {})
-        boxr_opts = boxr_info.get("options", {})
         boxr_flags_set = set()
-        for opt_key, opt_data in boxr_opts.items():
-            boxr_flags_set.add(opt_key)
-            if opt_data.get("short"):
-                boxr_flags_set.add(opt_data["short"])
+        boxr_opts = {}
+        try:
+            cmd_parts = clean_cmd.split()
+            out = subprocess.check_output([boxr_bin] + cmd_parts + ["--help"], stderr=subprocess.DEVNULL).decode("utf-8")
+            from extract_boxr_options import parse_help_options
+            boxr_opts = parse_help_options(out)
+            for opt_key, opt_data in boxr_opts.items():
+                boxr_flags_set.add(opt_key)
+                if opt_data.get("short"):
+                    boxr_flags_set.add(opt_data["short"])
+        except Exception:
+            boxr_info = boxr_data.get(clean_cmd.split()[0], {})
+            boxr_opts = boxr_info.get("options", {})
+            for opt_key, opt_data in boxr_opts.items():
+                boxr_flags_set.add(opt_key)
+                if opt_data.get("short"):
+                    boxr_flags_set.add(opt_data["short"])
 
         if "--network" in boxr_flags_set:
             boxr_flags_set.add("--net")
