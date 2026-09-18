@@ -393,7 +393,7 @@ impl ComposeProject {
             };
 
             match crate::run_container(run_args).await {
-                Ok(code) if code != 0 && !detach => {
+                Ok(code) if code != 0 => {
                     return Err(anyhow!(
                         "Service '{}' in compose project '{}' exited with error code {}",
                         svc_name,

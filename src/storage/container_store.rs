@@ -83,7 +83,7 @@ impl ContainerStore {
         }
     }
 
-    fn load(&self) -> ContainerStoreData {
+    fn load_unlocked(&self) -> ContainerStoreData {
         if let Ok(content) = fs::read_to_string(&self.index_file) {
             serde_json::from_str(&content).unwrap_or_default()
         } else {
@@ -91,7 +91,7 @@ impl ContainerStore {
         }
     }
 
-    fn save(&self, data: &ContainerStoreData) -> Result<()> {
+    fn save_unlocked(&self, data: &ContainerStoreData) -> Result<()> {
         let content = serde_json::to_string_pretty(data)?;
         let rand_suffix = hex::encode(rand_id());
         let temp_file = self
@@ -103,19 +103,28 @@ impl ContainerStore {
     }
 
     pub fn list(&self) -> Vec<ContainerRecord> {
-        self.load().containers
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+            Ok(self.load_unlocked().containers)
+        })
+        .unwrap_or_default()
     }
 
     #[allow(dead_code)]
     pub fn find(&self, query: &str) -> Option<ContainerRecord> {
-        let data = self.load();
-        data.containers
-            .into_iter()
-            .find(|c| c.id.starts_with(query) || c.name == query)
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+            Ok(self
+                .load_unlocked()
+                .containers
+                .into_iter()
+                .find(|c| c.id.starts_with(query) || c.name == query))
+        })
+        .ok()
+        .flatten()
     }
 
     pub fn add(&self, record: ContainerRecord) -> Result<()> {
-        let mut data = self.load();
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+        let mut data = self.load_unlocked();
         if let Some(existing) = data
             .containers
             .iter()
@@ -129,26 +138,31 @@ impl ContainerStore {
         }
         data.containers.retain(|c| c.id != record.id);
         data.containers.push(record);
-        self.save(&data)
+        self.save_unlocked(&data)?;
+        Ok(())
+        })
     }
 
     pub fn update_status(&self, id_or_name: &str, status: ContainerStatus) -> Result<()> {
-        let mut data = self.load();
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+        let mut data = self.load_unlocked();
         if let Some(c) = data
             .containers
             .iter_mut()
             .find(|c| c.id == id_or_name || c.id.starts_with(id_or_name) || c.name == id_or_name)
         {
             c.status = status;
-            self.save(&data)?;
+            self.save_unlocked(&data)?;
             Ok(())
         } else {
             Err(anyhow!("Container not found: {}", id_or_name))
         }
+        })
     }
 
     pub fn rename(&self, old_query: &str, new_name: &str) -> Result<()> {
-        let mut data = self.load();
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+        let mut data = self.load_unlocked();
         let new_name_trimmed = new_name.trim();
         if new_name_trimmed.is_empty() {
             return Err(anyhow!("New container name cannot be empty"));
@@ -167,15 +181,17 @@ impl ContainerStore {
             .find(|c| c.id == old_query || c.id.starts_with(old_query) || c.name == old_query)
         {
             c.name = new_name_trimmed.to_string();
-            self.save(&data)?;
+            self.save_unlocked(&data)?;
             Ok(())
         } else {
             Err(anyhow!("Container not found: {}", old_query))
         }
+        })
     }
 
     pub fn remove(&self, query: &str) -> Result<ContainerRecord> {
-        let mut data = self.load();
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+        let mut data = self.load_unlocked();
         let pos = data
             .containers
             .iter()
@@ -183,7 +199,7 @@ impl ContainerStore {
 
         if let Some(index) = pos {
             let removed = data.containers.remove(index);
-            self.save(&data)?;
+            self.save_unlocked(&data)?;
 
             // Clean up bundle folder
             let bundle = PathBuf::from(&removed.bundle_path);
@@ -239,6 +255,7 @@ impl ContainerStore {
         } else {
             Err(anyhow!("Container not found: {}", query))
         }
+        })
     }
 }
 

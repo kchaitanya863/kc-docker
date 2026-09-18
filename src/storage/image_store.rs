@@ -36,7 +36,7 @@ impl ImageStore {
         }
     }
 
-    fn load(&self) -> ImageStoreData {
+    fn load_unlocked(&self) -> ImageStoreData {
         if let Ok(content) = fs::read_to_string(&self.index_file) {
             serde_json::from_str(&content).unwrap_or_default()
         } else {
@@ -44,7 +44,7 @@ impl ImageStore {
         }
     }
 
-    fn save(&self, data: &ImageStoreData) -> Result<()> {
+    fn save_unlocked(&self, data: &ImageStoreData) -> Result<()> {
         let content = serde_json::to_string_pretty(data)?;
         let rand_suffix = hex::encode(crate::storage::container_store::rand_id());
         let temp_file = self
@@ -56,7 +56,10 @@ impl ImageStore {
     }
 
     pub fn list(&self) -> Vec<ImageRecord> {
-        self.load().images
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+            Ok(self.load_unlocked().images)
+        })
+        .unwrap_or_default()
     }
 
     pub fn find(&self, query: &str) -> Option<ImageRecord> {
@@ -64,7 +67,8 @@ impl ImageStore {
     }
 
     pub fn find_with_platform(&self, query: &str, platform: Option<&str>) -> Option<ImageRecord> {
-        let data = self.load();
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+        let data = self.load_unlocked();
         let query_trimmed = query.trim();
 
         // Normalize query: e.g. "hello-world" -> short name "hello-world", tag "latest"
@@ -74,7 +78,7 @@ impl ImageStore {
             (query_trimmed, None)
         };
 
-        data.images.into_iter().find(|img| {
+        Ok(data.images.into_iter().find(|img| {
             let id_matches = img.id.starts_with(query_trimmed);
             let img_short = img
                 .reference
@@ -134,11 +138,15 @@ impl ImageStore {
             };
 
             arch_matches && os_matches
+        }))
         })
+        .ok()
+        .flatten()
     }
 
     pub fn add(&self, record: ImageRecord) -> Result<()> {
-        let mut data = self.load();
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+        let mut data = self.load_unlocked();
         // Remove previous entry with same reference, tag, architecture, and os if present
         data.images.retain(|img| {
             !(img.reference == record.reference
@@ -147,11 +155,14 @@ impl ImageStore {
                 && img.config.os == record.config.os)
         });
         data.images.push(record);
-        self.save(&data)
+        self.save_unlocked(&data)?;
+        Ok(())
+        })
     }
 
     pub fn remove(&self, query: &str) -> Result<ImageRecord> {
-        let mut data = self.load();
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+        let mut data = self.load_unlocked();
         let query_trimmed = query.trim();
         let (q_name, q_tag) = if let Some((n, t)) = query_trimmed.split_once(':') {
             (n, Some(t))
@@ -179,7 +190,7 @@ impl ImageStore {
 
         if let Some(index) = pos {
             let removed = data.images.remove(index);
-            self.save(&data)?;
+            self.save_unlocked(&data)?;
 
             // Only clean up rootfs directory if NO OTHER image shares this rootfs_path
             let is_shared = data.images.iter().any(|img| {
@@ -197,6 +208,7 @@ impl ImageStore {
         } else {
             Err(anyhow!("Image not found: {}", query))
         }
+        })
     }
 
     /// Commit a container's current filesystem snapshot into a new image
@@ -291,7 +303,11 @@ mod tests {
             created_at: Utc::now(),
             rootfs_path: temp.path().join("rootfs").to_string_lossy().to_string(),
             config: ImageConfig {
-                architecture: "arm64".to_string(),
+                architecture: match std::env::consts::ARCH {
+                    "x86_64" => "amd64".to_string(),
+                    "aarch64" => "arm64".to_string(),
+                    other => other.to_string(),
+                },
                 os: "linux".to_string(),
                 config: Some(ExecutionConfig::default()),
                 rootfs: None,

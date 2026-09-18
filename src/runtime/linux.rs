@@ -850,6 +850,13 @@ fn run_container_child(rootfs: &Path, spec: &Spec, mounts: &[MountSpec]) -> Resu
     }
 
     #[cfg(target_os = "linux")]
+    if let Some(linux) = &spec.linux {
+        if linux.seccomp.is_some() {
+            let _ = crate::security::apply_default_seccomp();
+        }
+    }
+
+    #[cfg(target_os = "linux")]
     if let Some(caps) = &spec.process.capabilities {
         if let Some(bounding) = &caps.bounding {
             for cap_num in 0..41 {

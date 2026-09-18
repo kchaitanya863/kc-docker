@@ -34,7 +34,7 @@ impl PodStore {
         }
     }
 
-    fn load(&self) -> PodStoreData {
+    fn load_unlocked(&self) -> PodStoreData {
         if let Ok(content) = fs::read_to_string(&self.index_file) {
             serde_json::from_str(&content).unwrap_or_default()
         } else {
@@ -42,7 +42,7 @@ impl PodStore {
         }
     }
 
-    fn save(&self, data: &PodStoreData) -> Result<()> {
+    fn save_unlocked(&self, data: &PodStoreData) -> Result<()> {
         let content = serde_json::to_string_pretty(data)?;
         let rand_suffix = hex::encode(crate::storage::container_store::rand_id());
         let temp_file = self
@@ -54,18 +54,27 @@ impl PodStore {
     }
 
     pub fn list(&self) -> Vec<PodRecord> {
-        self.load().pods
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+            Ok(self.load_unlocked().pods)
+        })
+        .unwrap_or_default()
     }
 
     pub fn find(&self, query: &str) -> Option<PodRecord> {
-        let data = self.load();
-        data.pods
-            .into_iter()
-            .find(|p| p.id.starts_with(query) || p.name == query)
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+            Ok(self
+                .load_unlocked()
+                .pods
+                .into_iter()
+                .find(|p| p.id.starts_with(query) || p.name == query))
+        })
+        .ok()
+        .flatten()
     }
 
     pub fn create(&self, name: Option<&str>, ports: Vec<PortMapping>) -> Result<PodRecord> {
-        let mut data = self.load();
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+        let mut data = self.load_unlocked();
         let random_id = hex::encode(crate::storage::container_store::rand_id());
         let pod_name = name
             .map(|n| n.trim().to_string())
@@ -86,12 +95,14 @@ impl PodStore {
         };
 
         data.pods.push(pod.clone());
-        self.save(&data)?;
+        self.save_unlocked(&data)?;
         Ok(pod)
+        })
     }
 
     pub fn remove(&self, query: &str) -> Result<PodRecord> {
-        let mut data = self.load();
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+        let mut data = self.load_unlocked();
         let c_store = ContainerStore::new();
 
         if let Some(pos) = data
@@ -100,7 +111,7 @@ impl PodStore {
             .position(|p| p.id.starts_with(query) || p.name == query)
         {
             let removed = data.pods.remove(pos);
-            self.save(&data)?;
+            self.save_unlocked(&data)?;
 
             // Remove all member containers
             for cid in &removed.containers {
@@ -110,10 +121,12 @@ impl PodStore {
         } else {
             Err(anyhow!("Pod '{}' not found", query))
         }
+        })
     }
 
     pub fn add_container_to_pod(&self, pod_query: &str, container_id: &str) -> Result<()> {
-        let mut data = self.load();
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+        let mut data = self.load_unlocked();
         if let Some(p) = data
             .pods
             .iter_mut()
@@ -122,12 +135,13 @@ impl PodStore {
             if !p.containers.contains(&container_id.to_string()) {
                 p.containers.push(container_id.to_string());
                 p.status = "Running".to_string();
-                self.save(&data)?;
+                self.save_unlocked(&data)?;
             }
             Ok(())
         } else {
             Err(anyhow!("Pod '{}' not found", pod_query))
         }
+        })
     }
 }
 

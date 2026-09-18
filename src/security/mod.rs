@@ -269,6 +269,80 @@ pub struct SeccompSyscall {
     pub action: String,
 }
 
+/// Apply the default seccomp BPF filter inside the container process.
+#[cfg(target_os = "linux")]
+pub fn apply_default_seccomp() -> anyhow::Result<()> {
+    use seccompiler::{BpfProgram, SeccompAction, SeccompFilter, TargetArch};
+    use std::collections::BTreeMap;
+    use std::convert::TryInto;
+
+    let blocked = SeccompRule::default_filter().syscalls[0].names.clone();
+    let mut filter_map: BTreeMap<i64, Vec<seccompiler::SeccompRule>> = BTreeMap::new();
+    for name in blocked {
+        if let Some(nr) = syscall_name_to_nr(&name) {
+            filter_map.insert(nr as i64, vec![]);
+        }
+    }
+
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => TargetArch::x86_64,
+        "aarch64" => TargetArch::aarch64,
+        "riscv64" => TargetArch::riscv64,
+        _ => return Ok(()),
+    };
+
+    let bpf: BpfProgram = SeccompFilter::new(
+        filter_map,
+        SeccompAction::Allow,
+        SeccompAction::Errno(libc::EPERM as u32),
+        arch,
+    )?
+    .try_into()?;
+
+    seccompiler::apply_filter(&bpf)?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn apply_default_seccomp() -> anyhow::Result<()> {
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn syscall_name_to_nr(name: &str) -> Option<i32> {
+    fn to_i32(nr: libc::c_long) -> i32 {
+        nr as i32
+    }
+
+    match name {
+        "acct" => Some(to_i32(libc::SYS_acct)),
+        "add_key" => Some(to_i32(libc::SYS_add_key)),
+        "bpf" => Some(to_i32(libc::SYS_bpf)),
+        "clock_settime" => Some(to_i32(libc::SYS_clock_settime)),
+        "init_module" => Some(to_i32(libc::SYS_init_module)),
+        "finit_module" => Some(to_i32(libc::SYS_finit_module)),
+        "delete_module" => Some(to_i32(libc::SYS_delete_module)),
+        "kexec_load" => Some(to_i32(libc::SYS_kexec_load)),
+        "keyctl" => Some(to_i32(libc::SYS_keyctl)),
+        "lookup_dcookie" => Some(to_i32(libc::SYS_lookup_dcookie)),
+        "perf_event_open" => Some(to_i32(libc::SYS_perf_event_open)),
+        "pivot_root" => Some(to_i32(libc::SYS_pivot_root)),
+        "ptrace" => Some(to_i32(libc::SYS_ptrace)),
+        "reboot" => Some(to_i32(libc::SYS_reboot)),
+        "request_key" => Some(to_i32(libc::SYS_request_key)),
+        "set_mempolicy" => Some(to_i32(libc::SYS_set_mempolicy)),
+        "settimeofday" => Some(to_i32(libc::SYS_settimeofday)),
+        "swapoff" => Some(to_i32(libc::SYS_swapoff)),
+        "swapon" => Some(to_i32(libc::SYS_swapon)),
+        "sysfs" => Some(to_i32(libc::SYS_sysfs)),
+        "umount2" => Some(to_i32(libc::SYS_umount2)),
+        "unshare" => Some(to_i32(libc::SYS_unshare)),
+        "userfaultfd" => Some(to_i32(libc::SYS_userfaultfd)),
+        "vmsplice" => Some(to_i32(libc::SYS_vmsplice)),
+        _ => None,
+    }
+}
+
 impl SeccompRule {
     pub fn default_filter() -> Self {
         Self {

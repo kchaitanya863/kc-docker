@@ -1011,6 +1011,21 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
         spec.process.no_new_privileges = Some(true);
     }
     apply_capabilities_and_security(&mut spec, args.privileged, &args.cap_add, &args.cap_drop);
+    if !args.privileged
+        && !args
+            .security_opt
+            .iter()
+            .any(|s| s == "seccomp=unconfined")
+    {
+        if let Some(l) = &mut spec.linux {
+            if l.seccomp.is_none() {
+                l.seccomp = Some(
+                    serde_json::to_value(security::SeccompRule::default_filter())
+                        .unwrap_or(serde_json::Value::Null),
+                );
+            }
+        }
+    }
     if args.cpu_count.is_some()
         || args.cpu_percent.is_some()
         || args.io_maxbandwidth.is_some()
@@ -1126,6 +1141,25 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
         &parsed_ports,
         args.detach,
     )?;
+
+    if args.detach {
+        let pid_path = bundle_dir.join("vm.pid");
+        if let Ok(pid_str) = fs::read_to_string(&pid_path) {
+            if let Ok(pid) = pid_str.trim().parse::<i32>() {
+                if unsafe { libc::kill(pid, 0) } != 0 {
+                    return Err(anyhow!(
+                        "Container failed to start: trampoline process exited immediately"
+                    ));
+                }
+            }
+        }
+        if !health_cfg.test.is_empty() {
+            let mut health_res = health::HealthCheckResult::default();
+            let _ = health::check_container_health(&bundle_dir, &health_cfg, &mut health_res);
+        }
+        return Ok(exit_code);
+    }
+
     let mut restart_count = 0;
 
     while !args.detach {
@@ -2694,6 +2728,21 @@ pub async fn create_only_container(args: RunArgs) -> Result<String> {
         spec.process.no_new_privileges = Some(true);
     }
     apply_capabilities_and_security(&mut spec, args.privileged, &args.cap_add, &args.cap_drop);
+    if !args.privileged
+        && !args
+            .security_opt
+            .iter()
+            .any(|s| s == "seccomp=unconfined")
+    {
+        if let Some(l) = &mut spec.linux {
+            if l.seccomp.is_none() {
+                l.seccomp = Some(
+                    serde_json::to_value(security::SeccompRule::default_filter())
+                        .unwrap_or(serde_json::Value::Null),
+                );
+            }
+        }
+    }
     if args.cpu_count.is_some()
         || args.cpu_percent.is_some()
         || args.io_maxbandwidth.is_some()

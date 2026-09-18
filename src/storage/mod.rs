@@ -1,5 +1,6 @@
 pub mod container_store;
 pub mod image_store;
+pub mod index_lock;
 pub mod overlay;
 
 use anyhow::Result;

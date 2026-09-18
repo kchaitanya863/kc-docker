@@ -45,7 +45,7 @@ impl VolumeStore {
         }
     }
 
-    fn load(&self) -> VolumeStoreData {
+    fn load_unlocked(&self) -> VolumeStoreData {
         if let Ok(content) = fs::read_to_string(&self.index_file) {
             serde_json::from_str(&content).unwrap_or_default()
         } else {
@@ -53,7 +53,7 @@ impl VolumeStore {
         }
     }
 
-    fn save(&self, data: &VolumeStoreData) -> Result<()> {
+    fn save_unlocked(&self, data: &VolumeStoreData) -> Result<()> {
         let content = serde_json::to_string_pretty(data)?;
         let rand_suffix = hex::encode(crate::storage::container_store::rand_id());
         let temp_file = self
@@ -65,11 +65,22 @@ impl VolumeStore {
     }
 
     pub fn list(&self) -> Vec<VolumeRecord> {
-        self.load().volumes
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+            Ok(self.load_unlocked().volumes)
+        })
+        .unwrap_or_default()
     }
 
     pub fn find(&self, name: &str) -> Option<VolumeRecord> {
-        self.load().volumes.into_iter().find(|v| v.name == name)
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+            Ok(self
+                .load_unlocked()
+                .volumes
+                .into_iter()
+                .find(|v| v.name == name))
+        })
+        .ok()
+        .flatten()
     }
 
     pub fn create(
@@ -77,7 +88,8 @@ impl VolumeStore {
         name: Option<&str>,
         labels: Option<HashMap<String, String>>,
     ) -> Result<VolumeRecord> {
-        let mut data = self.load();
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+        let mut data = self.load_unlocked();
         let vol_name = match name {
             Some(n) if !n.trim().is_empty() => n.trim().to_string(),
             _ => format!(
@@ -108,15 +120,17 @@ impl VolumeStore {
         };
 
         data.volumes.push(record.clone());
-        self.save(&data)?;
+        self.save_unlocked(&data)?;
         Ok(record)
+        })
     }
 
     pub fn remove(&self, name: &str) -> Result<VolumeRecord> {
-        let mut data = self.load();
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+        let mut data = self.load_unlocked();
         if let Some(pos) = data.volumes.iter().position(|v| v.name == name) {
             let removed = data.volumes.remove(pos);
-            self.save(&data)?;
+            self.save_unlocked(&data)?;
 
             let vol_dir = self.volumes_dir.join(&removed.name);
             if vol_dir.exists() {
@@ -126,10 +140,12 @@ impl VolumeStore {
         } else {
             Err(anyhow!("Volume '{}' not found", name))
         }
+        })
     }
 
     pub fn prune(&self) -> Result<Vec<String>> {
-        let mut data = self.load();
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+        let mut data = self.load_unlocked();
         let pruned: Vec<String> = data.volumes.iter().map(|v| v.name.clone()).collect();
         for name in &pruned {
             let vol_dir = self.volumes_dir.join(name);
@@ -138,8 +154,9 @@ impl VolumeStore {
             }
         }
         data.volumes.clear();
-        self.save(&data)?;
+        self.save_unlocked(&data)?;
         Ok(pruned)
+        })
     }
 
     /// Parse a volume flag string:
@@ -191,28 +208,11 @@ impl VolumeStore {
             || source_str.starts_with('~');
 
         if is_host_path {
-            // Guard against relative path traversal escaping current working directory
             if source_str.contains("..") {
-                let p = Path::new(source_str);
-                if p.is_relative() {
-                    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-                    let resolved = cwd.join(p);
-                    if let Ok(canon_res) = resolved.canonicalize() {
-                        if let Ok(canon_cwd) = cwd.canonicalize() {
-                            if !canon_res.starts_with(&canon_cwd) {
-                                return Err(anyhow!(
-                                    "Path traversal rejected in volume mount: '{}'",
-                                    source_str
-                                ));
-                            }
-                        }
-                    } else {
-                        return Err(anyhow!(
-                            "Path traversal rejected in volume mount: '{}'",
-                            source_str
-                        ));
-                    }
-                }
+                return Err(anyhow!(
+                    "Path traversal rejected in volume mount: '{}'",
+                    source_str
+                ));
             }
 
             let host_path = if source_str.starts_with('~') {
@@ -287,8 +287,17 @@ mod tests {
         assert!(store.find("test-data").is_none());
         assert_eq!(store.list().len(), 0);
 
-        // Path traversal rejection
+        // Relative path traversal rejection
         let err = store.resolve_mount("../../../etc:/data");
+        assert!(err.is_err());
+        assert!(
+            err.unwrap_err()
+                .to_string()
+                .contains("Path traversal rejected")
+        );
+
+        // Absolute path traversal rejection
+        let err = store.resolve_mount("/foo/../../../etc:/data");
         assert!(err.is_err());
         assert!(
             err.unwrap_err()
