@@ -189,19 +189,32 @@ def run_parity_comparison():
         else:
             parity_display = "N/A"
 
+        # Check Full Upstream Coverage
+        upstream_matched = 0
+        for opt in docker_opts:
+            names = clean_flag_name(opt.get("name", ""))
+            if any(n in boxr_flags_set for n in names if n.startswith("-")):
+                upstream_matched += 1
+
         print(f"docker {clean_cmd:<9} {parity_display:<24} {len(docker_opts):<16} {len(boxr_opts)}")
 
         report.append({
             "command": clean_cmd,
             "docker_total_options": len(docker_opts),
             "boxr_options_count": len(boxr_opts),
+            "upstream_matched_count": upstream_matched,
             "boxr_flags": sorted(list(boxr_flags_set)),
             "daily_driver_parity": parity_display
         })
 
     print("=" * 80)
     overall_pct = (total_daily_matched / total_daily_flags) * 100.0 if total_daily_flags else 100.0
-    print(f"OVERALL DAILY-DRIVER CLI PARITY: {total_daily_matched}/{total_daily_flags} ({overall_pct:.1f}% MATCH)")
+    total_up = sum(r["docker_total_options"] for r in report)
+    total_up_matched = sum(r["upstream_matched_count"] for r in report)
+    up_pct = (total_up_matched / total_up) * 100.0 if total_up else 100.0
+
+    print(f"DAILY-DRIVER CLI PARITY:    {total_daily_matched}/{total_daily_flags} ({overall_pct:.1f}% MATCH)")
+    print(f"FULL UPSTREAM SPEC COVERAGE: {total_up_matched}/{total_up} ({up_pct:.1f}% OF ALL 325 DOCKER CLI OPTIONS)")
     print("=" * 80)
 
     # Save detailed JSON report
