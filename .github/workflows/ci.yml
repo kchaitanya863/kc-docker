@@ -309,8 +309,8 @@ jobs:
         run: |
           TAG="${{ steps.dl.outputs.tag }}"
           cd assets
-          gh release create "$TAG" --repo kchaitanya863/homebrew-tap --title "Release $TAG" --notes "Release $TAG of Boxr container engine" boxr-* || \
-          gh release upload "$TAG" --repo kchaitanya863/homebrew-tap boxr-* --clobber
+          gh release create "$TAG" --repo kchaitanya863/homebrew-tap --title "Release $TAG" --notes "Release $TAG of Boxr container engine" boxr* || \
+          gh release upload "$TAG" --repo kchaitanya863/homebrew-tap boxr* --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN || secrets.GITHUB_TOKEN }}
 
