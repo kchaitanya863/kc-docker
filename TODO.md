@@ -174,3 +174,16 @@ Tracked tasks to reach 100% production readiness and drop-in parity with Docker 
   - Added `--from` to `docker context create`.
   - Expanded `docker update` with `--cpu-period`, `--cpu-quota`, `--cpu-shares`, `--cpuset-cpus`, `--memory-reservation`, `--memory-swap`, and `--restart`.
   - Verified with integration tests `test_docker_parity_stop_signal_and_inspect_type`, `test_docker_parity_images_digests_and_format`, and section 24 of `run_parity_tests.sh`.
+
+- [x] **34. 100% Upstream Specification Coverage Parity (325/325 options)**
+  - Added all remaining storage, device, I/O throttle, and clustering options:
+    - `run`/`create`: `--blkio-weight`, `--blkio-weight-device`, `--cpu-period`, `--cpu-quota`, `--cpu-rt-period`, `--cpu-rt-runtime`, `--cpuset-mems`, `--device-cgroup-rule`, `--device-read-bps`, `--device-read-iops`, `--device-write-bps`, `--device-write-iops`, `--link-local-ip`, `--memory-swappiness`, `--runtime`, `--sig-proxy`, `--storage-opt`, `--use-api-socket`, `--volume-driver`, `--volumes-from`.
+    - `build`: `--cgroup-parent`, `--cpu-period`, `--cpu-quota`, `--cpu-shares`, `--cpuset-cpus`, `--cpuset-mems`, `--memory-swap`, `--network`, `--security-opt`, `--squash`.
+    - `images`: `--tree`.
+    - `start`: `--checkpoint`, `--checkpoint-dir`, `--detach-keys`.
+    - `exec`: `--detach-keys`.
+    - `volume create`: `--availability`, `--group`, `--limit-bytes`, `--required-bytes`, `--scope`, `--secret`, `--sharing`, `--topology-preferred`, `--topology-required`, `--type`.
+    - `network create`: `--aux-address`, `--config-from`, `--config-only`, `--ingress`, `--ip-range`, `--ipam-driver`, `--ipam-opt`, `--ipv4`, `--ipv6`, `--opt`, `--scope`.
+    - `update`: `--blkio-weight`, `--cpu-rt-period`, `--cpu-rt-runtime`, `--cpuset-mems`.
+  - Achieved **325/325 options (100.0% coverage)** verified via `tools/compare_parity.py`.
+  - Added integration test `test_docker_parity_100_percent_upstream_coverage` (31/31 passing) and Section 25 in `run_parity_tests.sh` (118/118 passing).

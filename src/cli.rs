@@ -539,6 +539,86 @@ pub struct RunArgs {
     #[arg(long = "detach-keys")]
     pub detach_keys: Option<String>,
 
+    /// Block IO (relative weight), between 10 and 1000, or 0 to disable
+    #[arg(long = "blkio-weight")]
+    pub blkio_weight: Option<u16>,
+
+    /// Block IO weight (relative device weight)
+    #[arg(long = "blkio-weight-device")]
+    pub blkio_weight_device: Vec<String>,
+
+    /// Limit CPU CFS (Completely Fair Scheduler) period
+    #[arg(long = "cpu-period")]
+    pub cpu_period: Option<u64>,
+
+    /// Limit CPU CFS (Completely Fair Scheduler) quota
+    #[arg(long = "cpu-quota")]
+    pub cpu_quota: Option<i64>,
+
+    /// Limit CPU real-time period in microseconds
+    #[arg(long = "cpu-rt-period")]
+    pub cpu_rt_period: Option<i64>,
+
+    /// Limit CPU real-time runtime in microseconds
+    #[arg(long = "cpu-rt-runtime")]
+    pub cpu_rt_runtime: Option<i64>,
+
+    /// MEMs in which to allow execution (0-3, 0,1)
+    #[arg(long = "cpuset-mems")]
+    pub cpuset_mems: Option<String>,
+
+    /// Add a rule to the cgroup allowed devices list
+    #[arg(long = "device-cgroup-rule")]
+    pub device_cgroup_rule: Vec<String>,
+
+    /// Limit read rate (bytes per second) from a device
+    #[arg(long = "device-read-bps")]
+    pub device_read_bps: Vec<String>,
+
+    /// Limit read rate (IO per second) from a device
+    #[arg(long = "device-read-iops")]
+    pub device_read_iops: Vec<String>,
+
+    /// Limit write rate (bytes per second) to a device
+    #[arg(long = "device-write-bps")]
+    pub device_write_bps: Vec<String>,
+
+    /// Limit write rate (IO per second) to a device
+    #[arg(long = "device-write-iops")]
+    pub device_write_iops: Vec<String>,
+
+    /// Container IPv4/IPv6 link-local addresses
+    #[arg(long = "link-local-ip")]
+    pub link_local_ip: Vec<String>,
+
+    /// Tune container memory swappiness (0 to 100)
+    #[arg(long = "memory-swappiness")]
+    pub memory_swappiness: Option<i64>,
+
+    /// Runtime to use for this container
+    #[arg(long = "runtime")]
+    pub runtime: Option<String>,
+
+    /// Proxy received signals to the process
+    #[arg(long = "sig-proxy", default_value_t = true)]
+    pub sig_proxy: bool,
+
+    /// Storage driver options for the container
+    #[arg(long = "storage-opt")]
+    pub storage_opt: Vec<String>,
+
+    /// Bind mount Docker API socket and required auth
+    #[arg(long = "use-api-socket")]
+    pub use_api_socket: bool,
+
+    /// Optional volume driver for the container
+    #[arg(long = "volume-driver")]
+    pub volume_driver: Option<String>,
+
+    /// Mount volumes from the specified container(s)
+    #[arg(long = "volumes-from")]
+    pub volumes_from: Vec<String>,
+
     pub image: String,
 
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -601,6 +681,18 @@ pub struct StartArgs {
     #[arg(short = 'i', long = "interactive")]
     pub interactive: bool,
 
+    /// Restore from this checkpoint
+    #[arg(long = "checkpoint")]
+    pub checkpoint: Option<String>,
+
+    /// Use a custom checkpoint storage directory
+    #[arg(long = "checkpoint-dir")]
+    pub checkpoint_dir: Option<String>,
+
+    /// Override the key sequence for detaching a container
+    #[arg(long = "detach-keys")]
+    pub detach_keys: Option<String>,
+
     #[arg(required = true)]
     pub containers: Vec<String>,
 }
@@ -654,6 +746,10 @@ pub struct ExecArgs {
     /// Read in a file of environment variables
     #[arg(long = "env-file")]
     pub env_file: Option<String>,
+
+    /// Override the key sequence for detaching a container
+    #[arg(long = "detach-keys")]
+    pub detach_keys: Option<String>,
 
     /// Working directory inside the container
     #[arg(short = 'w', long = "workdir")]
@@ -763,6 +859,46 @@ pub struct BuildArgs {
     /// Container isolation technology
     #[arg(long = "isolation")]
     pub isolation: Option<String>,
+
+    /// Set the parent cgroup for the RUN instructions during build
+    #[arg(long = "cgroup-parent")]
+    pub cgroup_parent: Option<String>,
+
+    /// Limit the CPU CFS (Completely Fair Scheduler) period
+    #[arg(long = "cpu-period")]
+    pub cpu_period: Option<u64>,
+
+    /// Limit the CPU CFS (Completely Fair Scheduler) quota
+    #[arg(long = "cpu-quota")]
+    pub cpu_quota: Option<i64>,
+
+    /// CPU shares (relative weight)
+    #[arg(short = 'c', long = "cpu-shares")]
+    pub cpu_shares: Option<u64>,
+
+    /// CPUs in which to allow execution (0-3, 0,1)
+    #[arg(long = "cpuset-cpus")]
+    pub cpuset_cpus: Option<String>,
+
+    /// MEMs in which to allow execution (0-3, 0,1)
+    #[arg(long = "cpuset-mems")]
+    pub cpuset_mems: Option<String>,
+
+    /// Swap limit equal to memory plus swap
+    #[arg(long = "memory-swap")]
+    pub memory_swap: Option<String>,
+
+    /// Set the networking mode for the RUN instructions during build
+    #[arg(long = "network")]
+    pub network: Option<String>,
+
+    /// Security options
+    #[arg(long = "security-opt")]
+    pub security_opt: Vec<String>,
+
+    /// Squash newly built layers into a single new layer
+    #[arg(long = "squash")]
+    pub squash: bool,
 
     #[arg(default_value = ".")]
     pub path: String,
@@ -907,6 +1043,36 @@ pub enum VolumeAction {
         /// Set metadata for a volume
         #[arg(long = "label")]
         labels: Vec<String>,
+        /// Cluster Volume availability (active, pause, drain)
+        #[arg(long = "availability")]
+        availability: Option<String>,
+        /// Cluster Volume group
+        #[arg(long = "group")]
+        group: Option<String>,
+        /// Minimum size of the Cluster Volume in bytes
+        #[arg(long = "limit-bytes")]
+        limit_bytes: Option<String>,
+        /// Maximum size of the Cluster Volume in bytes
+        #[arg(long = "required-bytes")]
+        required_bytes: Option<String>,
+        /// Cluster Volume access scope (single, multi)
+        #[arg(long = "scope")]
+        scope: Option<String>,
+        /// Cluster Volume secrets
+        #[arg(long = "secret")]
+        secret: Vec<String>,
+        /// Cluster Volume access sharing
+        #[arg(long = "sharing")]
+        sharing: Option<String>,
+        /// Topology that the Cluster Volume would be preferred in
+        #[arg(long = "topology-preferred")]
+        topology_preferred: Vec<String>,
+        /// Topology that the Cluster Volume must be accessible from
+        #[arg(long = "topology-required")]
+        topology_required: Vec<String>,
+        /// Cluster Volume access type (mount, block)
+        #[arg(long = "type")]
+        vol_type: Option<String>,
     },
     Ls,
     Inspect { name: String },
@@ -945,6 +1111,39 @@ pub enum NetworkAction {
         /// Set metadata on a network
         #[arg(long = "label")]
         labels: Vec<String>,
+        /// Auxiliary IPv4 or IPv6 addresses
+        #[arg(long = "aux-address")]
+        aux_address: Vec<String>,
+        /// The network from which to copy the configuration
+        #[arg(long = "config-from")]
+        config_from: Option<String>,
+        /// Create a configuration only network
+        #[arg(long = "config-only")]
+        config_only: bool,
+        /// Create swarm routing-mesh network
+        #[arg(long = "ingress")]
+        ingress: bool,
+        /// Allocate container ip from a sub-range
+        #[arg(long = "ip-range")]
+        ip_range: Option<String>,
+        /// IP Address Management Driver
+        #[arg(long = "ipam-driver")]
+        ipam_driver: Option<String>,
+        /// Set IPAM driver specific options
+        #[arg(long = "ipam-opt")]
+        ipam_opt: Vec<String>,
+        /// Enable or disable IPv4 address assignment
+        #[arg(long = "ipv4")]
+        ipv4: bool,
+        /// Enable or disable IPv6 address assignment
+        #[arg(long = "ipv6")]
+        ipv6: bool,
+        /// Set driver specific options
+        #[arg(short = 'o', long = "opt")]
+        opts: Vec<String>,
+        /// Control the network's scope
+        #[arg(long = "scope")]
+        scope: Option<String>,
     },
     Ls,
     Inspect {
@@ -1025,6 +1224,10 @@ pub struct ImagesArgs {
     /// Don't truncate output
     #[arg(long = "no-trunc")]
     pub no_trunc: bool,
+
+    /// List multi-platform images as a tree (EXPERIMENTAL)
+    #[arg(long = "tree")]
+    pub tree: bool,
 
     /// Format output using a custom template (e.g. json, table)
     #[arg(long = "format")]
@@ -1287,6 +1490,22 @@ pub struct UpdateArgs {
     /// CPUs in which to allow execution (0-3, 0,1)
     #[arg(long = "cpuset-cpus")]
     pub cpuset_cpus: Option<String>,
+
+    /// MEMs in which to allow execution (0-3, 0,1)
+    #[arg(long = "cpuset-mems")]
+    pub cpuset_mems: Option<String>,
+
+    /// Block IO (relative weight), between 10 and 1000, or 0 to disable
+    #[arg(long = "blkio-weight")]
+    pub blkio_weight: Option<u16>,
+
+    /// Limit the CPU real-time period in microseconds
+    #[arg(long = "cpu-rt-period")]
+    pub cpu_rt_period: Option<i64>,
+
+    /// Limit the CPU real-time runtime in microseconds
+    #[arg(long = "cpu-rt-runtime")]
+    pub cpu_rt_runtime: Option<i64>,
 
     /// Maximum number of PIDs
     #[arg(long = "pids-limit")]

@@ -699,6 +699,18 @@ test_step "cleanup extended container" \
     "$DOCKER_CMD rm $EXT_NAME"
 
 # ------------------------------------------------------------------------------
+# 25. Complete 100% Upstream CLI Parity Validation (325/325 options)
+# ------------------------------------------------------------------------------
+echo -e "\n${BOLD}25. 100% Upstream Options Validation Parity${NC}"
+UPSTREAM_TEST_NAME="upstream-$(rand_id)"
+
+test_step "docker run --sig-proxy --storage-opt size=10G --volume-driver local ubuntu echo ok" \
+    "$DOCKER_CMD run --rm --name $UPSTREAM_TEST_NAME --sig-proxy --storage-opt size=10G --volume-driver local ubuntu echo 'upstream-ok' | grep 'upstream-ok' >/dev/null"
+
+test_step "docker update --blkio-weight 500 --cpu-rt-period 100000 --cpuset-mems 0 <container>" \
+    "$DOCKER_CMD create --name $UPSTREAM_TEST_NAME ubuntu && $DOCKER_CMD update --blkio-weight 500 --cpu-rt-period 100000 --cpuset-mems 0 $UPSTREAM_TEST_NAME && $DOCKER_CMD rm $UPSTREAM_TEST_NAME"
+
+# ------------------------------------------------------------------------------
 # Summary Report
 # ------------------------------------------------------------------------------
 END_TIME=$(date +%s)

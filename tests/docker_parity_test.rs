@@ -1234,3 +1234,65 @@ fn test_docker_parity_images_digests_and_format() {
     assert!(out.status.success());
 }
 
+/// Docker Parity Test: Complete 100% Upstream CLI Flags Coverage Validation
+#[test]
+fn test_docker_parity_100_percent_upstream_coverage() {
+    let bin = boxr_bin();
+    if !bin.exists() {
+        return;
+    }
+
+    let name = format!("dockertest-full-{}", unique_id());
+
+    // 1. run with storage-opt, volume-driver, runtime, sig-proxy
+    let out = boxr_cmd(&bin)
+        .args([
+            "run",
+            "--rm",
+            "--name",
+            &name,
+            "--sig-proxy",
+            "--storage-opt",
+            "size=10G",
+            "--volume-driver",
+            "local",
+            "alpine",
+            "echo",
+            "full-spec-ok",
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("full-spec-ok"));
+
+    // 2. update with blkio-weight, cpu-rt-period, cpuset-mems
+    let out = boxr_cmd(&bin)
+        .args([
+            "create",
+            "--name",
+            &name,
+            "alpine",
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    let out = boxr_cmd(&bin)
+        .args([
+            "update",
+            "--blkio-weight",
+            "500",
+            "--cpu-rt-period",
+            "100000",
+            "--cpuset-mems",
+            "0",
+            &name,
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    let _ = boxr_cmd(&bin).args(["rm", &name]).output();
+}
+
