@@ -34,14 +34,47 @@ impl ContainerCopy {
             }
         }
 
+        let canon_root = cont_rootfs.canonicalize()?;
+
+        // Verify each intermediate component and symlink stays inside container rootfs
+        let mut check_path = cont_rootfs.to_path_buf();
+        for comp in Path::new(clean).components() {
+            if let std::path::Component::Normal(c) = comp {
+                check_path.push(c);
+                if fs::symlink_metadata(&check_path).is_ok() {
+                    let canon_check = check_path.canonicalize()?;
+                    if !canon_check.starts_with(&canon_root) {
+                        return Err(anyhow!(
+                            "Path traversal rejected: container path component '{}' resolves outside rootfs",
+                            container_path
+                        ));
+                    }
+                }
+            }
+        }
+
         if resolved.exists() {
-            let canon_root = cont_rootfs.canonicalize()?;
             let canon_res = resolved.canonicalize()?;
             if !canon_res.starts_with(&canon_root) {
                 return Err(anyhow!(
                     "Path traversal rejected: container path '{}' resolves outside rootfs",
                     container_path
                 ));
+            }
+        } else {
+            let mut curr = resolved.as_path();
+            while let Some(parent) = curr.parent() {
+                if parent.exists() {
+                    let canon_parent = parent.canonicalize()?;
+                    if !canon_parent.starts_with(&canon_root) {
+                        return Err(anyhow!(
+                            "Path traversal rejected: container parent path '{}' resolves outside rootfs",
+                            container_path
+                        ));
+                    }
+                    break;
+                }
+                curr = parent;
             }
         }
 
@@ -198,5 +231,22 @@ mod tests {
                 .to_string()
                 .contains("Path traversal rejected")
         );
+
+        // Symlink pointing outside rootfs, target file does not yet exist
+        #[cfg(unix)]
+        {
+            let outside = temp.path().join("outside_secret");
+            fs::create_dir_all(&outside).unwrap();
+            let symlink_path = rootfs.join("escape_link");
+            let _ = std::os::unix::fs::symlink(&outside, &symlink_path);
+
+            let err3 = ContainerCopy::resolve_container_path(&rootfs, "/escape_link/new_file.txt");
+            assert!(err3.is_err());
+            assert!(
+                err3.unwrap_err()
+                    .to_string()
+                    .contains("Path traversal rejected")
+            );
+        }
     }
 }

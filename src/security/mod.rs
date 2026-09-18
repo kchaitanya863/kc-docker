@@ -323,6 +323,10 @@ fn syscall_name_to_nr(name: &str) -> Option<i32> {
         "finit_module" => Some(to_i32(libc::SYS_finit_module)),
         "delete_module" => Some(to_i32(libc::SYS_delete_module)),
         "kexec_load" => Some(to_i32(libc::SYS_kexec_load)),
+        #[cfg(target_arch = "x86_64")]
+        "kexec_file_load" => Some(to_i32(libc::SYS_kexec_file_load)),
+        #[cfg(not(target_arch = "x86_64"))]
+        "kexec_file_load" => None,
         "keyctl" => Some(to_i32(libc::SYS_keyctl)),
         "lookup_dcookie" => Some(to_i32(libc::SYS_lookup_dcookie)),
         "perf_event_open" => Some(to_i32(libc::SYS_perf_event_open)),
@@ -332,6 +336,8 @@ fn syscall_name_to_nr(name: &str) -> Option<i32> {
         "request_key" => Some(to_i32(libc::SYS_request_key)),
         "set_mempolicy" => Some(to_i32(libc::SYS_set_mempolicy)),
         "settimeofday" => Some(to_i32(libc::SYS_settimeofday)),
+        "sys_settimeofday" => Some(to_i32(libc::SYS_settimeofday)),
+        "stime" => None,
         "swapoff" => Some(to_i32(libc::SYS_swapoff)),
         "swapon" => Some(to_i32(libc::SYS_swapon)),
         #[cfg(target_arch = "x86_64")]

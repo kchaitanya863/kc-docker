@@ -98,12 +98,39 @@ impl VolumeStore {
                 ),
             };
 
+            if vol_name.contains('/') || vol_name.contains('\\') || vol_name.contains("..") {
+                return Err(anyhow!(
+                    "Invalid volume name '{}': cannot contain path separators or '..'",
+                    vol_name
+                ));
+            }
+
+            if !vol_name
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.')
+            {
+                return Err(anyhow!(
+                    "Invalid volume name '{}': must contain only alphanumeric, '_', '-', or '.' characters",
+                    vol_name
+                ));
+            }
+
             if data.volumes.iter().any(|v| v.name == vol_name) {
                 return Err(anyhow!("Volume with name '{}' already exists", vol_name));
             }
 
             let mountpoint = self.volumes_dir.join(&vol_name).join("_data");
             fs::create_dir_all(&mountpoint)?;
+            if let (Ok(canon_vols), Ok(canon_mount)) =
+                (self.volumes_dir.canonicalize(), mountpoint.canonicalize())
+            {
+                if !canon_mount.starts_with(&canon_vols) {
+                    return Err(anyhow!(
+                        "Volume mountpoint escapes volumes directory: '{}'",
+                        vol_name
+                    ));
+                }
+            }
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
@@ -190,6 +217,13 @@ impl VolumeStore {
 
         if dest_str.trim().is_empty() {
             return Err(anyhow!("Volume destination path cannot be empty"));
+        }
+
+        if !dest_str.starts_with('/') || dest_str.contains("..") {
+            return Err(anyhow!(
+                "Invalid volume destination '{}': must be an absolute path and cannot contain '..'",
+                dest_str
+            ));
         }
 
         if source_str.is_empty() {
@@ -303,6 +337,42 @@ mod tests {
             err.unwrap_err()
                 .to_string()
                 .contains("Path traversal rejected")
+        );
+
+        // Destination path traversal rejection
+        let err = store.resolve_mount("/tmp/data:../../../../etc");
+        assert!(err.is_err());
+        assert!(
+            err.unwrap_err()
+                .to_string()
+                .contains("Invalid volume destination")
+        );
+
+        let err2 = store.resolve_mount("/tmp/data:relative/path");
+        assert!(err2.is_err());
+        assert!(
+            err2.unwrap_err()
+                .to_string()
+                .contains("Invalid volume destination")
+        );
+
+        // Named volume name traversal rejection
+        let err_name = store.create(Some("../../pwn"), None);
+        assert!(err_name.is_err());
+        assert!(
+            err_name
+                .unwrap_err()
+                .to_string()
+                .contains("Invalid volume name")
+        );
+
+        let err_name2 = store.create(Some("sub/dir"), None);
+        assert!(err_name2.is_err());
+        assert!(
+            err_name2
+                .unwrap_err()
+                .to_string()
+                .contains("Invalid volume name")
         );
     }
 }

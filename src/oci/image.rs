@@ -125,10 +125,27 @@ pub fn unpack_layer(layer_archive_path: &Path, target_dir: &Path) -> Result<()> 
     let mut archive = Archive::new(&mut reader);
     // Don't unpack entries that match whiteout markers directly as regular files
     let mut pending_whiteouts: Vec<PathBuf> = Vec::new();
+    let canon_target = target_dir.canonicalize()?;
 
     for entry_result in archive.entries()? {
         let mut entry = entry_result?;
         let entry_path = entry.path()?.to_path_buf();
+
+        // Reject absolute paths, root directories, drive prefixes, or '..' escaping target_dir
+        for comp in entry_path.components() {
+            if matches!(
+                comp,
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
+            ) {
+                return Err(anyhow!(
+                    "Tar-slip path traversal rejected in layer entry: {:?}",
+                    entry_path
+                ));
+            }
+        }
+
         let file_name = entry_path
             .file_name()
             .and_then(|s| s.to_str())
@@ -139,6 +156,13 @@ pub fn unpack_layer(layer_archive_path: &Path, target_dir: &Path) -> Result<()> 
             if let Some(parent) = entry_path.parent() {
                 let dest_parent = target_dir.join(parent);
                 if dest_parent.exists() {
+                    let canon_parent = dest_parent.canonicalize()?;
+                    if !canon_parent.starts_with(&canon_target) {
+                        return Err(anyhow!(
+                            "Whiteout path escapes target directory: {:?}",
+                            entry_path
+                        ));
+                    }
                     for dir_entry in fs::read_dir(&dest_parent)? {
                         let path = dir_entry?.path();
                         if path.is_dir() {
@@ -153,9 +177,26 @@ pub fn unpack_layer(layer_archive_path: &Path, target_dir: &Path) -> Result<()> 
         }
 
         if let Some(stripped_wh) = file_name.strip_prefix(".wh.") {
+            if stripped_wh.contains('/') || stripped_wh.contains('\\') || stripped_wh.contains("..")
+            {
+                return Err(anyhow!(
+                    "Invalid whiteout target filename: {:?}",
+                    stripped_wh
+                ));
+            }
             // Explicit whiteout: remove corresponding file/folder in parent
             if let Some(parent) = entry_path.parent() {
                 let to_remove = target_dir.join(parent).join(stripped_wh);
+                let dest_parent = target_dir.join(parent);
+                if dest_parent.exists() {
+                    let canon_parent = dest_parent.canonicalize()?;
+                    if !canon_parent.starts_with(&canon_target) {
+                        return Err(anyhow!(
+                            "Whiteout path escapes target directory: {:?}",
+                            entry_path
+                        ));
+                    }
+                }
                 pending_whiteouts.push(to_remove);
             }
             continue;
@@ -209,10 +250,17 @@ pub fn unpack_layer(layer_archive_path: &Path, target_dir: &Path) -> Result<()> 
 
     // Apply pending whiteout removals
     for wh in pending_whiteouts {
-        if wh.is_dir() {
-            let _ = fs::remove_dir_all(&wh);
-        } else if wh.exists() || fs::symlink_metadata(&wh).is_ok() {
-            let _ = fs::remove_file(&wh);
+        if wh.exists() || fs::symlink_metadata(&wh).is_ok() {
+            if let Ok(canon_wh) = wh.canonicalize() {
+                if !canon_wh.starts_with(&canon_target) {
+                    continue; // Skip any unsafe path outside target_dir
+                }
+            }
+            if wh.is_dir() {
+                let _ = fs::remove_dir_all(&wh);
+            } else {
+                let _ = fs::remove_file(&wh);
+            }
         }
     }
 
@@ -339,5 +387,36 @@ mod tests {
                 .contains("Tar-slip path traversal rejected")
         );
         assert!(!temp.path().join("escaped.txt").exists());
+    }
+
+    #[test]
+    fn test_unpack_layer_whiteout_traversal_rejection() {
+        let temp = tempdir().unwrap();
+        let target_dir = temp.path().join("target");
+        fs::create_dir_all(&target_dir).unwrap();
+
+        let _malicious_data = b"";
+        let mut tar_bytes = Vec::new();
+        let mut header = tar::Header::new_gnu();
+        header.set_size(0);
+        header.set_mode(0o644);
+        let raw_bytes = header.as_mut_bytes();
+        let name_bytes = b"../../../../etc/.wh.shadow";
+        raw_bytes[..name_bytes.len()].copy_from_slice(name_bytes);
+        header.set_cksum();
+
+        tar_bytes.extend_from_slice(header.as_bytes());
+        tar_bytes.extend(std::iter::repeat(0).take(1024));
+
+        let archive_path = temp.path().join("malicious_layer.tar");
+        fs::write(&archive_path, tar_bytes).unwrap();
+
+        let res = unpack_layer(&archive_path, &target_dir);
+        assert!(res.is_err());
+        assert!(
+            res.unwrap_err()
+                .to_string()
+                .contains("Tar-slip path traversal rejected in layer entry")
+        );
     }
 }

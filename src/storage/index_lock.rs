@@ -16,14 +16,32 @@ pub fn with_index_lock<T>(index_file: &Path, f: impl FnOnce() -> Result<T>) -> R
     {
         use std::os::unix::io::AsRawFd;
         let fd = _lock_file.as_raw_fd();
-        unsafe {
-            libc::flock(fd, libc::LOCK_EX);
+        loop {
+            let res = unsafe { libc::flock(fd, libc::LOCK_EX) };
+            if res == 0 {
+                break;
+            }
+            let err = std::io::Error::last_os_error();
+            if err.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(anyhow::anyhow!(
+                "Failed to acquire exclusive lock on {:?}: {}",
+                lock_path,
+                err
+            ));
         }
-        let result = f();
-        unsafe {
-            libc::flock(fd, libc::LOCK_UN);
+
+        struct FlockGuard(i32);
+        impl Drop for FlockGuard {
+            fn drop(&mut self) {
+                unsafe {
+                    libc::flock(self.0, libc::LOCK_UN);
+                }
+            }
         }
-        return result;
+        let _guard = FlockGuard(fd);
+        f()
     }
 
     #[cfg(not(unix))]

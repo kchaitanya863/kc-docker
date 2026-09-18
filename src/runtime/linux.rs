@@ -658,9 +658,19 @@ fn run_container_child(rootfs: &Path, spec: &Spec, mounts: &[MountSpec]) -> Resu
     }
 
     // Mount external volumes/binds
+    let canon_rootfs = rootfs.canonicalize()?;
     for m in mounts {
-        let target = rootfs.join(m.destination.trim_start_matches('/'));
+        let clean_dest = m.destination.trim_start_matches('/');
+        let target = rootfs.join(clean_dest);
         let _ = fs::create_dir_all(&target);
+        if let Ok(canon_target) = target.canonicalize() {
+            if !canon_target.starts_with(&canon_rootfs) {
+                return Err(anyhow!(
+                    "Mount destination escapes container rootfs: {:?}",
+                    m.destination
+                ));
+            }
+        }
         let mut flags = MsFlags::MS_BIND | MsFlags::MS_REC;
         if m.read_only {
             flags |= MsFlags::MS_RDONLY;
@@ -670,8 +680,17 @@ fn run_container_child(rootfs: &Path, spec: &Spec, mounts: &[MountSpec]) -> Resu
 
     for m in &spec.mounts {
         if m.mount_type == "bind" {
-            let target = rootfs.join(m.destination.trim_start_matches('/'));
+            let clean_dest = m.destination.trim_start_matches('/');
+            let target = rootfs.join(clean_dest);
             let _ = fs::create_dir_all(&target);
+            if let Ok(canon_target) = target.canonicalize() {
+                if !canon_target.starts_with(&canon_rootfs) {
+                    return Err(anyhow!(
+                        "Mount destination escapes container rootfs: {:?}",
+                        m.destination
+                    ));
+                }
+            }
             let mut flags = MsFlags::MS_BIND | MsFlags::MS_REC;
             if m.options
                 .as_ref()
@@ -692,8 +711,17 @@ fn run_container_child(rootfs: &Path, spec: &Spec, mounts: &[MountSpec]) -> Resu
             && m.destination != "/proc"
             && m.destination != "/sys"
         {
-            let target = rootfs.join(m.destination.trim_start_matches('/'));
+            let clean_dest = m.destination.trim_start_matches('/');
+            let target = rootfs.join(clean_dest);
             let _ = fs::create_dir_all(&target);
+            if let Ok(canon_target) = target.canonicalize() {
+                if !canon_target.starts_with(&canon_rootfs) {
+                    return Err(anyhow!(
+                        "Mount destination escapes container rootfs: {:?}",
+                        m.destination
+                    ));
+                }
+            }
             let _ = mount(
                 Some("tmpfs"),
                 &target,
