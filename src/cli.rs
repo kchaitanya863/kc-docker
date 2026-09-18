@@ -347,6 +347,54 @@ pub struct RunArgs {
     #[arg(long = "security-opt")]
     pub security_opt: Vec<String>,
 
+    /// CPU shares (relative weight)
+    #[arg(short = 'c', long = "cpu-shares")]
+    pub cpu_shares: Option<u64>,
+
+    /// CPUs in which to allow execution (e.g. 0-3, 0,1)
+    #[arg(long = "cpuset-cpus")]
+    pub cpuset_cpus: Option<String>,
+
+    /// Swap limit equal to memory plus swap
+    #[arg(long = "memory-swap")]
+    pub memory_swap: Option<String>,
+
+    /// Memory soft limit
+    #[arg(long = "memory-reservation")]
+    pub memory_reservation: Option<String>,
+
+    /// Set custom DNS search domains
+    #[arg(long = "dns-search")]
+    pub dns_search: Vec<String>,
+
+    /// Set DNS options
+    #[arg(long = "dns-option", alias = "dns-opt")]
+    pub dns_option: Vec<String>,
+
+    /// Expose a port or a range of ports
+    #[arg(long = "expose")]
+    pub expose: Vec<String>,
+
+    /// Sysctl options (format: <key>=<value>)
+    #[arg(long = "sysctl")]
+    pub sysctl: Vec<String>,
+
+    /// Timeout (in seconds) to stop a container
+    #[arg(long = "stop-timeout")]
+    pub stop_timeout: Option<u32>,
+
+    /// Signal to stop the container
+    #[arg(long = "stop-signal")]
+    pub stop_signal: Option<String>,
+
+    /// Add an annotation to the container (format: <key>=<value>)
+    #[arg(long = "annotation")]
+    pub annotations: Vec<String>,
+
+    /// Ulimit options (format: <type>=<soft>:<hard>)
+    #[arg(long = "ulimit")]
+    pub ulimits: Vec<String>,
+
     pub image: String,
 
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -411,6 +459,18 @@ pub struct LogsArgs {
     #[arg(short = 't', long = "timestamps")]
     pub timestamps: bool,
 
+    /// Show extra details provided to logs
+    #[arg(long = "details")]
+    pub details: bool,
+
+    /// Show logs since timestamp (e.g. 2013-01-02T13:23:37Z) or relative (e.g. 42m)
+    #[arg(long = "since")]
+    pub since: Option<String>,
+
+    /// Show logs before a timestamp (e.g. 2013-01-02T13:23:37Z) or relative (e.g. 42m)
+    #[arg(long = "until")]
+    pub until: Option<String>,
+
     /// Number of lines to show from the end of the logs
     #[arg(short = 'n', long = "tail")]
     pub tail: Option<usize>,
@@ -430,6 +490,14 @@ pub struct ExecArgs {
     /// Detached mode: run command in the background
     #[arg(short = 'd', long = "detach")]
     pub detach: bool,
+
+    /// Give extended privileges to the command
+    #[arg(long = "privileged")]
+    pub privileged: bool,
+
+    /// Read in a file of environment variables
+    #[arg(long = "env-file")]
+    pub env_file: Option<String>,
 
     /// Working directory inside the container
     #[arg(short = 'w', long = "workdir")]
@@ -471,6 +539,22 @@ pub struct BuildArgs {
     /// Set the target build stage to build
     #[arg(long = "target")]
     pub target: Option<String>,
+
+    /// Add a custom host-to-IP mapping (host:ip)
+    #[arg(long = "add-host")]
+    pub add_host: Vec<String>,
+
+    /// Set memory limit for build
+    #[arg(short = 'm', long = "memory")]
+    pub memory: Option<String>,
+
+    /// Size of /dev/shm
+    #[arg(long = "shm-size")]
+    pub shm_size: Option<String>,
+
+    /// Always remove intermediate containers
+    #[arg(long = "rm", default_value_t = true)]
+    pub rm: bool,
 
     #[arg(default_value = ".")]
     pub path: String,
@@ -666,9 +750,17 @@ pub struct PsArgs {
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
 
+    /// Display total file sizes
+    #[arg(short = 's', long = "size")]
+    pub size: bool,
+
     /// Don't truncate output
     #[arg(long = "no-trunc")]
     pub no_trunc: bool,
+
+    /// Format output using a custom template (e.g. json, table)
+    #[arg(long = "format")]
+    pub format: Option<String>,
 
     /// Show n last created containers (includes all states)
     #[arg(short = 'n', long = "last")]

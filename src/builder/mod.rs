@@ -330,6 +330,9 @@ pub struct BuildOptions {
     pub no_cache: bool,
     pub build_args: std::collections::HashMap<String, String>,
     pub target: Option<String>,
+    pub add_host: Vec<String>,
+    pub memory: Option<String>,
+    pub shm_size: Option<String>,
 }
 
 pub struct ImageBuilder {

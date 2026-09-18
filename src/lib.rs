@@ -697,6 +697,10 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
             limits.cpu_period_us = Some(period);
         }
     }
+    limits.cpu_shares = args.cpu_shares;
+    if let Some(swap_str) = &args.memory_swap {
+        limits.memory_swap_max_bytes = cgroups::ResourceLimits::parse_memory(swap_str).ok();
+    }
     limits.pids_max = args.pids_limit;
 
     if let Ok(cgroup_mgr) = cgroups::CgroupV2Manager::new(&container_id) {
@@ -799,6 +803,17 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
     if let Some(c) = &args.cpus {
         annotations.insert("boxr.cpus".to_string(), c.clone());
     }
+    for ann in &args.annotations {
+        if let Some((k, v)) = ann.split_once('=') {
+            annotations.insert(k.to_string(), v.to_string());
+        }
+    }
+    if let Some(timeout) = args.stop_timeout {
+        annotations.insert("boxr.stop_timeout".to_string(), timeout.to_string());
+    }
+    if let Some(sig) = &args.stop_signal {
+        annotations.insert("boxr.stop_signal".to_string(), sig.clone());
+    }
     let net_mode = network::pasta::NetworkMode::parse(&args.network);
     if net_mode == network::pasta::NetworkMode::Pasta
         && !network::pasta::PastaDriver::is_available()
@@ -823,6 +838,12 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
     if !args.labels.is_empty() {
         let labels_json = serde_json::to_string(&args.labels)?;
         let _ = fs::write(bundle_dir.join("labels.json"), labels_json);
+    }
+    if !args.sysctl.is_empty() {
+        let _ = fs::write(bundle_dir.join("sysctl.json"), serde_json::to_string(&args.sysctl)?);
+    }
+    if !args.ulimits.is_empty() {
+        let _ = fs::write(bundle_dir.join("ulimits.json"), serde_json::to_string(&args.ulimits)?);
     }
     if let Some(cidfile) = &args.cidfile {
         fs::write(cidfile, &container_id)?;
@@ -1095,6 +1116,32 @@ pub fn container_logs(args: &LogsArgs) -> Result<()> {
 
     let mut lines: Vec<&str> = content.lines().collect();
 
+    if let Some(since_str) = &args.since {
+        if let Ok(since_dt) = chrono::DateTime::parse_from_rfc3339(since_str) {
+            lines.retain(|l| {
+                if let Some((ts_part, _)) = l.split_once(' ') {
+                    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts_part) {
+                        return dt >= since_dt;
+                    }
+                }
+                true
+            });
+        }
+    }
+
+    if let Some(until_str) = &args.until {
+        if let Ok(until_dt) = chrono::DateTime::parse_from_rfc3339(until_str) {
+            lines.retain(|l| {
+                if let Some((ts_part, _)) = l.split_once(' ') {
+                    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts_part) {
+                        return dt <= until_dt;
+                    }
+                }
+                true
+            });
+        }
+    }
+
     if let Some(tail) = args.tail {
         if lines.len() > tail {
             lines = lines[lines.len() - tail..].to_vec();
@@ -1158,11 +1205,23 @@ pub fn exec_container(args: &ExecArgs) -> Result<i32> {
         None
     };
 
+    let mut combined_env = args.env.clone();
+    if let Some(env_file_path) = &args.env_file {
+        if let Ok(content) = fs::read_to_string(env_file_path) {
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                    combined_env.push(trimmed.to_string());
+                }
+            }
+        }
+    }
+
     let bundle_path = PathBuf::from(&rec.bundle_path);
     exec_in_bundle(
         &bundle_path,
         &args.command,
-        &args.env,
+        &combined_env,
         args.workdir.as_deref(),
         args.user.as_deref(),
         args.detach,
@@ -1635,6 +1694,9 @@ pub async fn build_image(args: BuildArgs) -> Result<()> {
             no_cache: args.no_cache,
             build_args,
             target: args.target,
+            add_host: args.add_host,
+            memory: args.memory,
+            shm_size: args.shm_size,
         })
         .await?;
 
@@ -1940,10 +2002,33 @@ pub fn list_containers(args: PsArgs) -> Result<()> {
         return Ok(());
     }
 
-    println!(
-        "{:<14} {:<24} {:<20} {:<20} {:<16} {:<16}",
-        "CONTAINER ID", "IMAGE", "COMMAND", "CREATED", "STATUS", "NAMES"
-    );
+    if let Some(fmt) = &args.format {
+        if fmt == "json" {
+            println!("{}", serde_json::to_string_pretty(&filtered)?);
+            return Ok(());
+        }
+        for c in &filtered {
+            let mut line = fmt.clone();
+            line = line.replace("{{.ID}}", &c.id[..12.min(c.id.len())]);
+            line = line.replace("{{.Names}}", &c.name);
+            line = line.replace("{{.Image}}", &c.image);
+            line = line.replace("{{.Status}}", &c.status.to_string());
+            println!("{}", line);
+        }
+        return Ok(());
+    }
+
+    if args.size {
+        println!(
+            "{:<14} {:<24} {:<18} {:<20} {:<14} {:<10} {:<16}",
+            "CONTAINER ID", "IMAGE", "COMMAND", "CREATED", "STATUS", "SIZE", "NAMES"
+        );
+    } else {
+        println!(
+            "{:<14} {:<24} {:<20} {:<20} {:<16} {:<16}",
+            "CONTAINER ID", "IMAGE", "COMMAND", "CREATED", "STATUS", "NAMES"
+        );
+    }
 
     for c in &filtered {
         let cmd_display = if c.command.is_empty() {
@@ -1963,15 +2048,30 @@ pub fn list_containers(args: PsArgs) -> Result<()> {
             c.id[..12.min(c.id.len())].to_string()
         };
 
-        println!(
-            "{:<14} {:<24} {:<20} {:<20} {:<16} {:<16}",
-            id_display,
-            c.image,
-            truncated_cmd,
-            c.created_at.format("%Y-%m-%d %H:%M:%S"),
-            c.status.to_string(),
-            c.name
-        );
+        if args.size {
+            let size_bytes = crate::system::dir_size(&PathBuf::from(&c.bundle_path));
+            let size_str = crate::system::format_bytes(size_bytes);
+            println!(
+                "{:<14} {:<24} {:<18} {:<20} {:<14} {:<10} {:<16}",
+                id_display,
+                c.image,
+                truncated_cmd,
+                c.created_at.format("%Y-%m-%d %H:%M:%S"),
+                c.status.to_string(),
+                size_str,
+                c.name
+            );
+        } else {
+            println!(
+                "{:<14} {:<24} {:<20} {:<20} {:<16} {:<16}",
+                id_display,
+                c.image,
+                truncated_cmd,
+                c.created_at.format("%Y-%m-%d %H:%M:%S"),
+                c.status.to_string(),
+                c.name
+            );
+        }
     }
 
     Ok(())
@@ -2181,6 +2281,10 @@ pub async fn create_only_container(args: RunArgs) -> Result<String> {
             limits.cpu_period_us = Some(period);
         }
     }
+    limits.cpu_shares = args.cpu_shares;
+    if let Some(swap_str) = &args.memory_swap {
+        limits.memory_swap_max_bytes = cgroups::ResourceLimits::parse_memory(swap_str).ok();
+    }
     limits.pids_max = args.pids_limit;
     if let Ok(cgroup_mgr) = cgroups::CgroupV2Manager::new(&container_id) {
         let _ = cgroup_mgr.apply_limits(&limits);
@@ -2206,6 +2310,17 @@ pub async fn create_only_container(args: RunArgs) -> Result<String> {
     if let Some(c) = &args.cpus {
         annotations.insert("boxr.cpus".to_string(), c.clone());
     }
+    for ann in &args.annotations {
+        if let Some((k, v)) = ann.split_once('=') {
+            annotations.insert(k.to_string(), v.to_string());
+        }
+    }
+    if let Some(timeout) = args.stop_timeout {
+        annotations.insert("boxr.stop_timeout".to_string(), timeout.to_string());
+    }
+    if let Some(sig) = &args.stop_signal {
+        annotations.insert("boxr.stop_signal".to_string(), sig.clone());
+    }
     annotations.insert("boxr.network".to_string(), args.network.clone());
     spec.annotations = Some(annotations);
 
@@ -2220,6 +2335,12 @@ pub async fn create_only_container(args: RunArgs) -> Result<String> {
     if !args.labels.is_empty() {
         let labels_json = serde_json::to_string(&args.labels)?;
         let _ = fs::write(bundle_dir.join("labels.json"), labels_json);
+    }
+    if !args.sysctl.is_empty() {
+        let _ = fs::write(bundle_dir.join("sysctl.json"), serde_json::to_string(&args.sysctl)?);
+    }
+    if !args.ulimits.is_empty() {
+        let _ = fs::write(bundle_dir.join("ulimits.json"), serde_json::to_string(&args.ulimits)?);
     }
     if let Some(cidfile) = &args.cidfile {
         fs::write(cidfile, &container_id)?;

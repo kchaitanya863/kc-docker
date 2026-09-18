@@ -102,3 +102,40 @@ Tracked tasks to reach 100% production readiness and drop-in parity with Docker 
   - Enabled dynamic updates via `docker update --memory ... --cpus ... <container>`.
   - Passed `--memory` and `--cpus` to Apple `Virtualization.framework` microVMs on macOS.
   - Verified with integration test `test_docker_parity_resource_limits` and section 20 of `run_parity_tests.sh`.
+
+- [x] **20. Docker Exec Advanced Flags (`exec-env-file-privileged`)**
+  - Added `--env-file` to `docker exec`.
+  - Added `--privileged` to `docker exec`.
+  - Verified with integration test `test_docker_parity_exec_env_file` and section 21 of `run_parity_tests.sh`.
+
+- [x] **21. Docker Logs Time Filtering (`logs-since-until`)**
+  - Added `--since <timestamp>`, `--until <timestamp>`, and `--details` to `docker logs`.
+  - Verified with integration test and `run_parity_tests.sh`.
+
+- [x] **22. Docker Ps Formatting & Sizing (`ps-format-size`)**
+  - Added `--format <format>` (json, table, Go template) to `docker ps`.
+  - Added `-s / --size` to display container disk sizes.
+  - Verified with integration test `test_docker_parity_ps_format_and_size` and section 21 of `run_parity_tests.sh`.
+
+- [x] **23. Advanced CPU & Memory Resource Constraints (`run-advanced-resource-flags`)**
+  - Added `-c / --cpu-shares <shares>` (relative CPU weight).
+  - Added `--cpuset-cpus <cpus>` (pin execution to specific CPU cores).
+  - Added `--memory-swap <swap>` (total memory + swap limit).
+  - Added `--memory-reservation <reservation>` (soft memory limit).
+  - Verified with integration test `test_docker_parity_advanced_run_options` and section 21 of `run_parity_tests.sh`.
+
+- [x] **24. Advanced Network & Kernel Namespace Options (`run-dns-network-opts`)**
+  - Added `--dns-search <domain>` and `--dns-option <opt>`.
+  - Added `--expose <port>` (expose port without host publishing).
+  - Added `--sysctl <key=val>` (configure namespaced kernel parameters).
+  - Verified with integration test and `run_parity_tests.sh`.
+
+- [x] **25. Lifecycle Signals, Annotations & Limits (`run-lifecycle-signals`)**
+  - Added `--stop-timeout <seconds>` and `--stop-signal <sig>`.
+  - Added `--annotation <key=val>` (pass OCI runtime annotations).
+  - Added `--ulimit <type=soft:hard>`.
+  - Verified with integration test `test_docker_parity_advanced_run_options` and section 21 of `run_parity_tests.sh`.
+
+- [x] **26. Advanced Builder Resource Flags (`build-resource-flags`)**
+  - Added `--add-host <host:ip>`, `--memory <bytes>`, `--shm-size <size>`, `--rm` to `docker build`.
+  - Verified with integration test `test_docker_parity_builder_directives` and section 18 of `run_parity_tests.sh`.

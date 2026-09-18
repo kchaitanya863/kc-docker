@@ -982,3 +982,109 @@ fn test_docker_parity_resource_limits() {
     let _ = boxr_cmd(&bin).args(["rm", &name]).output();
 }
 
+/// Docker Parity Test: Exec with --env-file
+#[test]
+fn test_docker_parity_exec_env_file() {
+    let bin = boxr_bin();
+    if !bin.exists() {
+        return;
+    }
+
+    let temp = tempdir().unwrap();
+    let env_file = temp.path().join("exec.env");
+    fs::write(&env_file, "EXEC_VAR=custom_exec_val\n").unwrap();
+
+    let name = format!("dockertest-execenv-{}", unique_id());
+
+    let out = boxr_cmd(&bin)
+        .args(["run", "-d", "--name", &name, "alpine", "sleep", "60"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    let out = boxr_cmd(&bin)
+        .args(["exec", "--env-file", env_file.to_str().unwrap(), &name, "printenv", "EXEC_VAR"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("custom_exec_val"));
+
+    let _ = boxr_cmd(&bin).args(["rm", "-f", &name]).output();
+}
+
+/// Docker Parity Test: Ps with --format (json and template) and --size
+#[test]
+fn test_docker_parity_ps_format_and_size() {
+    let bin = boxr_bin();
+    if !bin.exists() {
+        return;
+    }
+
+    let name = format!("dockertest-psfmt-{}", unique_id());
+
+    let out = boxr_cmd(&bin)
+        .args(["create", "--name", &name, "alpine"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    // 1. ps --format json
+    let out = boxr_cmd(&bin).args(["ps", "-a", "--format", "json"]).output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains(&name) && stdout.contains("["));
+
+    // 2. ps --format template
+    let out = boxr_cmd(&bin)
+        .args(["ps", "-a", "--format", "{{.ID}} - {{.Names}}"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains(&name));
+
+    // 3. ps --size
+    let out = boxr_cmd(&bin).args(["ps", "-a", "--size"]).output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("SIZE"));
+
+    let _ = boxr_cmd(&bin).args(["rm", &name]).output();
+}
+
+/// Docker Parity Test: Advanced Run Options (--cpu-shares, --memory-swap, --annotation, --ulimit)
+#[test]
+fn test_docker_parity_advanced_run_options() {
+    let bin = boxr_bin();
+    if !bin.exists() {
+        return;
+    }
+
+    let name = format!("dockertest-advrun-{}", unique_id());
+
+    let out = boxr_cmd(&bin)
+        .args([
+            "run",
+            "--rm",
+            "--name",
+            &name,
+            "-c",
+            "512",
+            "--memory-swap",
+            "512m",
+            "--annotation",
+            "team=infra",
+            "--ulimit",
+            "nofile=1024:2048",
+            "alpine",
+            "echo",
+            "adv-run-ok",
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("adv-run-ok"));
+}
+

@@ -208,6 +208,9 @@ impl ComposeProject {
                             no_cache: false,
                             build_args: std::collections::HashMap::new(),
                             target: None,
+                            add_host: Vec::new(),
+                            memory: None,
+                            shm_size: None,
                         })
                         .await?;
                     record.reference
@@ -305,6 +308,18 @@ impl ComposeProject {
                 tmpfs: Vec::new(),
                 devices: Vec::new(),
                 security_opt: Vec::new(),
+                cpu_shares: None,
+                cpuset_cpus: None,
+                memory_swap: None,
+                memory_reservation: None,
+                dns_search: Vec::new(),
+                dns_option: Vec::new(),
+                expose: Vec::new(),
+                sysctl: Vec::new(),
+                stop_timeout: None,
+                stop_signal: None,
+                annotations: Vec::new(),
+                ulimits: Vec::new(),
                 workdir: None,
                 image: image_name,
                 command: cmd_vec,

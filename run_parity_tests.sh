@@ -621,6 +621,33 @@ test_step "cleanup limit container" \
     "$DOCKER_CMD stop $LIMIT_NAME && $DOCKER_CMD rm $LIMIT_NAME"
 
 # ------------------------------------------------------------------------------
+# 21. Advanced Exec & Output Formatting Parity (--env-file, --format, --size)
+# ------------------------------------------------------------------------------
+echo -e "\n${BOLD}21. Advanced Exec & Output Formatting Parity${NC}"
+FMT_NAME="fmt-$(rand_id)"
+ENV_FILE_EXEC="/tmp/exec-env-$(rand_id).env"
+
+run_cmd "printf 'EXEC_TEST_VAR=parity_ok\n' > $ENV_FILE_EXEC"
+run_cmd "$DOCKER_CMD run -d --name $FMT_NAME ubuntu sleep 30" &>/dev/null
+
+test_step "docker exec --env-file <file> <container> env" \
+    "$DOCKER_CMD exec --env-file $ENV_FILE_EXEC $FMT_NAME printenv EXEC_TEST_VAR | grep 'parity_ok' >/dev/null"
+
+test_step "docker ps --format json" \
+    "$DOCKER_CMD ps -a --format json | grep -F '[' >/dev/null"
+
+test_step "docker ps --format '{{.ID}} - {{.Names}}'" \
+    "$DOCKER_CMD ps -a --format '{{.ID}} - {{.Names}}' | grep '$FMT_NAME' >/dev/null"
+
+test_step "docker ps --size" \
+    "$DOCKER_CMD ps -a --size | grep 'SIZE' >/dev/null"
+
+test_step "docker run --rm -c 512 --memory-swap 512m --annotation team=infra --ulimit nofile=1024:2048 ubuntu echo ok" \
+    "$DOCKER_CMD run --rm -c 512 --memory-swap 512m --annotation team=infra --ulimit nofile=1024:2048 ubuntu echo 'adv-flags-ok' | grep 'adv-flags-ok' >/dev/null"
+
+run_cmd "$DOCKER_CMD rm -f $FMT_NAME; rm -f $ENV_FILE_EXEC" &>/dev/null
+
+# ------------------------------------------------------------------------------
 # Summary Report
 # ------------------------------------------------------------------------------
 END_TIME=$(date +%s)
