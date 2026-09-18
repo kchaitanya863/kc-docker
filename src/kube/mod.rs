@@ -83,8 +83,9 @@ impl KubeManager {
 
             if let Some(ports) = &c_spec.ports {
                 for p in ports {
-                    let host_p = p.host_port.unwrap_or(p.container_port);
-                    ports_vec.push(format!("{}:{}", host_p, p.container_port));
+                    if let Some(host_p) = p.host_port {
+                        ports_vec.push(format!("{}:{}", host_p, p.container_port));
+                    }
                 }
             }
 
@@ -329,5 +330,35 @@ spec:
         let generated = serde_yaml::to_string(&parsed).unwrap();
         assert!(generated.contains("kind: Pod"));
         assert!(generated.contains("name: test-pod"));
+    }
+
+    #[test]
+    fn test_kube_port_mapping_requires_host_port() {
+        let yaml = r#"
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-internal-port
+spec:
+  containers:
+    - name: backend
+      image: redis:alpine
+      ports:
+        - containerPort: 6379
+"#;
+        let parsed: KubePodYaml = serde_yaml::from_str(yaml).unwrap();
+        let c_spec = &parsed.spec.containers[0];
+        let mut ports_vec = Vec::new();
+        if let Some(ports) = &c_spec.ports {
+            for p in ports {
+                if let Some(host_p) = p.host_port {
+                    ports_vec.push(format!("{}:{}", host_p, p.container_port));
+                }
+            }
+        }
+        assert!(
+            ports_vec.is_empty(),
+            "containerPort without hostPort must not bind host port"
+        );
     }
 }

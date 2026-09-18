@@ -354,7 +354,7 @@ pub async fn run_cli(cli: Cli) -> Result<i32> {
             }
             cli::ImageAction::Rm(rmi_args) => {
                 for img in &rmi_args.images {
-                    remove_image(img)?;
+                    remove_image(img, rmi_args.force)?;
                 }
                 Ok(0)
             }
@@ -518,7 +518,7 @@ pub async fn run_cli(cli: Cli) -> Result<i32> {
         }
         Commands::Rmi(args) => {
             for img in &args.images {
-                remove_image(img)?;
+                remove_image(img, args.force)?;
             }
             Ok(0)
         }
@@ -2429,9 +2429,39 @@ pub fn remove_container(container: &str, force: bool) -> Result<()> {
     Ok(())
 }
 
-pub fn remove_image(image: &str) -> Result<()> {
-    let store = ImageStore::new();
-    let removed = store.remove(image)?;
+pub fn remove_image(image: &str, force: bool) -> Result<()> {
+    let img_store = ImageStore::new();
+    let img = img_store
+        .find(image)
+        .ok_or_else(|| anyhow!("Image '{}' not found", image))?;
+
+    if !force {
+        let c_store = ContainerStore::new();
+        let containers = c_store.list();
+        let full_name = format!("{}:{}", img.reference, img.tag);
+        let short_ref = img
+            .reference
+            .strip_prefix("library/")
+            .unwrap_or(&img.reference);
+        let short_name = format!("{}:{}", short_ref, img.tag);
+
+        for c in containers {
+            if c.image == full_name
+                || c.image == short_name
+                || c.image == img.id
+                || c.image.starts_with(&img.id)
+            {
+                return Err(anyhow!(
+                    "conflict: unable to remove repository reference \"{}\" (must force) - container {} is using its referenced image {}",
+                    image,
+                    c.id,
+                    img.id
+                ));
+            }
+        }
+    }
+
+    let removed = img_store.remove(image)?;
     println!("Untagged: {}:{}", removed.reference, removed.tag);
     println!("Deleted: {}", removed.id);
     Ok(())

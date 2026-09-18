@@ -5,12 +5,14 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::Notify;
 
 /// A user-space TCP port forwarder proxy running in rootless user mode without requiring root/sudo privileges.
 pub struct RootlessPortForwarder {
     host_addr: SocketAddr,
     target_addr: SocketAddr,
-    running: Arc<AtomicBool>,
+    stop_notify: Arc<Notify>,
+    is_stopped: Arc<AtomicBool>,
 }
 
 impl RootlessPortForwarder {
@@ -18,7 +20,8 @@ impl RootlessPortForwarder {
         Self {
             host_addr,
             target_addr,
-            running: Arc::new(AtomicBool::new(false)),
+            stop_notify: Arc::new(Notify::new()),
+            is_stopped: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -31,19 +34,32 @@ impl RootlessPortForwarder {
             )
         })?;
 
-        self.running.store(true, Ordering::SeqCst);
-        let running_flag = self.running.clone();
+        let stop_notify = self.stop_notify.clone();
+        let is_stopped = self.is_stopped.clone();
         let target = self.target_addr;
 
         tokio::spawn(async move {
-            while running_flag.load(Ordering::SeqCst) {
-                if let Ok((mut inbound, _)) = listener.accept().await {
-                    tokio::spawn(async move {
-                        if let Ok(mut outbound) = TcpStream::connect(target).await {
-                            let _ =
-                                tokio::io::copy_bidirectional(&mut inbound, &mut outbound).await;
+            loop {
+                tokio::select! {
+                    _ = stop_notify.notified() => {
+                        break;
+                    }
+                    accept_res = listener.accept() => {
+                        if is_stopped.load(Ordering::SeqCst) {
+                            break;
                         }
-                    });
+                        match accept_res {
+                            Ok((mut inbound, _)) => {
+                                let target = target;
+                                tokio::spawn(async move {
+                                    if let Ok(mut outbound) = TcpStream::connect(target).await {
+                                        let _ = tokio::io::copy_bidirectional(&mut inbound, &mut outbound).await;
+                                    }
+                                });
+                            }
+                            Err(_) => break,
+                        }
+                    }
                 }
             }
         });
@@ -52,7 +68,12 @@ impl RootlessPortForwarder {
     }
 
     pub fn stop(&self) {
-        self.running.store(false, Ordering::SeqCst);
+        self.is_stopped.store(true, Ordering::SeqCst);
+        self.stop_notify.notify_waiters();
+    }
+
+    pub fn is_running(&self) -> bool {
+        !self.is_stopped.load(Ordering::SeqCst)
     }
 }
 
@@ -91,7 +112,19 @@ mod tests {
         let host: SocketAddr = "127.0.0.1:0".parse().unwrap();
         let target: SocketAddr = "127.0.0.1:9".parse().unwrap(); // dummy target
         let forwarder = RootlessPortForwarder::new(host, target);
+        assert!(forwarder.is_running());
         forwarder.stop();
-        assert!(!forwarder.running.load(Ordering::SeqCst));
+        assert!(!forwarder.is_running());
+    }
+
+    #[tokio::test]
+    async fn test_rootless_port_forwarder_unblocks_on_stop() {
+        let host: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let target: SocketAddr = "127.0.0.1:9".parse().unwrap();
+        let forwarder = RootlessPortForwarder::new(host, target);
+        forwarder.start().await.unwrap();
+        // Immediately stop; should unblock without any client connection
+        forwarder.stop();
+        assert!(!forwarder.is_running());
     }
 }

@@ -197,25 +197,43 @@ impl ProcessReaper {
             }
 
             let bundle = PathBuf::from(&c.bundle_path);
-            let pid_file = bundle.join("vm.pid");
+            let vm_pid_file = bundle.join("vm.pid");
+            let cont_pid_file = bundle.join("container.pid");
 
-            let is_alive = if let Ok(pid_str) = fs::read_to_string(&pid_file) {
-                if let Ok(pid) = pid_str.trim().parse::<i32>() {
-                    #[cfg(unix)]
-                    {
-                        unsafe { libc::kill(pid, 0) == 0 }
+            let check_pid_alive = |pid_file: &Path| -> Option<bool> {
+                if let Ok(pid_str) = fs::read_to_string(pid_file) {
+                    if let Ok(pid) = pid_str.trim().parse::<i32>() {
+                        if pid <= 1 {
+                            return Some(false);
+                        }
+                        #[cfg(unix)]
+                        {
+                            return Some(unsafe { libc::kill(pid, 0) == 0 });
+                        }
+                        #[cfg(windows)]
+                        {
+                            let is_running = std::process::Command::new("tasklist")
+                                .args(["/FI", &format!("PID eq {}", pid)])
+                                .output()
+                                .map(|o| {
+                                    String::from_utf8_lossy(&o.stdout).contains(&pid.to_string())
+                                })
+                                .unwrap_or(false);
+                            return Some(is_running);
+                        }
+                        #[cfg(not(any(unix, windows)))]
+                        {
+                            let _ = pid;
+                            return Some(false);
+                        }
                     }
-                    #[cfg(not(unix))]
-                    {
-                        let _ = pid;
-                        false
-                    }
-                } else {
-                    false
                 }
-            } else {
-                false
+                None
             };
+
+            let is_alive = check_pid_alive(&vm_pid_file)
+                .or_else(|| check_pid_alive(&cont_pid_file))
+                .unwrap_or(false);
 
             if !is_alive {
                 // Container process is gone; self-heal state to Exited(code)
@@ -225,17 +243,18 @@ impl ProcessReaper {
                     } else {
                         137
                     };
-                let _ = fs::remove_file(&pid_file);
-                if let Ok(cpid_str) = fs::read_to_string(bundle.join("container.pid")) {
+                let _ = fs::remove_file(&vm_pid_file);
+                if let Ok(cpid_str) = fs::read_to_string(&cont_pid_file) {
                     if let Ok(cpid) = cpid_str.trim().parse::<i32>() {
-                        #[cfg(unix)]
-                        unsafe {
-                            libc::kill(cpid, libc::SIGKILL);
-                            libc::kill(-cpid, libc::SIGKILL);
+                        if cpid > 1 {
+                            #[cfg(unix)]
+                            unsafe {
+                                libc::kill(cpid, libc::SIGKILL);
+                            }
                         }
                     }
                 }
-                let _ = fs::remove_file(bundle.join("container.pid"));
+                let _ = fs::remove_file(&cont_pid_file);
                 let _ = store.update_status(&c.id, ContainerStatus::Exited(exit_code));
                 reaped_count += 1;
             }
@@ -270,13 +289,12 @@ impl ProcessReaper {
                                         }
                                     }
                                 }
-                                if !is_active {
+                                if !is_active && pid > 1 && pid != std::process::id() as i32 {
                                     unsafe {
                                         libc::kill(pid, libc::SIGTERM);
-                                        let _ = libc::kill(-pid, libc::SIGTERM);
                                     }
                                     reaped_count += 1;
-                                } else {
+                                } else if is_active {
                                     running_boxr_vz_pids.push(pid);
                                 }
                             }
@@ -390,6 +408,47 @@ mod tests {
         // Reaping non-existent or dead containers shouldn't crash
         let reaped = ProcessReaper::reap_stale_containers().unwrap();
         let _ = reaped;
+    }
+
+    #[test]
+    fn test_process_reaper_preserves_running_container_pid() {
+        use crate::storage::{ContainerRecord, ContainerStatus, ContainerStore};
+        use chrono::Utc;
+
+        let temp = tempdir().unwrap();
+        let bundle_dir = temp.path().join("test-bundle");
+        fs::create_dir_all(&bundle_dir).unwrap();
+
+        // Write a distinct dummy running process PID (e.g. launchd / init PID 1, or launch a child process)
+        let child = std::process::Command::new("sleep")
+            .arg("5")
+            .spawn()
+            .unwrap();
+        let child_pid = child.id() as i32;
+        fs::write(bundle_dir.join("container.pid"), format!("{}", child_pid)).unwrap();
+
+        let store = ContainerStore::new();
+        let record = ContainerRecord {
+            id: "reap-test-alive-1234".to_string(),
+            name: "reap-test-alive".to_string(),
+            image: "alpine:latest".to_string(),
+            command: vec!["sleep".to_string()],
+            created_at: Utc::now(),
+            status: ContainerStatus::Running,
+            bundle_path: bundle_dir.to_string_lossy().to_string(),
+            restart_policy: crate::health::RestartPolicy::No,
+            health_status: crate::health::HealthStatus::None,
+            restart_count: 0,
+            ports: Vec::new(),
+        };
+        store.add(record).unwrap();
+
+        let _ = ProcessReaper::reap_stale_containers();
+        let cont = store.find("reap-test-alive-1234").unwrap();
+        assert_eq!(cont.status, ContainerStatus::Running);
+
+        let _ = store.remove("reap-test-alive-1234");
+        let _ = unsafe { libc::kill(child_pid, libc::SIGKILL) };
     }
 
     #[test]

@@ -36,11 +36,15 @@ impl ContainerKiller {
         #[cfg(unix)]
         {
             let bundle_path = std::path::PathBuf::from(&container.bundle_path);
-            let pid_file = bundle_path.join("vm.pid");
-            if let Ok(pid_str) = std::fs::read_to_string(&pid_file) {
-                if let Ok(pid) = pid_str.trim().parse::<i32>() {
-                    unsafe {
-                        libc::kill(pid, sig);
+            for pid_filename in &["vm.pid", "container.pid"] {
+                let pid_file = bundle_path.join(pid_filename);
+                if let Ok(pid_str) = std::fs::read_to_string(&pid_file) {
+                    if let Ok(pid) = pid_str.trim().parse::<i32>() {
+                        if pid > 1 {
+                            unsafe {
+                                libc::kill(pid, sig);
+                            }
+                        }
                     }
                 }
             }

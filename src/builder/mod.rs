@@ -430,6 +430,12 @@ impl ImageBuilder {
                     cache_key = format!("{}_env_{}_{}", cache_key, key, value);
                 }
                 Instruction::Add { src, dest } => {
+                    if dest.contains("..") {
+                        return Err(anyhow!(
+                            "Path traversal rejected in ADD destination: '{}'",
+                            dest
+                        ));
+                    }
                     let target_dir = if dest.starts_with('/') {
                         current_rootfs.join(dest.trim_start_matches('/'))
                     } else {
@@ -439,9 +445,39 @@ impl ImageBuilder {
                             .unwrap_or_else(|| "/".to_string());
                         current_rootfs.join(cur.trim_start_matches('/')).join(dest)
                     };
+                    if let Ok(canon_root) = current_rootfs.canonicalize() {
+                        let mut check = target_dir.clone();
+                        while let Some(parent) = check.parent() {
+                            if parent.exists() {
+                                if let Ok(canon_p) = parent.canonicalize() {
+                                    if !canon_p.starts_with(&canon_root) {
+                                        return Err(anyhow!(
+                                            "ADD destination escapes container rootfs: '{}'",
+                                            dest
+                                        ));
+                                    }
+                                }
+                                break;
+                            }
+                            check = parent.to_path_buf();
+                        }
+                    }
 
                     for s in src {
+                        if s.contains("..") || s.starts_with('/') {
+                            return Err(anyhow!("Path traversal rejected in ADD source: '{}'", s));
+                        }
                         let source_path = opts.context_dir.join(s);
+                        if let Ok(canon_ctx) = opts.context_dir.canonicalize() {
+                            if let Ok(canon_src) = source_path.canonicalize() {
+                                if !canon_src.starts_with(&canon_ctx) {
+                                    return Err(anyhow!(
+                                        "ADD source escapes build context: '{}'",
+                                        s
+                                    ));
+                                }
+                            }
+                        }
                         if !source_path.exists() {
                             return Err(anyhow!("Source file not found: {:?}", source_path));
                         }
@@ -472,6 +508,12 @@ impl ImageBuilder {
                     src,
                     dest,
                 } => {
+                    if dest.contains("..") {
+                        return Err(anyhow!(
+                            "Path traversal rejected in COPY destination: '{}'",
+                            dest
+                        ));
+                    }
                     let target_dir = if dest.starts_with('/') {
                         current_rootfs.join(dest.trim_start_matches('/'))
                     } else {
@@ -481,6 +523,23 @@ impl ImageBuilder {
                             .unwrap_or_else(|| "/".to_string());
                         current_rootfs.join(cur.trim_start_matches('/')).join(dest)
                     };
+                    if let Ok(canon_root) = current_rootfs.canonicalize() {
+                        let mut check = target_dir.clone();
+                        while let Some(parent) = check.parent() {
+                            if parent.exists() {
+                                if let Ok(canon_p) = parent.canonicalize() {
+                                    if !canon_p.starts_with(&canon_root) {
+                                        return Err(anyhow!(
+                                            "COPY destination escapes container rootfs: '{}'",
+                                            dest
+                                        ));
+                                    }
+                                }
+                                break;
+                            }
+                            check = parent.to_path_buf();
+                        }
+                    }
 
                     let source_root: PathBuf = if let Some(from_s) = from_stage {
                         // Find matching stage by name or index
@@ -509,11 +568,28 @@ impl ImageBuilder {
                     };
 
                     for s in src {
+                        if s.contains("..") {
+                            return Err(anyhow!("Path traversal rejected in COPY source: '{}'", s));
+                        }
+                        if from_stage.is_none() && s.starts_with('/') {
+                            return Err(anyhow!("COPY source cannot be absolute: '{}'", s));
+                        }
                         let source_path = if from_stage.is_some() && s.starts_with('/') {
                             source_root.join(s.trim_start_matches('/'))
                         } else {
                             source_root.join(s)
                         };
+
+                        if let Ok(canon_src_root) = source_root.canonicalize() {
+                            if let Ok(canon_src) = source_path.canonicalize() {
+                                if !canon_src.starts_with(&canon_src_root) {
+                                    return Err(anyhow!(
+                                        "COPY source escapes context directory: '{}'",
+                                        s
+                                    ));
+                                }
+                            }
+                        }
 
                         if !source_path.exists() {
                             return Err(anyhow!("Source file not found: {:?}", source_path));
@@ -765,6 +841,66 @@ CMD ["/app/server"]
                 src: vec!["/app/server".to_string()],
                 dest: ".".to_string(),
             }
+        );
+    }
+
+    #[tokio::test]
+    async fn test_builder_path_traversal_rejection() {
+        let temp = tempfile::tempdir().unwrap();
+        let context_dir = temp.path().join("ctx");
+        fs::create_dir_all(&context_dir).unwrap();
+
+        let builder = ImageBuilder::new();
+
+        // 1. COPY with source traversal ../
+        let df_traversal = "FROM alpine\nCOPY ../secret.txt /app/\n";
+        let df_path = context_dir.join("Dockerfile");
+        fs::write(&df_path, df_traversal).unwrap();
+
+        let opts = BuildOptions {
+            context_dir: context_dir.clone(),
+            dockerfile_path: df_path,
+            tag: Some("test-fail:latest".to_string()),
+            no_cache: true,
+            build_args: HashMap::new(),
+            target: None,
+            add_host: Vec::new(),
+            memory: None,
+            shm_size: None,
+        };
+
+        let res = builder.build(opts).await;
+        assert!(res.is_err());
+        assert!(
+            res.unwrap_err()
+                .to_string()
+                .contains("Path traversal rejected")
+        );
+
+        // 2. COPY with destination traversal
+        let df_dest_traversal = "FROM alpine\nCOPY valid.txt ../../../etc/pwn\n";
+        let df_path2 = context_dir.join("Dockerfile2");
+        fs::write(context_dir.join("valid.txt"), b"test").unwrap();
+        fs::write(&df_path2, df_dest_traversal).unwrap();
+
+        let opts2 = BuildOptions {
+            context_dir: context_dir.clone(),
+            dockerfile_path: df_path2,
+            tag: Some("test-fail-2:latest".to_string()),
+            no_cache: true,
+            build_args: HashMap::new(),
+            target: None,
+            add_host: Vec::new(),
+            memory: None,
+            shm_size: None,
+        };
+
+        let res2 = builder.build(opts2).await;
+        assert!(res2.is_err());
+        assert!(
+            res2.unwrap_err()
+                .to_string()
+                .contains("Path traversal rejected")
         );
     }
 }

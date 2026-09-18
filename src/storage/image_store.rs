@@ -4,7 +4,7 @@ use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageRecord {
@@ -200,7 +200,13 @@ impl ImageStore {
                 if !is_shared {
                     let rootfs = PathBuf::from(&removed.rootfs_path);
                     if rootfs.exists() {
-                        let _ = fs::remove_dir_all(rootfs);
+                        let _ = fs::remove_dir_all(&rootfs);
+                    }
+                    if let Some(parent) = rootfs.parent() {
+                        let root_dir = self.index_file.parent().unwrap_or(Path::new("."));
+                        if parent.exists() && parent != root_dir {
+                            let _ = fs::remove_dir_all(parent);
+                        }
                     }
                 }
 
@@ -293,6 +299,11 @@ mod tests {
             index_file: temp.path().join("images.json"),
         };
 
+        let img_dir = temp.path().join("img_1234");
+        let rootfs = img_dir.join("rootfs");
+        fs::create_dir_all(&rootfs).unwrap();
+        fs::write(rootfs.join("layer.txt"), b"test").unwrap();
+
         let rec = ImageRecord {
             id: "1234567890ab".to_string(),
             reference: "library/test".to_string(),
@@ -301,7 +312,7 @@ mod tests {
             config_digest: "sha256:5678".to_string(),
             size_bytes: 1024,
             created_at: Utc::now(),
-            rootfs_path: temp.path().join("rootfs").to_string_lossy().to_string(),
+            rootfs_path: rootfs.to_string_lossy().to_string(),
             config: ImageConfig {
                 architecture: match std::env::consts::ARCH {
                     "x86_64" => "amd64".to_string(),
@@ -323,5 +334,6 @@ mod tests {
 
         store.remove("test").unwrap();
         assert_eq!(store.list().len(), 0);
+        assert!(!rootfs.exists(), "Image rootfs must be deleted on remove");
     }
 }

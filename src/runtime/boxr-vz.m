@@ -192,8 +192,8 @@ int main(int argc, const char *argv[]) {
         NSString *kernelPath = nil;
         NSString *initrdPath = nil;
         BOOL isDetach = NO;
-        NSUInteger cpuCount = 4;
-        unsigned long long memoryBytes = 4096 * 1024 * 1024ULL;
+        NSUInteger cpuCount = 2;
+        unsigned long long memoryBytes = 512 * 1024 * 1024ULL;
 
         NSMutableArray<NSString *> *mountSpecs = [NSMutableArray array];
         NSMutableArray<NSString *> *portSpecs = [NSMutableArray array];

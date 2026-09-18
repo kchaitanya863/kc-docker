@@ -34,6 +34,29 @@ fn boxr_cmd(bin: &PathBuf) -> Command {
     cmd
 }
 
+fn boxr_cmd_in(bin: &PathBuf, home: &std::path::Path) -> Command {
+    let mut cmd = Command::new(bin);
+    cmd.env_remove("DOCKER_HOST");
+    cmd.env("BOXR_HOME", home);
+    cmd
+}
+
+fn create_isolated_home() -> tempfile::TempDir {
+    let temp = tempdir().unwrap();
+    let base_home = boxr::storage::boxr_home();
+    for dir_name in &["images", "layers", "vm", "bin"] {
+        let src = base_home.join(dir_name);
+        if src.exists() {
+            let dst = temp.path().join(dir_name);
+            #[cfg(unix)]
+            let _ = std::os::unix::fs::symlink(&src, &dst);
+            #[cfg(windows)]
+            let _ = std::os::windows::fs::symlink_dir(&src, &dst);
+        }
+    }
+    temp
+}
+
 fn unique_id() -> String {
     hex::encode(boxr::storage::container_store::rand_id())[..8].to_string()
 }
@@ -283,14 +306,18 @@ fn test_docker_parity_system_df_and_prune() {
     if !bin.exists() {
         return;
     }
+    let home = create_isolated_home();
 
-    let out = boxr_cmd(&bin).args(["system", "df"]).output().unwrap();
+    let out = boxr_cmd_in(&bin, home.path())
+        .args(["system", "df"])
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("TYPE"));
     assert!(stdout.contains("TOTAL"));
 
-    let out = boxr_cmd(&bin)
+    let out = boxr_cmd_in(&bin, home.path())
         .args(["system", "prune", "-f"])
         .output()
         .unwrap();
@@ -548,34 +575,44 @@ fn test_docker_parity_ps_flags() {
         return;
     }
 
+    let home = create_isolated_home();
     let name = format!("dockertest-ps-{}", unique_id());
 
-    let out = boxr_cmd(&bin)
+    let out = boxr_cmd_in(&bin, home.path())
         .args(["run", "-d", "--name", &name, "alpine", "sleep", "60"])
         .output()
         .unwrap();
     assert!(out.status.success());
 
     // ps -q
-    let out = boxr_cmd(&bin).args(["ps", "-q"]).output().unwrap();
+    let out = boxr_cmd_in(&bin, home.path())
+        .args(["ps", "-q"])
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(!stdout.trim().is_empty());
 
     // ps -n 1
-    let out = boxr_cmd(&bin).args(["ps", "-n", "1"]).output().unwrap();
+    let out = boxr_cmd_in(&bin, home.path())
+        .args(["ps", "-n", "1"])
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains(&name));
 
     // ps -l (latest)
-    let out = boxr_cmd(&bin).args(["ps", "-l"]).output().unwrap();
+    let out = boxr_cmd_in(&bin, home.path())
+        .args(["ps", "-l"])
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains(&name));
 
     // ps -f name=...
-    let out = boxr_cmd(&bin)
+    let out = boxr_cmd_in(&bin, home.path())
         .args(["ps", "-f", &format!("name={}", name)])
         .output()
         .unwrap();
@@ -584,8 +621,10 @@ fn test_docker_parity_ps_flags() {
     assert!(stdout.contains(&name));
 
     // Cleanup
-    let _ = boxr_cmd(&bin).args(["stop", &name]).output();
-    let _ = boxr_cmd(&bin).args(["rm", &name]).output();
+    let _ = boxr_cmd_in(&bin, home.path())
+        .args(["stop", &name])
+        .output();
+    let _ = boxr_cmd_in(&bin, home.path()).args(["rm", &name]).output();
 }
 
 /// Docker Parity Test: Images flags (-q, -a, -f)
@@ -1088,17 +1127,18 @@ fn test_docker_parity_ps_format_and_size() {
     if !bin.exists() {
         return;
     }
+    let home = create_isolated_home();
 
     let name = format!("dockertest-psfmt-{}", unique_id());
 
-    let out = boxr_cmd(&bin)
+    let out = boxr_cmd_in(&bin, home.path())
         .args(["create", "--name", &name, "alpine"])
         .output()
         .unwrap();
     assert!(out.status.success());
 
     // 1. ps --format json
-    let out = boxr_cmd(&bin)
+    let out = boxr_cmd_in(&bin, home.path())
         .args(["ps", "-a", "--format", "json"])
         .output()
         .unwrap();
@@ -1107,7 +1147,7 @@ fn test_docker_parity_ps_format_and_size() {
     assert!(stdout.contains(&name) && stdout.contains("["));
 
     // 2. ps --format template
-    let out = boxr_cmd(&bin)
+    let out = boxr_cmd_in(&bin, home.path())
         .args(["ps", "-a", "--format", "{{.ID}} - {{.Names}}"])
         .output()
         .unwrap();
@@ -1116,7 +1156,7 @@ fn test_docker_parity_ps_format_and_size() {
     assert!(stdout.contains(&name));
 
     // 3. ps --size
-    let out = boxr_cmd(&bin)
+    let out = boxr_cmd_in(&bin, home.path())
         .args(["ps", "-a", "--size"])
         .output()
         .unwrap();
@@ -1124,7 +1164,7 @@ fn test_docker_parity_ps_format_and_size() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("SIZE"));
 
-    let _ = boxr_cmd(&bin).args(["rm", &name]).output();
+    let _ = boxr_cmd_in(&bin, home.path()).args(["rm", &name]).output();
 }
 
 /// Docker Parity Test: Advanced Run Options (--cpu-shares, --memory-swap, --annotation, --ulimit)

@@ -144,6 +144,11 @@ pub fn ensure_vm_assets() -> Result<(PathBuf, PathBuf)> {
     Ok((kernel_path, initrd_path))
 }
 
+/// Safely quote a string for POSIX shell execution, preventing command injection or variable expansion.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
 /// Execute an OCI container bundle on macOS using Apple's native Virtualization.framework.
 pub fn execute_bundle(
     bundle_path: &Path,
@@ -343,22 +348,19 @@ pub fn execute_bundle(
 
     fs::create_dir_all(bundle_path)?;
 
-    // Construct command invocation
-    let mut cmd_line = format!("{}", cmd_binary);
+    // Construct command invocation using safe POSIX shell quoting
+    let mut cmd_parts = vec![shell_quote(cmd_binary)];
     for arg in cmd_args {
-        let cleaned = arg.trim_matches('"');
-        cmd_line.push_str(&format!(
-            " \"{}\"",
-            cleaned.replace('\\', "\\\\").replace('"', "\\\"")
-        ));
+        cmd_parts.push(shell_quote(arg));
     }
+    let cmd_line = cmd_parts.join(" ");
 
     let final_cmd = if spec.process.user.uid != 0 {
         let u = spec.process.user.uid;
         format!(
-            "UNAME=$(grep -E ':[0-9]*:{u}:' /etc/passwd 2>/dev/null | cut -d: -f1 | head -n 1); if [ -z \"$UNAME\" ]; then UNAME=$(grep -E ':{u}:' /etc/passwd 2>/dev/null | cut -d: -f1 | head -n 1); fi; if [ -z \"$UNAME\" ]; then adduser -D -u {u} -s /bin/sh \"u{u}\" 2>/dev/null || useradd -u {u} -s /bin/sh \"u{u}\" 2>/dev/null || true; UNAME=\"u{u}\"; fi; sed -i \"s|:${{u}}:.*$|:${{u}}:${{u}}::/:/bin/sh|\" /etc/passwd 2>/dev/null || true; su -s /bin/sh \"$UNAME\" -c '{cmd}'",
-            u = u,
-            cmd = cmd_line.replace('\'', "'\\''")
+            "UNAME=$(grep -E ':[0-9]*:{u}:' /etc/passwd 2>/dev/null | cut -d: -f1 | head -n 1); if [ -z \"$UNAME\" ]; then UNAME=$(grep -E ':{u}:' /etc/passwd 2>/dev/null | cut -d: -f1 | head -n 1); fi; if [ -z \"$UNAME\" ]; then adduser -D -u {u} -s /bin/sh \"u{u}\" 2>/dev/null || useradd -u {u} -s /bin/sh \"u{u}\" 2>/dev/null || true; UNAME=\"u{u}\"; fi; sed -i \"s|:${{u}}:.*$|:${{u}}:${{u}}::/:/bin/sh|\" /etc/passwd 2>/dev/null || true; su -s /bin/sh \"$UNAME\" -c {}",
+            shell_quote(&cmd_line),
+            u = u
         )
     } else {
         cmd_line
@@ -483,19 +485,17 @@ pub fn exec_in_bundle(
         }
         let binary = &command[0];
         let args = &command[1..];
-        let mut cmd_line = format!("{}", binary);
+        let mut cmd_parts = vec![shell_quote(binary)];
         for a in args {
-            let cleaned = a.trim_matches('"');
-            cmd_line.push_str(&format!(
-                " \"{}\"",
-                cleaned.replace('\\', "\\\\").replace('"', "\\\"")
-            ));
+            cmd_parts.push(shell_quote(a));
         }
+        let cmd_line = cmd_parts.join(" ");
+
         let final_cmd = if let Some(u) = user {
             format!(
-                "UNAME=$(id -un {u} 2>/dev/null); if [ -z \"$UNAME\" ]; then adduser -D -u {u} -s /bin/sh \"u{u}\" 2>/dev/null || true; UNAME=\"u{u}\"; fi; su -s /bin/sh \"$UNAME\" -c '{cmd}'",
-                u = u,
-                cmd = cmd_line.replace('\'', "'\\''")
+                "UNAME=$(id -un {u} 2>/dev/null); if [ -z \"$UNAME\" ]; then adduser -D -u {u} -s /bin/sh \"u{u}\" 2>/dev/null || true; UNAME=\"u{u}\"; fi; su -s /bin/sh \"$UNAME\" -c {}",
+                shell_quote(&cmd_line),
+                u = u
             )
         } else {
             format!("exec {}", cmd_line)
@@ -591,4 +591,20 @@ pub fn exec_in_bundle(
         .status()?;
 
     Ok(status.code().unwrap_or(0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_shell_quote_escaping() {
+        assert_eq!(shell_quote("hello"), "'hello'");
+        assert_eq!(shell_quote("hello world"), "'hello world'");
+        assert_eq!(shell_quote("$HOME"), "'$HOME'");
+        assert_eq!(shell_quote("`whoami`"), "'`whoami`'");
+        assert_eq!(shell_quote("$(id -u)"), "'$(id -u)'");
+        assert_eq!(shell_quote("it's"), "'it'\\''s'");
+        assert_eq!(shell_quote("\"quoted\""), "'\"quoted\"'");
+    }
 }
