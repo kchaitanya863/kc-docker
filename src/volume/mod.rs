@@ -34,6 +34,29 @@ pub struct MountSpec {
     pub is_volume: bool,
 }
 
+/// Interface Segregation: Volume reading abstraction
+pub trait VolumeReader: Send + Sync {
+    fn find(&self, name: &str) -> Option<VolumeRecord>;
+    fn list(&self) -> Vec<VolumeRecord>;
+}
+
+/// Interface Segregation: Volume mutation abstraction
+pub trait VolumeWriter: Send + Sync {
+    fn create_with_options(
+        &self,
+        name: Option<&str>,
+        driver: &str,
+        labels: Option<HashMap<String, String>>,
+        scope: &str,
+    ) -> Result<VolumeRecord>;
+    fn remove(&self, name: &str) -> Result<VolumeRecord>;
+    fn prune(&self) -> Result<Vec<String>>;
+}
+
+/// Combined volume operations contract (LSP compliant)
+pub trait VolumeStoreOps: VolumeReader + VolumeWriter {}
+impl<T: VolumeReader + VolumeWriter> VolumeStoreOps for T {}
+
 impl VolumeStore {
     pub fn new() -> Self {
         Self::with_home(boxr_home())
@@ -91,6 +114,16 @@ impl VolumeStore {
         name: Option<&str>,
         labels: Option<HashMap<String, String>>,
     ) -> Result<VolumeRecord> {
+        self.create_with_options(name, "local", labels, "local")
+    }
+
+    pub fn create_with_options(
+        &self,
+        name: Option<&str>,
+        driver: &str,
+        labels: Option<HashMap<String, String>>,
+        scope: &str,
+    ) -> Result<VolumeRecord> {
         crate::storage::index_lock::with_index_lock(&self.index_file, || {
             let mut data = self.load_unlocked();
             let vol_name = match name {
@@ -100,6 +133,13 @@ impl VolumeStore {
                     &hex::encode(crate::storage::container_store::rand_id())[..8]
                 ),
             };
+
+            if vol_name == "." || vol_name == ".." {
+                return Err(anyhow!(
+                    "Invalid volume name '{}': '.' and '..' are reserved",
+                    vol_name
+                ));
+            }
 
             if vol_name.contains('/') || vol_name.contains('\\') || vol_name.contains("..") {
                 return Err(anyhow!(
@@ -142,11 +182,11 @@ impl VolumeStore {
 
             let record = VolumeRecord {
                 name: vol_name,
-                driver: "local".to_string(),
+                driver: driver.to_string(),
                 mountpoint: mountpoint.to_string_lossy().to_string(),
                 created_at: Utc::now(),
                 labels: labels.unwrap_or_default(),
-                scope: "local".to_string(),
+                scope: scope.to_string(),
             };
 
             data.volumes.push(record.clone());
@@ -356,6 +396,36 @@ impl VolumeStore {
                 is_volume: true,
             })
         }
+    }
+}
+
+impl VolumeReader for VolumeStore {
+    fn find(&self, name: &str) -> Option<VolumeRecord> {
+        self.find(name)
+    }
+
+    fn list(&self) -> Vec<VolumeRecord> {
+        self.list()
+    }
+}
+
+impl VolumeWriter for VolumeStore {
+    fn create_with_options(
+        &self,
+        name: Option<&str>,
+        driver: &str,
+        labels: Option<HashMap<String, String>>,
+        scope: &str,
+    ) -> Result<VolumeRecord> {
+        self.create_with_options(name, driver, labels, scope)
+    }
+
+    fn remove(&self, name: &str) -> Result<VolumeRecord> {
+        self.remove(name)
+    }
+
+    fn prune(&self) -> Result<Vec<String>> {
+        self.prune()
     }
 }
 

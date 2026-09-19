@@ -22,6 +22,22 @@ struct PodStoreData {
     pods: Vec<PodRecord>,
 }
 
+/// Interface Segregation: Pod querying abstraction
+pub trait PodReader: Send + Sync {
+    fn find(&self, query: &str) -> Option<PodRecord>;
+    fn list(&self) -> Vec<PodRecord>;
+}
+
+/// Interface Segregation: Pod modification abstraction
+pub trait PodWriter: Send + Sync {
+    fn create(&self, name: Option<&str>, ports: Vec<PortMapping>) -> Result<PodRecord>;
+    fn remove(&self, query: &str) -> Result<PodRecord>;
+}
+
+/// Combined pod store operations contract (LSP compliant)
+pub trait PodStoreOps: PodReader + PodWriter {}
+impl<T: PodReader + PodWriter> PodStoreOps for T {}
+
 pub struct PodStore {
     index_file: PathBuf,
 }
@@ -64,12 +80,16 @@ impl PodStore {
     }
 
     pub fn find(&self, query: &str) -> Option<PodRecord> {
+        let q = query.trim();
+        if q.is_empty() {
+            return None;
+        }
         crate::storage::index_lock::with_index_lock(&self.index_file, || {
             Ok(self
                 .load_unlocked()
                 .pods
                 .into_iter()
-                .find(|p| p.id.starts_with(query) || p.name == query))
+                .find(|p| p.id == q || p.id.starts_with(q) || p.name == q))
         })
         .ok()
         .flatten()
@@ -108,6 +128,10 @@ impl PodStore {
     }
 
     pub fn remove_with_force(&self, query: &str, force: bool) -> Result<PodRecord> {
+        let q = query.trim();
+        if q.is_empty() {
+            return Err(anyhow!("Pod '' not found"));
+        }
         let home = self
             .index_file
             .parent()
@@ -120,7 +144,7 @@ impl PodStore {
             if let Some(pos) = data
                 .pods
                 .iter()
-                .position(|p| p.id.starts_with(query) || p.name == query)
+                .position(|p| p.id == q || p.id.starts_with(q) || p.name == q)
             {
                 if !force {
                     for cid in &data.pods[pos].containers {
@@ -184,6 +208,26 @@ impl PodStore {
                 Err(anyhow!("Pod '{}' not found", pod_query))
             }
         })
+    }
+}
+
+impl PodReader for PodStore {
+    fn find(&self, query: &str) -> Option<PodRecord> {
+        self.find(query)
+    }
+
+    fn list(&self) -> Vec<PodRecord> {
+        self.list()
+    }
+}
+
+impl PodWriter for PodStore {
+    fn create(&self, name: Option<&str>, ports: Vec<PortMapping>) -> Result<PodRecord> {
+        self.create(name, ports)
+    }
+
+    fn remove(&self, query: &str) -> Result<PodRecord> {
+        self.remove(query)
     }
 }
 

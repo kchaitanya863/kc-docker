@@ -46,10 +46,10 @@ pub enum Commands {
     Search(SearchArgs),
 
     /// Display system-wide information
-    Info,
+    Info(FormatArgs),
 
     /// Show the boxr version information
-    Version,
+    Version(FormatArgs),
 
     /// Stop a running container
     Stop(StopArgs),
@@ -782,7 +782,8 @@ pub struct InspectArgs {
     #[arg(long = "type")]
     pub obj_type: Option<String>,
 
-    pub target: String,
+    #[arg(required = true)]
+    pub targets: Vec<String>,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -1623,8 +1624,19 @@ pub struct HistoryArgs {
 
 #[derive(Args, Debug)]
 pub struct SearchArgs {
+    /// Max number of search results
+    #[arg(long = "limit", default_value_t = 25)]
+    pub limit: usize,
+
     /// Search term
     pub term: String,
+}
+
+#[derive(Args, Debug, Default, Clone)]
+pub struct FormatArgs {
+    /// Format output using a custom template: 'json' or Go template
+    #[arg(short = 'f', long = "format")]
+    pub format: Option<String>,
 }
 
 #[derive(Args, Debug)]

@@ -57,6 +57,42 @@ impl ContainerEvent {
     }
 }
 
+/// Open/Closed & Interface Segregation: Event emission abstraction
+pub trait EventSink: Send + Sync {
+    fn emit(&self, event: &ContainerEvent) -> Result<()>;
+}
+
+/// Open/Closed: Event filtering abstraction
+pub trait EventFilter: Send + Sync {
+    fn matches(&self, event: &ContainerEvent) -> bool;
+}
+
+/// JSONL file sink implementation of EventSink
+pub struct JsonlFileSink {
+    path: PathBuf,
+}
+
+impl JsonlFileSink {
+    pub fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+}
+
+impl EventSink for JsonlFileSink {
+    fn emit(&self, event: &ContainerEvent) -> Result<()> {
+        if let Some(parent) = self.path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)?;
+        let line = serde_json::to_string(event)?;
+        writeln!(file, "{}", line)?;
+        Ok(())
+    }
+}
+
 pub struct EventManager;
 
 impl EventManager {
@@ -66,22 +102,13 @@ impl EventManager {
 
     /// Record a lifecycle event to ~/.boxr/events.jsonl
     pub fn record(event: ContainerEvent) {
-        let file_path = Self::events_file();
-        if let Some(parent) = file_path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
+        Self::record_to_sink(&event, &JsonlFileSink::new(Self::events_file()));
+    }
 
+    /// Record a lifecycle event to any EventSink (DIP)
+    pub fn record_to_sink(event: &ContainerEvent, sink: &impl EventSink) {
         crate::guardrails::LogRotator::rotate_events_if_needed();
-
-        if let Ok(mut file) = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&file_path)
-        {
-            if let Ok(line) = serde_json::to_string(&event) {
-                let _ = writeln!(file, "{}", line);
-            }
-        }
+        let _ = sink.emit(event);
     }
 
     /// Stream or read recorded events

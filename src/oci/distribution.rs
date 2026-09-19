@@ -17,6 +17,62 @@ pub struct RegistryClient {
     basic_auth: Option<String>,
 }
 
+/// Open/Closed & Dependency Inversion: OCI Image distribution client contract
+#[allow(async_fn_in_trait)]
+pub trait ImageDistribution: Send + Sync {
+    async fn authenticate(&mut self, reference: &ImageReference) -> Result<()>;
+
+    async fn fetch_manifest_with_platform(
+        &mut self,
+        reference: &ImageReference,
+        platform: Option<&str>,
+    ) -> Result<(ImageManifest, String)>;
+
+    async fn fetch_config(
+        &self,
+        reference: &ImageReference,
+        config_desc: &Descriptor,
+    ) -> Result<ImageConfig>;
+
+    async fn download_blob_to_file(
+        &self,
+        reference: &ImageReference,
+        descriptor: &Descriptor,
+        target_path: &Path,
+    ) -> Result<()>;
+}
+
+impl ImageDistribution for RegistryClient {
+    async fn authenticate(&mut self, reference: &ImageReference) -> Result<()> {
+        RegistryClient::authenticate(self, reference).await
+    }
+
+    async fn fetch_manifest_with_platform(
+        &mut self,
+        reference: &ImageReference,
+        platform: Option<&str>,
+    ) -> Result<(ImageManifest, String)> {
+        RegistryClient::fetch_manifest_with_platform(self, reference, platform).await
+    }
+
+    async fn fetch_config(
+        &self,
+        reference: &ImageReference,
+        config_desc: &Descriptor,
+    ) -> Result<ImageConfig> {
+        RegistryClient::fetch_config(self, reference, config_desc).await
+    }
+
+    async fn download_blob_to_file(
+        &self,
+        reference: &ImageReference,
+        descriptor: &Descriptor,
+        target_path: &Path,
+    ) -> Result<()> {
+        RegistryClient::download_blob_to_file(self, reference, descriptor, target_path).await
+    }
+}
+
 impl RegistryClient {
     pub fn new() -> Self {
         Self {

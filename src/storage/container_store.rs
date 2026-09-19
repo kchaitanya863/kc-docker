@@ -116,12 +116,16 @@ impl ContainerStore {
 
     #[allow(dead_code)]
     pub fn find(&self, query: &str) -> Option<ContainerRecord> {
+        let q = query.trim();
+        if q.is_empty() {
+            return None;
+        }
         crate::storage::index_lock::with_index_lock(&self.index_file, || {
             Ok(self
                 .load_unlocked()
                 .containers
                 .into_iter()
-                .find(|c| c.id.starts_with(query) || c.name == query))
+                .find(|c| c.id == q || c.id.starts_with(q) || c.name == q))
         })
         .ok()
         .flatten()
@@ -232,12 +236,16 @@ impl ContainerStore {
     }
 
     pub fn remove(&self, query: &str) -> Result<ContainerRecord> {
+        let q = query.trim();
+        if q.is_empty() {
+            return Err(anyhow!("Container not found: ''"));
+        }
         crate::storage::index_lock::with_index_lock(&self.index_file, || {
             let mut data = self.load_unlocked();
             let pos = data
                 .containers
                 .iter()
-                .position(|c| c.id.starts_with(query) || c.name == query);
+                .position(|c| c.id == q || c.id.starts_with(q) || c.name == q);
 
             if let Some(index) = pos {
                 let removed = data.containers.remove(index);
@@ -298,6 +306,30 @@ impl ContainerStore {
                 Err(anyhow!("Container not found: {}", query))
             }
         })
+    }
+}
+
+impl super::traits::ContainerReader for ContainerStore {
+    fn find(&self, id_or_name: &str) -> Option<ContainerRecord> {
+        self.find(id_or_name)
+    }
+
+    fn list(&self) -> Vec<ContainerRecord> {
+        self.list()
+    }
+}
+
+impl super::traits::ContainerWriter for ContainerStore {
+    fn add(&self, record: ContainerRecord) -> Result<()> {
+        self.add(record)
+    }
+
+    fn update_status(&self, id_or_name: &str, status: ContainerStatus) -> Result<()> {
+        self.update_status(id_or_name, status)
+    }
+
+    fn remove(&self, id_or_name: &str) -> Result<()> {
+        self.remove(id_or_name).map(|_| ())
     }
 }
 

@@ -3,7 +3,7 @@ pub mod rootless;
 pub mod usernet;
 
 use crate::storage::boxr_home;
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -97,6 +97,66 @@ pub struct NetworkStore {
     index_file: PathBuf,
 }
 
+/// Interface Segregation: Network querying abstraction
+pub trait NetworkReader: Send + Sync {
+    fn find(&self, query: &str) -> Option<NetworkRecord>;
+    fn list(&self) -> Vec<NetworkRecord>;
+}
+
+/// Interface Segregation: Network creation and deletion abstraction
+pub trait NetworkWriter: Send + Sync {
+    fn create_with_options(
+        &self,
+        name: &str,
+        driver: &str,
+        subnet: Option<&str>,
+        gateway: Option<&str>,
+        internal: bool,
+        attachable: bool,
+        labels: HashMap<String, String>,
+    ) -> Result<NetworkRecord>;
+    fn remove_with_force(&self, query: &str, force: bool) -> Result<NetworkRecord>;
+}
+
+/// Interface Segregation: Network attachment abstraction
+pub trait NetworkConnector: Send + Sync {
+    fn connect_container(
+        &self,
+        network_name: &str,
+        container_id: &str,
+        container_name: &str,
+    ) -> Result<NetworkEndpoint>;
+    fn disconnect_container(&self, network_name: &str, container_id: &str) -> Result<()>;
+}
+
+/// Combined network store operations contract (LSP compliant)
+pub trait NetworkStoreOps: NetworkReader + NetworkWriter + NetworkConnector {}
+impl<T: NetworkReader + NetworkWriter + NetworkConnector> NetworkStoreOps for T {}
+
+/// Open/Closed: IP allocation strategy
+pub trait IpAllocator: Send + Sync {
+    fn allocate(
+        &self,
+        subnet_str: &str,
+        gateway_str: &str,
+        existing: &HashMap<String, NetworkEndpoint>,
+    ) -> Result<Ipv4Addr>;
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct SubnetIpAllocator;
+
+impl IpAllocator for SubnetIpAllocator {
+    fn allocate(
+        &self,
+        subnet_str: &str,
+        gateway_str: &str,
+        existing: &HashMap<String, NetworkEndpoint>,
+    ) -> Result<Ipv4Addr> {
+        allocate_ip_in_subnet(subnet_str, gateway_str, existing)
+    }
+}
+
 impl NetworkStore {
     pub const DEFAULT_NETWORK: &'static str = "boxr0";
 
@@ -164,12 +224,16 @@ impl NetworkStore {
     }
 
     pub fn find(&self, query: &str) -> Option<NetworkRecord> {
+        let q = query.trim();
+        if q.is_empty() {
+            return None;
+        }
         crate::storage::index_lock::with_index_lock(&self.index_file, || {
             Ok(self
                 .load_unlocked()
                 .networks
                 .into_iter()
-                .find(|n| n.id.starts_with(query) || n.name == query))
+                .find(|n| n.id == q || n.id.starts_with(q) || n.name == q))
         })
         .ok()
         .flatten()
@@ -181,10 +245,35 @@ impl NetworkStore {
         subnet: Option<&str>,
         gateway: Option<&str>,
     ) -> Result<NetworkRecord> {
+        self.create_with_options(name, "bridge", subnet, gateway, false, false, HashMap::new())
+    }
+
+    pub fn create_with_options(
+        &self,
+        name: &str,
+        driver: &str,
+        subnet: Option<&str>,
+        gateway: Option<&str>,
+        internal: bool,
+        _attachable: bool,
+        _labels: HashMap<String, String>,
+    ) -> Result<NetworkRecord> {
+        let name_trimmed = name.trim();
+        if name_trimmed.is_empty()
+            || !name_trimmed
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+        {
+            return Err(anyhow!(
+                "Invalid network name '{}': must be alphanumeric, '_', or '-'",
+                name
+            ));
+        }
+
         crate::storage::index_lock::with_index_lock(&self.index_file, || {
             let mut data = self.load_unlocked();
-            if data.networks.iter().any(|n| n.name == name) {
-                return Err(anyhow!("Network '{}' already exists", name));
+            if data.networks.iter().any(|n| n.name == name_trimmed) {
+                return Err(anyhow!("Network '{}' already exists", name_trimmed));
             }
 
             let network_count = data.networks.len();
@@ -198,11 +287,11 @@ impl NetworkStore {
 
             let record = NetworkRecord {
                 id,
-                name: name.to_string(),
-                driver: "bridge".to_string(),
+                name: name_trimmed.to_string(),
+                driver: driver.to_string(),
                 subnet: chosen_subnet,
                 gateway: chosen_gw,
-                internal: false,
+                internal,
                 created_at: Utc::now(),
                 containers: HashMap::new(),
             };
@@ -218,16 +307,20 @@ impl NetworkStore {
     }
 
     pub fn remove_with_force(&self, query: &str, force: bool) -> Result<NetworkRecord> {
+        let q = query.trim();
+        if q.is_empty() {
+            return Err(anyhow!("Network '' not found"));
+        }
         crate::storage::index_lock::with_index_lock(&self.index_file, || {
             let mut data = self.load_unlocked();
-            if query == Self::DEFAULT_NETWORK {
+            if q == Self::DEFAULT_NETWORK {
                 return Err(anyhow!("Cannot remove the default bridge network"));
             }
 
             if let Some(pos) = data
                 .networks
                 .iter()
-                .position(|n| n.id.starts_with(query) || n.name == query)
+                .position(|n| n.id == q || n.id.starts_with(q) || n.name == q)
             {
                 if !force && !data.networks[pos].containers.is_empty() {
                     return Err(anyhow!(
@@ -263,8 +356,8 @@ impl NetworkStore {
                 return Ok(ep.clone());
             }
 
-            // Allocate next IP
-            let ip = allocate_ip_in_subnet(&net.subnet, &net.gateway, &net.containers)?;
+            // Allocate next IP using IpAllocator strategy (Open/Closed & DIP)
+            let ip = SubnetIpAllocator.allocate(&net.subnet, &net.gateway, &net.containers)?;
             let mac = format!(
                 "02:42:{:02x}:{:02x}:{:02x}:{:02x}",
                 ip.octets()[0],
@@ -297,7 +390,23 @@ impl NetworkStore {
                 .find(|n| n.name == network_name || n.id.starts_with(network_name))
                 .ok_or_else(|| anyhow!("Network '{}' not found", network_name))?;
 
-            net.containers.remove(container_id);
+            if net.containers.remove(container_id).is_none() {
+                // Also check by container_name
+                let found_key = net
+                    .containers
+                    .iter()
+                    .find(|(_, ep)| ep.container_name == container_id)
+                    .map(|(k, _)| k.clone());
+                if let Some(k) = found_key {
+                    net.containers.remove(&k);
+                } else {
+                    return Err(anyhow!(
+                        "container {} is not connected to the network {}",
+                        container_id,
+                        network_name
+                    ));
+                }
+            }
             self.save_unlocked(&data)?;
             Ok(())
         })
@@ -337,27 +446,82 @@ impl NetworkStore {
     }
 }
 
+impl NetworkReader for NetworkStore {
+    fn find(&self, query: &str) -> Option<NetworkRecord> {
+        self.find(query)
+    }
+
+    fn list(&self) -> Vec<NetworkRecord> {
+        self.list()
+    }
+}
+
+impl NetworkWriter for NetworkStore {
+    fn create_with_options(
+        &self,
+        name: &str,
+        driver: &str,
+        subnet: Option<&str>,
+        gateway: Option<&str>,
+        internal: bool,
+        attachable: bool,
+        labels: HashMap<String, String>,
+    ) -> Result<NetworkRecord> {
+        self.create_with_options(name, driver, subnet, gateway, internal, attachable, labels)
+    }
+
+    fn remove_with_force(&self, query: &str, force: bool) -> Result<NetworkRecord> {
+        self.remove_with_force(query, force)
+    }
+}
+
+impl NetworkConnector for NetworkStore {
+    fn connect_container(
+        &self,
+        network_name: &str,
+        container_id: &str,
+        container_name: &str,
+    ) -> Result<NetworkEndpoint> {
+        self.connect_container(network_name, container_id, container_name)
+    }
+
+    fn disconnect_container(&self, network_name: &str, container_id: &str) -> Result<()> {
+        self.disconnect_container(network_name, container_id)
+    }
+}
+
 fn allocate_ip_in_subnet(
     subnet_str: &str,
     gateway_str: &str,
     existing: &HashMap<String, NetworkEndpoint>,
 ) -> Result<Ipv4Addr> {
-    let (ip_part, _mask) = subnet_str
+    let (ip_part, mask_part) = subnet_str
         .split_once('/')
         .ok_or_else(|| anyhow!("Invalid CIDR subnet {}", subnet_str))?;
 
     let base_ip: Ipv4Addr = ip_part.parse()?;
+    let prefix_len: u32 = mask_part.parse().context("Invalid CIDR prefix length")?;
     let gateway: Ipv4Addr = gateway_str.parse()?;
+
+    if prefix_len > 30 || prefix_len < 8 {
+        return Err(anyhow!("Unsupported subnet prefix length /{}", prefix_len));
+    }
+
+    let mask_u32 = if prefix_len == 0 { 0 } else { (!0u32) << (32 - prefix_len) };
+    let base_u32 = u32::from(base_ip) & mask_u32;
+    let bcast_u32 = base_u32 | (!mask_u32);
 
     let used_ips: Vec<Ipv4Addr> = existing
         .values()
         .filter_map(|e| e.ipv4_address.parse().ok())
         .collect();
 
-    let octets = base_ip.octets();
-    // Scan host range starting at .2 up to .254
-    for host in 2..254 {
-        let candidate = Ipv4Addr::new(octets[0], octets[1], octets[2], host);
+    // Valid host range is from (base_u32 + 1) to (bcast_u32 - 1)
+    let start_host = base_u32 + 1;
+    let end_host = bcast_u32.saturating_sub(1);
+
+    for host_int in start_host..=end_host {
+        let candidate = Ipv4Addr::from(host_int);
         if candidate != gateway && !used_ips.contains(&candidate) {
             return Ok(candidate);
         }

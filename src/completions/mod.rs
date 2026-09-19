@@ -387,9 +387,25 @@ complete -c boxr -n "__fish_seen_subcommand_from run rmi tag history save" -a "(
                 let completion_file = bash_dir.join("boxr.bash");
                 fs::write(&completion_file, Self::generate_bash())?;
 
-                let bashrc = home.join(".bashrc");
-                let mut lines = if bashrc.exists() {
-                    fs::read_to_string(&bashrc).unwrap_or_default()
+                #[cfg(target_os = "macos")]
+                let bash_rc_file = {
+                    let bp = home.join(".bash_profile");
+                    if bp.exists() {
+                        bp
+                    } else {
+                        let prof = home.join(".profile");
+                        if prof.exists() {
+                            prof
+                        } else {
+                            home.join(".bash_profile")
+                        }
+                    }
+                };
+                #[cfg(not(target_os = "macos"))]
+                let bash_rc_file = home.join(".bashrc");
+
+                let mut lines = if bash_rc_file.exists() {
+                    fs::read_to_string(&bash_rc_file).unwrap_or_default()
                 } else {
                     String::new()
                 };
@@ -397,7 +413,7 @@ complete -c boxr -n "__fish_seen_subcommand_from run rmi tag history save" -a "(
                 let source_snippet = "\n# boxr bash completions\n[ -f ~/.bash_completion.d/boxr.bash ] && source ~/.bash_completion.d/boxr.bash\n";
                 if !lines.contains("boxr.bash") {
                     lines.push_str(source_snippet);
-                    fs::write(&bashrc, lines)?;
+                    fs::write(&bash_rc_file, lines)?;
                 }
 
                 println!(

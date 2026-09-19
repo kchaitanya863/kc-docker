@@ -24,6 +24,32 @@ pub struct DaemonState {
     pub home: PathBuf,
 }
 
+impl DaemonState {
+    pub fn new() -> Self {
+        Self { home: boxr_home() }
+    }
+
+    pub fn with_home(home: PathBuf) -> Self {
+        Self { home }
+    }
+
+    pub fn container_store(&self) -> ContainerStore {
+        ContainerStore::with_home(self.home.clone())
+    }
+
+    pub fn image_store(&self) -> ImageStore {
+        ImageStore::with_home(self.home.clone())
+    }
+
+    pub fn volume_store(&self) -> VolumeStore {
+        VolumeStore::with_home(self.home.clone())
+    }
+
+    pub fn network_store(&self) -> NetworkStore {
+        NetworkStore::with_home(self.home.clone())
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct VersionResponse {
     #[serde(rename = "Version")]

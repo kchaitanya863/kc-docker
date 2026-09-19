@@ -32,7 +32,19 @@ fn find_boxr_executable() -> PathBuf {
         return brew_bin;
     }
 
-    PathBuf::from("boxr")
+    if let Ok(path) = std::env::var("PATH") {
+        for p in std::env::split_paths(&path) {
+            let candidate = p.join("boxr");
+            if candidate.exists() {
+                if let Ok(canon) = candidate.canonicalize() {
+                    return canon;
+                }
+                return candidate;
+            }
+        }
+    }
+
+    boxr_home().join("bin").join("boxr")
 }
 
 pub struct ServiceManager;

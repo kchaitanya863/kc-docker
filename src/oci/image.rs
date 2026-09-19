@@ -103,6 +103,8 @@ pub struct HistoryEntry {
     pub empty_layer: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub comment: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

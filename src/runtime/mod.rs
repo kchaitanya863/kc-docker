@@ -2,6 +2,10 @@ pub mod cp;
 pub mod diff;
 pub mod kill;
 pub mod top;
+pub mod traits;
+
+pub use kill::{ContainerKiller, ProcessKiller};
+pub use traits::{ContainerRuntime, NativeContainerRuntime};
 
 #[cfg(target_os = "linux")]
 pub mod linux;

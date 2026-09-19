@@ -3,7 +3,18 @@ use crate::storage::{ContainerRecord, ContainerStatus, ContainerStore};
 use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 
+/// Open/Closed & Dependency Inversion: Process termination contract
+pub trait ProcessKiller: Send + Sync {
+    fn kill(&self, container: &ContainerRecord, signal_str: Option<&str>) -> Result<()>;
+}
+
 pub struct ContainerKiller;
+
+impl ProcessKiller for ContainerKiller {
+    fn kill(&self, container: &ContainerRecord, signal_str: Option<&str>) -> Result<()> {
+        Self::kill(container, signal_str)
+    }
+}
 
 impl ContainerKiller {
     pub fn parse_signal(sig_str: &str) -> Result<i32> {
@@ -22,7 +33,11 @@ impl ContainerKiller {
             "STOP" | "19" => Ok(19),
             other => {
                 if let Ok(num) = other.parse::<i32>() {
-                    Ok(num)
+                    if num >= 1 && num <= 64 {
+                        Ok(num)
+                    } else {
+                        Err(anyhow!("Invalid signal number: {}", num))
+                    }
                 } else {
                     Err(anyhow!("Unknown signal '{}'", sig_str))
                 }
@@ -67,8 +82,11 @@ impl ContainerKiller {
             }
         }
 
-        let store = ContainerStore::new();
-        let _ = store.update_status(&container.id, ContainerStatus::Exited(128 + sig));
+        let is_fatal = sig == 9 || sig == 15 || sig == 2 || sig == 3;
+        if is_fatal {
+            let store = ContainerStore::new();
+            let _ = store.update_status(&container.id, ContainerStatus::Exited(128 + sig));
+        }
 
         let mut attrs = HashMap::new();
         attrs.insert("signal".to_string(), sig.to_string());

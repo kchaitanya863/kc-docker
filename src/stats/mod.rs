@@ -122,9 +122,17 @@ impl StatsCollector {
 
     pub fn display_stats(targets: &[String], no_stream: bool) -> Result<()> {
         let store = ContainerStore::new();
+        Self::display_stats_with_reader(targets, no_stream, &store)
+    }
 
+    /// Dependency Inversion: Collect and display stats using any ContainerReader
+    pub fn display_stats_with_reader(
+        targets: &[String],
+        no_stream: bool,
+        reader: &impl crate::storage::ContainerReader,
+    ) -> Result<()> {
         if !targets.is_empty() {
-            let all = store.list();
+            let all = reader.list();
             for t in targets {
                 if !all.iter().any(|c| c.id.starts_with(t) || &c.name == t) {
                     return Err(anyhow::anyhow!("No such container: {}", t));
@@ -133,7 +141,7 @@ impl StatsCollector {
         }
 
         loop {
-            let mut containers = store.list();
+            let mut containers = reader.list();
             if !targets.is_empty() {
                 containers.retain(|c| targets.iter().any(|t| c.id.starts_with(t) || &c.name == t));
             } else {

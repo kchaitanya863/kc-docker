@@ -23,7 +23,15 @@ impl SystemManager {
         let i_store = ImageStore::new();
         let c_store = ContainerStore::new();
         let v_store = VolumeStore::new();
+        Self::df_with_readers(&i_store, &c_store, &v_store)
+    }
 
+    /// Dependency Inversion: Compute disk usage across any readers
+    pub fn df_with_readers(
+        i_store: &impl crate::storage::ImageReader,
+        c_store: &impl crate::storage::ContainerReader,
+        v_store: &impl crate::volume::VolumeReader,
+    ) -> Result<Vec<DiskUsageRow>> {
         let images = i_store.list();
         let containers = c_store.list();
         let volumes = v_store.list();

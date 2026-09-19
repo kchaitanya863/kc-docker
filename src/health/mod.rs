@@ -113,6 +113,30 @@ pub fn parse_restart_policy(input: &str) -> Result<RestartPolicy> {
     }
 }
 
+/// Open/Closed & Dependency Inversion: Container health probe abstraction
+pub trait HealthProbe: Send + Sync {
+    fn check_health(
+        &self,
+        bundle_path: &Path,
+        config: &HealthConfig,
+        current: &mut HealthCheckResult,
+    ) -> Result<HealthStatus>;
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct DefaultHealthProbe;
+
+impl HealthProbe for DefaultHealthProbe {
+    fn check_health(
+        &self,
+        bundle_path: &Path,
+        config: &HealthConfig,
+        current: &mut HealthCheckResult,
+    ) -> Result<HealthStatus> {
+        check_container_health(bundle_path, config, current)
+    }
+}
+
 /// Run a health check probe inside a container bundle
 pub fn check_container_health(
     bundle_path: &Path,

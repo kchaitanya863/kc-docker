@@ -70,9 +70,12 @@ impl ImageStore {
     }
 
     pub fn find_with_platform(&self, query: &str, platform: Option<&str>) -> Option<ImageRecord> {
+        let query_trimmed = query.trim();
+        if query_trimmed.is_empty() {
+            return None;
+        }
         crate::storage::index_lock::with_index_lock(&self.index_file, || {
             let data = self.load_unlocked();
-            let query_trimmed = query.trim();
 
             // Normalize query: e.g. "hello-world" -> short name "hello-world", tag "latest"
             let (q_name, q_tag) = if let Some((n, t)) = query_trimmed.split_once(':') {
@@ -164,9 +167,12 @@ impl ImageStore {
     }
 
     pub fn remove(&self, query: &str) -> Result<ImageRecord> {
+        let query_trimmed = query.trim();
+        if query_trimmed.is_empty() {
+            return Err(anyhow!("Image not found: ''"));
+        }
         crate::storage::index_lock::with_index_lock(&self.index_file, || {
             let mut data = self.load_unlocked();
-            let query_trimmed = query.trim();
             let (q_name, q_tag) = if let Some((n, t)) = query_trimmed.split_once(':') {
                 (n, Some(t))
             } else {
@@ -341,6 +347,30 @@ impl ImageStore {
 
         self.add(record.clone())?;
         Ok(record)
+    }
+}
+
+impl super::traits::ImageReader for ImageStore {
+    fn find(&self, reference: &str) -> Option<ImageRecord> {
+        self.find(reference)
+    }
+
+    fn find_with_platform(&self, reference: &str, platform: Option<&str>) -> Option<ImageRecord> {
+        self.find_with_platform(reference, platform)
+    }
+
+    fn list(&self) -> Vec<ImageRecord> {
+        self.list()
+    }
+}
+
+impl super::traits::ImageWriter for ImageStore {
+    fn add(&self, record: ImageRecord) -> Result<()> {
+        self.add(record)
+    }
+
+    fn remove(&self, reference: &str) -> Result<()> {
+        self.remove(reference).map(|_| ())
     }
 }
 

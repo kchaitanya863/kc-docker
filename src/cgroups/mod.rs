@@ -50,8 +50,39 @@ impl ResourceLimits {
     }
 }
 
+/// Open/Closed & Dependency Inversion: Resource management contract
+pub trait ResourceManager: Send + Sync {
+    fn apply_limits(&self, limits: &ResourceLimits) -> Result<()>;
+    fn add_process(&self, pid: i32) -> Result<()>;
+    fn freeze(&self) -> Result<()>;
+    fn unfreeze(&self) -> Result<()>;
+    fn cleanup(&self) -> Result<()>;
+}
+
 pub struct CgroupV2Manager {
     cgroup_path: PathBuf,
+}
+
+impl ResourceManager for CgroupV2Manager {
+    fn apply_limits(&self, limits: &ResourceLimits) -> Result<()> {
+        self.apply_limits(limits)
+    }
+
+    fn add_process(&self, pid: i32) -> Result<()> {
+        self.add_process(pid)
+    }
+
+    fn freeze(&self) -> Result<()> {
+        self.freeze()
+    }
+
+    fn unfreeze(&self) -> Result<()> {
+        self.unfreeze()
+    }
+
+    fn cleanup(&self) -> Result<()> {
+        self.cleanup()
+    }
 }
 
 impl CgroupV2Manager {

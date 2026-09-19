@@ -117,7 +117,8 @@ impl DiskGuard {
             }
 
             let stat = unsafe { stat.assume_init() };
-            let free_bytes = (stat.f_bavail as u64) * (stat.f_frsize as u64);
+            let block_size = if stat.f_frsize > 0 { stat.f_frsize } else { stat.f_bsize };
+            let free_bytes = (stat.f_bavail as u64) * (block_size as u64);
             Ok(free_bytes)
         }
     }
@@ -147,12 +148,29 @@ impl PortCollisionGuard {
     /// Ensure none of the requested host ports are already bound by other running containers
     pub fn ensure_no_conflicts(requested_ports: &[crate::network::PortMapping]) -> Result<()> {
         let store = ContainerStore::new();
-        let containers = store.list();
+        Self::ensure_no_conflicts_with_reader(requested_ports, &store)
+    }
 
+    /// Dependency Inversion: Validate port conflicts against any ContainerReader abstraction
+    pub fn ensure_no_conflicts_with_reader(
+        requested_ports: &[crate::network::PortMapping],
+        reader: &impl crate::storage::ContainerReader,
+    ) -> Result<()> {
+        Self::ensure_no_conflicts_with_containers(requested_ports, &reader.list())
+    }
+
+    /// Single Responsibility: Pure collision check on a slice of containers
+    pub fn ensure_no_conflicts_with_containers(
+        requested_ports: &[crate::network::PortMapping],
+        containers: &[crate::storage::ContainerRecord],
+    ) -> Result<()> {
         for req in requested_ports {
+            if req.host_port == 0 {
+                continue;
+            }
             let req_ip = req.host_ip.as_deref().unwrap_or("0.0.0.0");
 
-            for c in &containers {
+            for c in containers {
                 if !matches!(c.status, ContainerStatus::Running) {
                     continue;
                 }
@@ -188,6 +206,13 @@ impl ProcessReaper {
     /// Inspect all recorded "Running" containers, identify dead processes, and self-heal records
     pub fn reap_stale_containers() -> Result<usize> {
         let store = ContainerStore::new();
+        Self::reap_stale_containers_with_store(&store)
+    }
+
+    /// Dependency Inversion: reap stale containers using any ContainerStoreOps implementation
+    pub fn reap_stale_containers_with_store(
+        store: &impl crate::storage::ContainerStoreOps,
+    ) -> Result<usize> {
         let containers = store.list();
         let mut reaped_count = 0;
 
