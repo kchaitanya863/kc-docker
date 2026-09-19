@@ -57,7 +57,15 @@ impl ImageReference {
         // Parse registry and repository
         let (registry, repository) = if let Some(slash_idx) = name_part.find('/') {
             let potential_registry = &name_part[..slash_idx];
-            if potential_registry.contains('.')
+            if potential_registry == "docker.io"
+                || potential_registry == "index.docker.io"
+                || potential_registry == "registry-1.docker.io"
+            {
+                (
+                    Self::DEFAULT_REGISTRY.to_string(),
+                    name_part[slash_idx + 1..].to_string(),
+                )
+            } else if potential_registry.contains('.')
                 || potential_registry.contains(':')
                 || potential_registry == "localhost"
             {
@@ -148,5 +156,20 @@ mod tests {
     fn test_parse_digest() {
         let r = ImageReference::parse("alpine@sha256:abcdef").unwrap();
         assert_eq!(r.digest.as_deref(), Some("sha256:abcdef"));
+    }
+
+    #[test]
+    fn test_parse_docker_io_normalization() {
+        let r1 = ImageReference::parse("docker.io/library/alpine:latest").unwrap();
+        assert_eq!(r1.registry, ImageReference::DEFAULT_REGISTRY);
+        assert_eq!(r1.repository, "library/alpine");
+
+        let r2 = ImageReference::parse("docker.io/alpine:latest").unwrap();
+        assert_eq!(r2.registry, ImageReference::DEFAULT_REGISTRY);
+        assert_eq!(r2.repository, "library/alpine");
+
+        let r3 = ImageReference::parse("index.docker.io/user/app:v1").unwrap();
+        assert_eq!(r3.registry, ImageReference::DEFAULT_REGISTRY);
+        assert_eq!(r3.repository, "user/app");
     }
 }

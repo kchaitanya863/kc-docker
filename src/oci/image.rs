@@ -309,9 +309,9 @@ pub fn unpack_archive_safely<R: Read>(
                 }
                 // Resolve symlink target relative to entry parent
                 let parent_dir = if let Some(parent) = entry_path.parent() {
-                    target_dir.join(parent)
+                    canon_target.join(parent)
                 } else {
-                    target_dir.to_path_buf()
+                    canon_target.clone()
                 };
                 let mut resolved = parent_dir;
                 for comp in target_path.components() {
@@ -500,6 +500,41 @@ mod tests {
             res.unwrap_err()
                 .to_string()
                 .contains("Tar-slip symlink escape rejected")
+        );
+    }
+
+    #[test]
+    fn test_unpack_archive_safely_benign_relative_symlink_allowed() {
+        let temp = tempdir().unwrap();
+        let target_dir = temp.path().join("target");
+        fs::create_dir_all(&target_dir).unwrap();
+
+        let mut builder = tar::Builder::new(Vec::new());
+
+        let data = b"target content";
+        let mut h1 = tar::Header::new_gnu();
+        h1.set_size(data.len() as u64);
+        h1.set_mode(0o644);
+        h1.set_cksum();
+        builder.append_data(&mut h1, "file.txt", &data[..]).unwrap();
+
+        let mut h2 = tar::Header::new_gnu();
+        h2.set_entry_type(tar::EntryType::Symlink);
+        h2.set_size(0);
+        h2.set_mode(0o777);
+        h2.set_link_name("../file.txt").unwrap();
+        h2.set_cksum();
+        builder
+            .append_data(&mut h2, "sub/link.txt", &[][..])
+            .unwrap();
+
+        let tar_bytes = builder.into_inner().unwrap();
+        let mut archive = tar::Archive::new(&tar_bytes[..]);
+        let res = unpack_archive_safely(&mut archive, &target_dir);
+        assert!(
+            res.is_ok(),
+            "Benign relative symlink within target must succeed: {:?}",
+            res
         );
     }
 }

@@ -67,9 +67,6 @@ pub struct InfoResponse {
 }
 
 pub fn create_router(state: DaemonState) -> Router {
-    unsafe {
-        std::env::set_var("BOXR_HOME", &state.home);
-    }
     Router::new()
         .route("/_ping", get(ping))
         .route("/version", get(version))
@@ -309,9 +306,6 @@ async fn create_container(
     Query(query): Query<CreateContainerQuery>,
     Json(payload): Json<CreateContainerRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    unsafe {
-        std::env::set_var("BOXR_HOME", &state.home);
-    }
     let run_args = crate::cli::RunArgs {
         interactive: false,
         tty: false,
@@ -420,7 +414,7 @@ async fn create_container(
         command: payload.cmd.unwrap_or_default(),
     };
 
-    match crate::create_only_container(run_args).await {
+    match crate::create_only_container_with_home(run_args, Some(&state.home)).await {
         Ok(id) => Ok(Json(serde_json::json!({
             "Id": id,
             "Warnings": []
@@ -433,20 +427,14 @@ async fn create_container(
 }
 
 async fn start_container(State(state): State<DaemonState>, Path(id): Path<String>) -> StatusCode {
-    unsafe {
-        std::env::set_var("BOXR_HOME", &state.home);
-    }
-    match crate::start_container(&id).await {
+    match crate::start_container_with_home(&id, Some(&state.home)).await {
         Ok(_) => StatusCode::NO_CONTENT,
         Err(_) => StatusCode::NOT_FOUND,
     }
 }
 
 async fn stop_container(State(state): State<DaemonState>, Path(id): Path<String>) -> StatusCode {
-    unsafe {
-        std::env::set_var("BOXR_HOME", &state.home);
-    }
-    match crate::stop_container(&id, None) {
+    match crate::stop_container_with_home(&id, None, Some(&state.home)) {
         Ok(_) => StatusCode::NO_CONTENT,
         Err(_) => StatusCode::NOT_FOUND,
     }

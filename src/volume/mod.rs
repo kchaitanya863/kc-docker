@@ -156,6 +156,43 @@ impl VolumeStore {
     }
 
     pub fn remove(&self, name: &str) -> Result<VolumeRecord> {
+        self.remove_with_force(name, false)
+    }
+
+    pub fn remove_with_force(&self, name: &str, force: bool) -> Result<VolumeRecord> {
+        let home = self
+            .index_file
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let c_store = crate::storage::ContainerStore::with_home(home);
+        let containers = c_store.list();
+
+        if !force {
+            for c in containers {
+                let bundle_path = PathBuf::from(&c.bundle_path);
+                let config_file = bundle_path.join("config.json");
+                if let Ok(content) = fs::read_to_string(&config_file) {
+                    if let Ok(spec) = serde_json::from_str::<crate::oci::runtime::Spec>(&content) {
+                        for m in spec.mounts {
+                            let m_src = m.source;
+                            if m_src.contains(&format!("volumes/{}/_data", name))
+                                || m_src.contains(&format!("volumes/{}", name))
+                                || m_src.ends_with(&format!("/{}", name))
+                                || m_src == name
+                            {
+                                return Err(anyhow!(
+                                    "conflict: unable to remove volume '{}' - volume is in use by container {}",
+                                    name,
+                                    c.id
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         crate::storage::index_lock::with_index_lock(&self.index_file, || {
             let mut data = self.load_unlocked();
             if let Some(pos) = data.volumes.iter().position(|v| v.name == name) {
@@ -458,5 +495,56 @@ mod tests {
         assert_eq!(pruned, vec!["unused-vol".to_string()]);
         assert!(store.find("used-vol").is_some());
         assert!(store.find("unused-vol").is_none());
+    }
+
+    #[test]
+    fn test_volume_remove_in_use_validation() {
+        let temp = tempdir().unwrap();
+        let home = temp.path().to_path_buf();
+        let store = VolumeStore::with_home(home.clone());
+        let c_store = crate::storage::ContainerStore::with_home(home.clone());
+
+        store.create(Some("mounted-vol"), None).unwrap();
+
+        let bundle_dir = home.join("containers").join("c2");
+        fs::create_dir_all(&bundle_dir).unwrap();
+        let spec_content = r#"
+        {
+            "ociVersion": "1.0.2",
+            "process": { "terminal": false, "user": { "uid": 0, "gid": 0 }, "args": ["sh"], "env": [], "cwd": "/" },
+            "root": { "path": "rootfs", "readonly": false },
+            "mounts": [
+                { "destination": "/app/data", "type": "bind", "source": "/test/volumes/mounted-vol/_data" }
+            ]
+        }"#;
+        fs::write(bundle_dir.join("config.json"), spec_content).unwrap();
+
+        let c_record = crate::storage::ContainerRecord {
+            id: "c2".to_string(),
+            name: "test-c2".to_string(),
+            image: "alpine".to_string(),
+            command: vec!["sh".to_string()],
+            created_at: chrono::Utc::now(),
+            status: crate::storage::ContainerStatus::Running,
+            bundle_path: bundle_dir.to_string_lossy().to_string(),
+            restart_policy: crate::health::RestartPolicy::No,
+            health_status: crate::health::HealthStatus::None,
+            restart_count: 0,
+            ports: Vec::new(),
+        };
+        c_store.add(c_record).unwrap();
+
+        // Attempting to remove mounted volume without force must fail
+        let res = store.remove("mounted-vol");
+        assert!(res.is_err());
+        assert!(
+            res.unwrap_err()
+                .to_string()
+                .contains("volume is in use by container")
+        );
+
+        // Removing with force=true must succeed
+        let res_force = store.remove_with_force("mounted-vol", true);
+        assert!(res_force.is_ok());
     }
 }

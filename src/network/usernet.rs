@@ -515,6 +515,76 @@ impl UserNetEngine {
             return Some(out);
         }
 
+        // Forward outbound TCP data payload to host network and return response
+        let (_, tcp_data) = TcpHeader::parse(payload)?;
+        if !tcp_data.is_empty() {
+            let target_addr =
+                std::net::SocketAddr::V4(std::net::SocketAddrV4::new(ip.dst_ip, tcp.dst_port));
+            if let Ok(mut stream) = std::net::TcpStream::connect_timeout(
+                &target_addr,
+                std::time::Duration::from_millis(2000),
+            ) {
+                use std::io::{Read, Write};
+                let _ = stream.write_all(tcp_data);
+                let _ = stream.flush();
+                let mut resp_buf = [0u8; 16384];
+                let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(2000)));
+                if let Ok(n) = stream.read(&mut resp_buf) {
+                    if n > 0 {
+                        let response_data = &resp_buf[..n];
+                        let reply_tcp = TcpHeader {
+                            src_port: tcp.dst_port,
+                            dst_port: tcp.src_port,
+                            seq_num: tcp.ack_num,
+                            ack_num: tcp.seq_num.wrapping_add(tcp_data.len() as u32),
+                            data_offset: 20,
+                            flags: 0x18, // PSH | ACK
+                            window_size: 65535,
+                            checksum: 0,
+                            urgent_ptr: 0,
+                        };
+
+                        let reply_ip = Ipv4Header {
+                            ihl: 5,
+                            tos: 0,
+                            total_length: (20 + 20 + response_data.len()) as u16,
+                            id: ip.id.wrapping_add(1),
+                            flags_and_frag: 0x4000,
+                            ttl: 64,
+                            protocol: IP_PROTO_TCP,
+                            checksum: 0,
+                            src_ip: ip.dst_ip,
+                            dst_ip: ip.src_ip,
+                        };
+
+                        let reply_eth = EthernetHeader {
+                            dst_mac: eth.src_mac,
+                            src_mac: VIRTUAL_GATEWAY_MAC,
+                            ethertype: ETHERTYPE_IPV4,
+                        };
+
+                        let mut tcp_bytes = Vec::with_capacity(20 + response_data.len());
+                        reply_tcp.write_to(&mut tcp_bytes);
+                        tcp_bytes.extend_from_slice(response_data);
+
+                        let csum = compute_tcp_checksum(
+                            &reply_ip.src_ip,
+                            &reply_ip.dst_ip,
+                            IP_PROTO_TCP,
+                            &tcp_bytes,
+                        );
+                        tcp_bytes[16..18].copy_from_slice(&csum.to_be_bytes());
+
+                        let mut out = Vec::with_capacity(14 + 20 + tcp_bytes.len());
+                        reply_eth.write_to(&mut out);
+                        reply_ip.write_to(&mut out);
+                        out.extend_from_slice(&tcp_bytes);
+                        return Some(out);
+                    }
+                }
+            }
+        }
+
         None
     }
 
@@ -946,6 +1016,87 @@ mod tests {
         assert_eq!(r_tcp.dst_port, 54321);
         assert_eq!(r_tcp.flags, 0x12); // SYN | ACK
         assert_eq!(r_tcp.ack_num, 501); // ACK = SEQ + 1
+    }
+
+    #[test]
+    fn test_usernet_tcp_payload_forwarding() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 128];
+                if let Ok(n) = stream.read(&mut buf) {
+                    if n > 0 {
+                        let _ = stream.write_all(b"HTTP/1.1 200 OK\r\n\r\n");
+                    }
+                }
+            }
+        });
+
+        let engine = UserNetEngine::new(&[]);
+
+        let tcp_payload = b"GET / HTTP/1.1\r\n\r\n";
+        let tcp_data = TcpHeader {
+            src_port: 43210,
+            dst_port: port,
+            seq_num: 501,
+            ack_num: 1001,
+            data_offset: 20,
+            flags: 0x18, // PSH | ACK
+            window_size: 65535,
+            checksum: 0,
+            urgent_ptr: 0,
+        };
+
+        let mut tcp_bytes = Vec::new();
+        tcp_data.write_to(&mut tcp_bytes);
+        tcp_bytes.extend_from_slice(tcp_payload);
+
+        let ip = Ipv4Header {
+            ihl: 5,
+            tos: 0,
+            total_length: 20 + 20 + tcp_payload.len() as u16,
+            id: 2,
+            flags_and_frag: 0,
+            ttl: 64,
+            protocol: IP_PROTO_TCP,
+            checksum: 0,
+            src_ip: DEFAULT_CONTAINER_IP,
+            dst_ip: Ipv4Addr::new(127, 0, 0, 1),
+        };
+
+        let eth = EthernetHeader {
+            dst_mac: VIRTUAL_GATEWAY_MAC,
+            src_mac: CONTAINER_MAC,
+            ethertype: ETHERTYPE_IPV4,
+        };
+
+        let mut frame = Vec::new();
+        eth.write_to(&mut frame);
+        ip.write_to(&mut frame);
+        frame.extend_from_slice(&tcp_bytes);
+
+        let reply = engine.handle_incoming_frame(&frame);
+        assert!(
+            reply.is_some(),
+            "UserNetEngine must reply with forwarded TCP response"
+        );
+        let reply_frame = reply.unwrap();
+
+        let (r_eth, r_payload) = EthernetHeader::parse(&reply_frame).unwrap();
+        assert_eq!(r_eth.dst_mac, CONTAINER_MAC);
+
+        let (r_ip, r_tcp_raw) = Ipv4Header::parse(r_payload).unwrap();
+        assert_eq!(r_ip.protocol, IP_PROTO_TCP);
+        let (r_tcp, r_data) = TcpHeader::parse(r_tcp_raw).unwrap();
+        assert_eq!(r_tcp.src_port, port);
+        assert_eq!(r_tcp.dst_port, 43210);
+        assert_eq!(r_tcp.flags, 0x18);
+        assert!(r_data.starts_with(b"HTTP/1.1 200 OK"));
     }
 
     #[test]

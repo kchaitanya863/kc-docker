@@ -1223,7 +1223,18 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
 }
 
 pub fn stop_container(container: &str, signal: Option<&str>) -> Result<()> {
-    let store = ContainerStore::new();
+    stop_container_with_home(container, signal, None)
+}
+
+pub fn stop_container_with_home(
+    container: &str,
+    signal: Option<&str>,
+    home_opt: Option<&Path>,
+) -> Result<()> {
+    let store = match home_opt {
+        Some(h) => ContainerStore::with_home(h.to_path_buf()),
+        None => ContainerStore::new(),
+    };
     let c = store
         .find(container)
         .ok_or_else(|| anyhow!("Container '{}' not found", container))?;
@@ -1289,7 +1300,14 @@ pub fn stop_container(container: &str, signal: Option<&str>) -> Result<()> {
 }
 
 pub async fn start_container(container: &str) -> Result<()> {
-    let store = ContainerStore::new();
+    start_container_with_home(container, None).await
+}
+
+pub async fn start_container_with_home(container: &str, home_opt: Option<&Path>) -> Result<()> {
+    let store = match home_opt {
+        Some(h) => ContainerStore::with_home(h.to_path_buf()),
+        None => ContainerStore::new(),
+    };
     let rec = store
         .find(container)
         .ok_or_else(|| anyhow!("Container '{}' not found", container))?;
@@ -2519,7 +2537,17 @@ pub fn prune_images(all: bool) -> Result<()> {
 }
 
 pub async fn create_only_container(args: RunArgs) -> Result<String> {
-    let image_store = ImageStore::new();
+    create_only_container_with_home(args, None).await
+}
+
+pub async fn create_only_container_with_home(
+    args: RunArgs,
+    home_opt: Option<&Path>,
+) -> Result<String> {
+    let image_store = match home_opt {
+        Some(h) => ImageStore::with_home(h.to_path_buf()),
+        None => ImageStore::new(),
+    };
     let image_record = match image_store.find_with_platform(&args.image, args.platform.as_deref()) {
         Some(record) if Path::new(&record.rootfs_path).exists() => record,
         _ => {
@@ -2537,7 +2565,10 @@ pub async fn create_only_container(args: RunArgs) -> Result<String> {
         parsed_ports.push(PortMapping::parse(p)?);
     }
 
-    let vol_store = VolumeStore::new();
+    let vol_store = match home_opt {
+        Some(h) => VolumeStore::with_home(h.to_path_buf()),
+        None => VolumeStore::new(),
+    };
     let mut parsed_mounts = Vec::new();
     for v in &args.volumes {
         parsed_mounts.push(vol_store.resolve_mount(v)?);
@@ -2549,7 +2580,9 @@ pub async fn create_only_container(args: RunArgs) -> Result<String> {
         .name
         .unwrap_or_else(|| format!("boxr-{}", &container_id[..6]));
 
-    let home = storage::boxr_home();
+    let home = home_opt
+        .map(PathBuf::from)
+        .unwrap_or_else(storage::boxr_home);
     let bundle_dir = home.join("containers").join(&container_id);
     fs::create_dir_all(&bundle_dir)?;
 
@@ -2823,7 +2856,10 @@ pub async fn create_only_container(args: RunArgs) -> Result<String> {
         health::HealthStatus::Starting
     };
 
-    let container_store = ContainerStore::new();
+    let container_store = match home_opt {
+        Some(h) => ContainerStore::with_home(h.to_path_buf()),
+        None => ContainerStore::new(),
+    };
     let record = ContainerRecord {
         id: container_id.clone(),
         name: container_name.clone(),

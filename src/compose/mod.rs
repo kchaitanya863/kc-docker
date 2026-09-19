@@ -237,12 +237,9 @@ impl ComposeProject {
                 ));
             };
 
-            let mut env_vec = svc
-                .environment
-                .as_ref()
-                .map(|e| e.to_vec())
-                .unwrap_or_default();
+            let mut env_vec = Vec::new();
 
+            // 1. Base values from env_file
             if let Some(ef) = &svc.env_file {
                 for path_str in ef.to_vec() {
                     let p = root_dir.join(&path_str);
@@ -254,6 +251,21 @@ impl ComposeProject {
                             }
                         }
                     }
+                }
+            }
+
+            // 2. Explicit inline environment declarations override env_file values
+            if let Some(env_entries) = &svc.environment {
+                for e in env_entries.to_vec() {
+                    if let Some((k, _)) = e.split_once('=') {
+                        env_vec.retain(|existing| {
+                            existing
+                                .split_once('=')
+                                .map(|(ek, _)| ek != k)
+                                .unwrap_or(true)
+                        });
+                    }
+                    env_vec.push(e);
                 }
             }
 
@@ -423,14 +435,29 @@ impl ComposeProject {
         let prefix = format!("{}_", self.name);
 
         let mut custom_names = HashSet::new();
-        for svc in self.compose.services.values() {
+        for (svc_name, svc) in &self.compose.services {
             if let Some(cname) = &svc.container_name {
                 custom_names.insert(cname.clone());
+            }
+            for num in 1..=20 {
+                custom_names.insert(format!("{}_{}_{}", self.name, svc_name, num));
             }
         }
 
         for c in store.list() {
-            if c.name.starts_with(&prefix) || custom_names.contains(&c.name) {
+            let matches_project = custom_names.contains(&c.name) || {
+                if let Some(rest) = c.name.strip_prefix(&prefix) {
+                    if let Some((svc, _num)) = rest.rsplit_once('_') {
+                        self.compose.services.contains_key(svc)
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            };
+
+            if matches_project {
                 println!("Stopping container {}", c.name);
                 let _ = crate::stop_container(&c.id, None);
                 println!("Removing container {}", c.name);
@@ -523,5 +550,96 @@ volumes:
 
         assert!(db_pos < api_pos);
         assert!(api_pos < web_pos);
+    }
+
+    #[test]
+    fn test_compose_environment_overrides_env_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let env_file_path = temp.path().join(".env.test");
+        fs::write(
+            &env_file_path,
+            "PORT=8000\nDB=staging\nSHARED=env_file_val\n",
+        )
+        .unwrap();
+
+        let yaml = format!(
+            r#"
+version: '3.8'
+services:
+  web:
+    image: nginx:latest
+    env_file:
+      - {}
+    environment:
+      PORT: "9000"
+      SHARED: "inline_val"
+"#,
+            env_file_path.display()
+        );
+
+        let proj = ComposeProject::from_str(&yaml, "env-test").unwrap();
+        let svc = &proj.compose.services["web"];
+
+        let mut env_vec = Vec::new();
+        if let Some(ef) = &svc.env_file {
+            for path_str in ef.to_vec() {
+                if let Ok(content) = fs::read_to_string(&path_str) {
+                    for line in content.lines() {
+                        let trimmed = line.trim();
+                        if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                            env_vec.push(trimmed.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(env_entries) = &svc.environment {
+            for e in env_entries.to_vec() {
+                if let Some((k, _)) = e.split_once('=') {
+                    env_vec.retain(|existing| {
+                        existing
+                            .split_once('=')
+                            .map(|(ek, _)| ek != k)
+                            .unwrap_or(true)
+                    });
+                }
+                env_vec.push(e);
+            }
+        }
+
+        assert!(env_vec.contains(&"PORT=9000".to_string()));
+        assert!(env_vec.contains(&"SHARED=inline_val".to_string()));
+        assert!(env_vec.contains(&"DB=staging".to_string()));
+        assert!(!env_vec.contains(&"PORT=8000".to_string()));
+        assert!(!env_vec.contains(&"SHARED=env_file_val".to_string()));
+    }
+
+    #[test]
+    fn test_compose_down_avoids_prefix_collision() {
+        let yaml = r#"
+version: '3.8'
+services:
+  web:
+    image: nginx:latest
+"#;
+        let proj = ComposeProject::from_str(yaml, "app").unwrap();
+        let prefix = "app_";
+        let other_project_container = "app_backend_web_1";
+
+        let matches_other = other_project_container
+            .strip_prefix(prefix)
+            .map(|rest| {
+                if let Some((svc, _)) = rest.rsplit_once('_') {
+                    proj.compose.services.contains_key(svc)
+                } else {
+                    false
+                }
+            })
+            .unwrap_or(false);
+
+        assert!(
+            !matches_other,
+            "Compose down for 'app' must not match 'app_backend_web_1'"
+        );
     }
 }

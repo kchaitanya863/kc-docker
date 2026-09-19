@@ -54,11 +54,25 @@ fn create_isolated_home() -> tempfile::TempDir {
             let _ = std::os::windows::fs::symlink_dir(&src, &dst);
         }
     }
+    // Copy existing image catalog so isolated tests instantly resolve cached images without network re-pulls
+    let src_images_json = base_home.join("images.json");
+    if src_images_json.exists() {
+        let dst_images_json = temp.path().join("images.json");
+        let _ = fs::copy(&src_images_json, &dst_images_json);
+    }
     temp
 }
 
 fn unique_id() -> String {
     hex::encode(boxr::storage::container_store::rand_id())[..8].to_string()
+}
+
+#[test]
+fn test_isolated_home_preserves_images_catalog() {
+    let home = create_isolated_home();
+    let img_store = boxr::storage::ImageStore::with_home(home.path().to_path_buf());
+    let base_store = boxr::storage::ImageStore::new();
+    assert_eq!(img_store.list().len(), base_store.list().len());
 }
 
 /// Docker Parity Test: Version and System Info commands
