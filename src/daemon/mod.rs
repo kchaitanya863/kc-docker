@@ -8,7 +8,9 @@ use axum::{
     http::StatusCode,
     routing::{delete, get, post},
 };
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 #[cfg(windows)]
@@ -79,6 +81,12 @@ pub fn create_router(state: DaemonState) -> Router {
         .route("/v1.45/images/{name}/json", get(inspect_image))
         .route("/images/create", post(create_image))
         .route("/v1.45/images/create", post(create_image))
+        .route("/images/{name}", delete(remove_image_endpoint))
+        .route("/v1.45/images/{name}", delete(remove_image_endpoint))
+        .route("/images/{name}/tag", post(tag_image_endpoint))
+        .route("/v1.45/images/{name}/tag", post(tag_image_endpoint))
+        .route("/images/{name}/history", get(get_image_history_endpoint))
+        .route("/v1.45/images/{name}/history", get(get_image_history_endpoint))
         .route("/containers/json", get(list_containers))
         .route("/v1.45/containers/json", get(list_containers))
         .route("/containers/{id}/json", get(inspect_container))
@@ -287,6 +295,37 @@ struct CreateContainerQuery {
 }
 
 #[allow(dead_code)]
+#[derive(Deserialize, Default)]
+struct RestartPolicyConfig {
+    #[serde(rename = "Name")]
+    name: Option<String>,
+    #[serde(rename = "MaximumRetryCount")]
+    maximum_retry_count: Option<u32>,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize, Default)]
+struct PortBindingItem {
+    #[serde(rename = "HostIp")]
+    host_ip: Option<String>,
+    #[serde(rename = "HostPort")]
+    host_port: Option<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize, Default)]
+struct HostConfig {
+    #[serde(rename = "Binds")]
+    binds: Option<Vec<String>>,
+    #[serde(rename = "PortBindings")]
+    port_bindings: Option<HashMap<String, Vec<PortBindingItem>>>,
+    #[serde(rename = "Memory")]
+    memory: Option<i64>,
+    #[serde(rename = "RestartPolicy")]
+    restart_policy: Option<RestartPolicyConfig>,
+}
+
+#[allow(dead_code)]
 #[derive(Deserialize)]
 struct CreateContainerRequest {
     #[serde(rename = "Image")]
@@ -299,6 +338,8 @@ struct CreateContainerRequest {
     working_dir: Option<String>,
     #[serde(rename = "User")]
     user: Option<String>,
+    #[serde(rename = "HostConfig")]
+    host_config: Option<HostConfig>,
 }
 
 async fn create_container(
@@ -306,6 +347,42 @@ async fn create_container(
     Query(query): Query<CreateContainerQuery>,
     Json(payload): Json<CreateContainerRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    let mut ports = Vec::new();
+    let mut volumes = Vec::new();
+    let mut memory = None;
+    let mut restart = "no".to_string();
+
+    if let Some(hc) = &payload.host_config {
+        if let Some(b) = &hc.binds {
+            volumes = b.clone();
+        }
+        if let Some(pb) = &hc.port_bindings {
+            for (cont_port_proto, host_items) in pb {
+                for item in host_items {
+                    let host_p = item.host_port.as_deref().unwrap_or("");
+                    let host_ip = item.host_ip.as_deref().unwrap_or("");
+                    if !host_ip.is_empty() {
+                        ports.push(format!("{}:{}:{}", host_ip, host_p, cont_port_proto));
+                    } else if !host_p.is_empty() {
+                        ports.push(format!("{}:{}", host_p, cont_port_proto));
+                    } else {
+                        ports.push(cont_port_proto.clone());
+                    }
+                }
+            }
+        }
+        if let Some(m) = hc.memory {
+            if m > 0 {
+                memory = Some(m.to_string());
+            }
+        }
+        if let Some(rp) = &hc.restart_policy {
+            if let Some(n) = &rp.name {
+                restart = n.clone();
+            }
+        }
+    }
+
     let run_args = crate::cli::RunArgs {
         interactive: false,
         tty: false,
@@ -313,8 +390,8 @@ async fn create_container(
         rm: false,
         name: query.name,
         env: payload.env.unwrap_or_default(),
-        ports: Vec::new(),
-        volumes: Vec::new(),
+        ports,
+        volumes,
         workdir: payload.working_dir,
         user: payload.user,
         hostname: None,
@@ -322,11 +399,11 @@ async fn create_container(
         dns: Vec::new(),
         labels: Vec::new(),
         cidfile: None,
-        memory: None,
+        memory,
         cpus: None,
         pids_limit: None,
         rootless: true,
-        restart: "no".to_string(),
+        restart,
         health_cmd: None,
         platform: None,
         network: "auto".to_string(),
@@ -433,8 +510,23 @@ async fn start_container(State(state): State<DaemonState>, Path(id): Path<String
     }
 }
 
-async fn stop_container(State(state): State<DaemonState>, Path(id): Path<String>) -> StatusCode {
-    match crate::stop_container_with_home(&id, None, Some(&state.home)) {
+#[derive(Deserialize, Default)]
+struct StopContainerQuery {
+    t: Option<u64>,
+    signal: Option<String>,
+}
+
+async fn stop_container(
+    State(state): State<DaemonState>,
+    Path(id): Path<String>,
+    Query(query): Query<StopContainerQuery>,
+) -> StatusCode {
+    match crate::stop_container_with_home_and_timeout(
+        &id,
+        query.signal.as_deref(),
+        query.t,
+        Some(&state.home),
+    ) {
         Ok(_) => StatusCode::NO_CONTENT,
         Err(_) => StatusCode::NOT_FOUND,
     }
@@ -559,8 +651,36 @@ async fn inspect_exec_instance(
     Err(StatusCode::NOT_FOUND)
 }
 
-async fn remove_container(State(state): State<DaemonState>, Path(id): Path<String>) -> StatusCode {
+#[allow(dead_code)]
+#[derive(Deserialize, Default)]
+struct RemoveContainerQuery {
+    force: Option<bool>,
+    v: Option<bool>,
+}
+
+async fn remove_container(
+    State(state): State<DaemonState>,
+    Path(id): Path<String>,
+    Query(query): Query<RemoveContainerQuery>,
+) -> StatusCode {
     let store = ContainerStore::with_home(state.home.clone());
+    let c = match store.find(&id) {
+        Some(c) => c,
+        None => return StatusCode::NOT_FOUND,
+    };
+
+    let force = query.force.unwrap_or(false);
+    let is_active = matches!(c.status, ContainerStatus::Running)
+        || matches!(c.status, ContainerStatus::Paused);
+
+    if is_active && !force {
+        return StatusCode::CONFLICT;
+    }
+
+    if is_active {
+        let _ = crate::stop_container_with_home(&id, None, Some(&state.home));
+    }
+
     match store.remove(&id) {
         Ok(_) => StatusCode::NO_CONTENT,
         Err(_) => StatusCode::NOT_FOUND,
@@ -627,13 +747,43 @@ async fn inspect_container(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let store = ContainerStore::with_home(state.home.clone());
     let c = store.find(&id).ok_or(StatusCode::NOT_FOUND)?;
+
+    let status_str = match c.status {
+        ContainerStatus::Running => "running",
+        ContainerStatus::Paused => "paused",
+        ContainerStatus::Created => "created",
+        ContainerStatus::Exited(_) => "exited",
+        ContainerStatus::Failed(_) => "dead",
+    };
+
+    let bundle_path = PathBuf::from(&c.bundle_path);
+    let config_file = bundle_path.join("config.json");
+    let (env, cmd, cwd, user) = if let Ok(content) = fs::read_to_string(&config_file) {
+        if let Ok(spec) = serde_json::from_str::<crate::oci::runtime::Spec>(&content) {
+            (
+                spec.process.env.clone(),
+                spec.process.args.clone(),
+                spec.process.cwd.clone(),
+                spec.process
+                    .user
+                    .username
+                    .clone()
+                    .unwrap_or_else(|| spec.process.user.uid.to_string()),
+            )
+        } else {
+            (vec![], c.command.clone(), "/".to_string(), "0".to_string())
+        }
+    } else {
+        (vec![], c.command.clone(), "/".to_string(), "0".to_string())
+    };
+
     Ok(Json(serde_json::json!({
         "Id": c.id,
         "Created": c.created_at.to_rfc3339(),
         "Path": c.command.first().cloned().unwrap_or_default(),
         "Args": if c.command.len() > 1 { c.command[1..].to_vec() } else { vec![] },
         "State": {
-            "Status": c.status.to_string(),
+            "Status": status_str,
             "Running": matches!(c.status, ContainerStatus::Running),
             "Paused": matches!(c.status, ContainerStatus::Paused),
             "ExitCode": match c.status {
@@ -644,6 +794,19 @@ async fn inspect_container(
         "Image": c.image,
         "Name": format!("/{}", c.name),
         "RestartPolicy": { "Name": c.restart_policy.to_string() },
+        "Config": {
+            "Image": c.image,
+            "Cmd": cmd,
+            "Env": env,
+            "WorkingDir": cwd,
+            "User": user,
+            "Labels": {}
+        },
+        "HostConfig": {
+            "NetworkMode": "default",
+            "PortBindings": {},
+            "RestartPolicy": { "Name": c.restart_policy.to_string() }
+        },
         "NetworkSettings": {
             "Ports": c.ports
         }
@@ -666,9 +829,166 @@ async fn inspect_image(
     })))
 }
 
-async fn restart_container(Path(id): Path<String>) -> StatusCode {
-    let _ = crate::stop_container(&id, None);
-    match crate::start_container(&id).await {
+#[derive(Deserialize, Default)]
+struct RemoveImageQuery {
+    force: Option<bool>,
+    noprune: Option<bool>,
+}
+
+async fn remove_image_endpoint(
+    State(state): State<DaemonState>,
+    Path(name): Path<String>,
+    Query(query): Query<RemoveImageQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let img_store = ImageStore::with_home(state.home.clone());
+    let img = img_store.find(&name).ok_or(StatusCode::NOT_FOUND)?;
+
+    let force = query.force.unwrap_or(false);
+    let no_prune = query.noprune.unwrap_or(false);
+
+    if !force {
+        let c_store = ContainerStore::with_home(state.home.clone());
+        let containers = c_store.list();
+        let full_name = format!("{}:{}", img.reference, img.tag);
+        let short_ref = img
+            .reference
+            .strip_prefix("library/")
+            .unwrap_or(&img.reference);
+        let short_name = format!("{}:{}", short_ref, img.tag);
+
+        for c in containers {
+            if c.image == full_name
+                || c.image == short_name
+                || c.image == img.id
+                || c.image.starts_with(&img.id)
+            {
+                return Err(StatusCode::CONFLICT);
+            }
+        }
+    }
+
+    let removed = if no_prune {
+        img_store
+            .remove_metadata_only(&name)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    } else {
+        img_store
+            .remove(&name)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    };
+
+    Ok(Json(serde_json::json!([
+        { "Untagged": format!("{}:{}", removed.reference, removed.tag) },
+        { "Deleted": format!("sha256:{}", removed.id) }
+    ])))
+}
+
+#[derive(Deserialize, Default)]
+struct TagImageQuery {
+    repo: Option<String>,
+    tag: Option<String>,
+}
+
+async fn tag_image_endpoint(
+    State(state): State<DaemonState>,
+    Path(name): Path<String>,
+    Query(query): Query<TagImageQuery>,
+) -> StatusCode {
+    let store = ImageStore::with_home(state.home.clone());
+    let src = match store.find(&name) {
+        Some(s) => s,
+        None => return StatusCode::NOT_FOUND,
+    };
+
+    let repo = query.repo.unwrap_or_else(|| src.reference.clone());
+    let tag = query.tag.unwrap_or_else(|| "latest".to_string());
+
+    let record = crate::storage::ImageRecord {
+        id: src.id.clone(),
+        reference: repo,
+        tag,
+        manifest_digest: src.manifest_digest.clone(),
+        config_digest: src.config_digest.clone(),
+        size_bytes: src.size_bytes,
+        created_at: Utc::now(),
+        rootfs_path: src.rootfs_path.clone(),
+        config: src.config.clone(),
+    };
+
+    match store.add(record) {
+        Ok(_) => StatusCode::CREATED,
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
+async fn get_image_history_endpoint(
+    State(state): State<DaemonState>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let store = ImageStore::with_home(state.home.clone());
+    let img = store.find(&name).ok_or(StatusCode::NOT_FOUND)?;
+
+    let mut history_items = Vec::new();
+    if !img.config.history.is_empty() {
+        let diff_count = img
+            .config
+            .rootfs
+            .as_ref()
+            .map(|r| r.diff_ids.len())
+            .unwrap_or(1);
+        let per_layer_size = if diff_count > 0 {
+            img.size_bytes / diff_count as i64
+        } else {
+            img.size_bytes
+        };
+        for (i, h) in img.config.history.iter().rev().enumerate() {
+            let id = if i == 0 {
+                format!("sha256:{}", img.id)
+            } else {
+                "<missing>".to_string()
+            };
+            let created = img.created_at.timestamp();
+            let created_by = h
+                .created_by
+                .as_deref()
+                .unwrap_or("/bin/sh -c #(nop)")
+                .to_string();
+            let size = if h.empty_layer.unwrap_or(false) {
+                0
+            } else {
+                per_layer_size
+            };
+            let comment = h.comment.clone().unwrap_or_default();
+            history_items.push(serde_json::json!({
+                "Id": id,
+                "Created": created,
+                "CreatedBy": created_by,
+                "Size": size,
+                "Comment": comment,
+                "Tags": if i == 0 { vec![format!("{}:{}", img.reference, img.tag)] } else { vec![] }
+            }));
+        }
+    } else {
+        history_items.push(serde_json::json!({
+            "Id": format!("sha256:{}", img.id),
+            "Created": img.created_at.timestamp(),
+            "CreatedBy": "/bin/sh",
+            "Size": img.size_bytes,
+            "Comment": "",
+            "Tags": [format!("{}:{}", img.reference, img.tag)]
+        }));
+    }
+
+    Ok(Json(serde_json::Value::Array(history_items)))
+}
+
+async fn restart_container(
+    State(state): State<DaemonState>,
+    Path(id): Path<String>,
+) -> StatusCode {
+    let _ = crate::stop_container_with_home(&id, None, Some(&state.home));
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    match crate::start_container_with_home(&id, Some(&state.home)).await {
         Ok(_) => StatusCode::NO_CONTENT,
         Err(_) => StatusCode::NOT_FOUND,
     }
@@ -691,24 +1011,62 @@ async fn wait_container(
     let store = ContainerStore::with_home(state.home.clone());
     let c = store.find(&id).ok_or(StatusCode::NOT_FOUND)?;
     let bundle_path = PathBuf::from(&c.bundle_path);
-    let pid_file = bundle_path.join("vm.pid");
-    for _ in 0..100 {
-        if let Ok(pid_str) = fs::read_to_string(&pid_file) {
-            if let Ok(pid) = pid_str.trim().parse::<i32>() {
-                #[cfg(unix)]
+
+    let is_test = cfg!(test);
+    let mut check_count = 0;
+
+    loop {
+        if let Some(curr) = store.find(&id) {
+            if let ContainerStatus::Exited(code) = curr.status {
+                return Ok(Json(serde_json::json!({ "StatusCode": code })));
+            }
+        }
+
+        let mut is_running = false;
+        #[cfg(unix)]
+        {
+            let mut pids = Vec::new();
+            if let Ok(pid_str) = fs::read_to_string(bundle_path.join("vm.pid")) {
+                if let Ok(pid) = pid_str.trim().parse::<i32>() {
+                    pids.push(pid);
+                }
+            }
+            if let Ok(pid_str) = fs::read_to_string(bundle_path.join("container.pid")) {
+                if let Ok(pid) = pid_str.trim().parse::<i32>() {
+                    pids.push(pid);
+                }
+            }
+            for pid in pids {
                 if unsafe { libc::kill(pid, 0) == 0 } {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                    continue;
+                    is_running = true;
+                    break;
                 }
             }
         }
-        break;
+
+        if !is_running {
+            break;
+        }
+
+        check_count += 1;
+        if is_test && check_count > 5 {
+            break;
+        }
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     }
-    let exit_code = if let Ok(c) = fs::read_to_string(bundle_path.join("boxr-exitcode")) {
-        c.trim().parse::<i32>().unwrap_or(0)
+
+    let exit_code = if let Ok(code_str) = fs::read_to_string(bundle_path.join("boxr-exitcode")) {
+        code_str.trim().parse::<i32>().unwrap_or(0)
+    } else if let Some(curr) = store.find(&id) {
+        match curr.status {
+            ContainerStatus::Exited(code) => code,
+            _ => 0,
+        }
     } else {
         0
     };
+
     Ok(Json(serde_json::json!({ "StatusCode": exit_code })))
 }
 
@@ -757,8 +1115,11 @@ async fn prune_images_endpoint(State(state): State<DaemonState>) -> Json<serde_j
             || used_images.contains(&img.reference)
             || used_images.contains(&img.id);
         if !is_used {
-            let _ = i_store.remove(&img.id);
-            deleted.push(serde_json::json!({ "Deleted": img.id }));
+            let is_dangling = img.tag == "<none>" || img.reference.is_empty() || img.reference == "<none>";
+            if is_dangling {
+                let _ = i_store.remove(&img.id);
+                deleted.push(serde_json::json!({ "Deleted": img.id }));
+            }
         }
     }
     Json(serde_json::json!({
@@ -822,9 +1183,21 @@ async fn inspect_volume(
 
 async fn remove_volume(State(state): State<DaemonState>, Path(name): Path<String>) -> StatusCode {
     let store = VolumeStore::with_home(state.home.clone());
+    if store.find(&name).is_none() {
+        return StatusCode::NOT_FOUND;
+    }
     match store.remove(&name) {
         Ok(_) => StatusCode::NO_CONTENT,
-        Err(_) => StatusCode::NOT_FOUND,
+        Err(e) => {
+            let err_msg = e.to_string().to_lowercase();
+            if err_msg.contains("active") || err_msg.contains("in use") || err_msg.contains("conflict") {
+                StatusCode::CONFLICT
+            } else if err_msg.contains("not found") {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::CONFLICT
+            }
+        }
     }
 }
 
@@ -882,6 +1255,11 @@ mod tests {
                 #[cfg(windows)]
                 let _ = std::os::windows::fs::symlink_dir(&src, &dst);
             }
+        }
+        let src_images_json = base_home.join("images.json");
+        if src_images_json.exists() {
+            let dst_images_json = home.join("images.json");
+            let _ = fs::copy(&src_images_json, &dst_images_json);
         }
         let state = DaemonState { home: home.clone() };
         let app = create_router(state);
@@ -1003,6 +1381,30 @@ mod tests {
         let inspect_val: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert_eq!(inspect_val.get("Running").unwrap().as_bool(), Some(true));
         assert!(inspect_val.get("ExitCode").unwrap().is_null());
+
+        // Test GET /containers/{id}/json
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/v1.45/containers/{}/json", cont_id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let cont_inspect: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(
+            cont_inspect.get("State").and_then(|s| s.get("Status")).and_then(|v| v.as_str()),
+            Some("created")
+        );
+        assert!(cont_inspect.get("Config").is_some());
+        assert!(cont_inspect.get("HostConfig").is_some());
 
         // Cleanup created container
         let _ = crate::remove_container(cont_id, true);

@@ -170,10 +170,13 @@ impl RegistryClient {
 
         let resp = self.client.get(&url).headers(headers).send().await?;
         if !resp.status().is_success() {
+            let status = resp.status();
+            let err_body = resp.text().await.unwrap_or_default();
             return Err(anyhow!(
-                "Failed to fetch manifest from {}: status {}",
+                "Failed to fetch manifest from {}: status {} - {}",
                 url,
-                resp.status()
+                status,
+                err_body
             ));
         }
 

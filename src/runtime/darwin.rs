@@ -236,26 +236,49 @@ pub fn execute_bundle(
     run_script.push_str("ln -s /proc/self/fd/1 /dev/stdout 2>/dev/null || true\n");
     run_script.push_str("ln -s /proc/self/fd/2 /dev/stderr 2>/dev/null || true\n");
     run_script.push_str("ip link set lo up 2>/dev/null || ifconfig lo up 2>/dev/null || true\n");
+    let mut dns_str = String::new();
     let dns_file = bundle_path.join("dns.json");
     if dns_file.exists() {
         if let Ok(content) = fs::read_to_string(&dns_file) {
             if let Ok(dns_servers) = serde_json::from_str::<Vec<String>>(&content) {
-                let mut dns_str = String::new();
                 for server in dns_servers {
                     dns_str.push_str(&format!("nameserver {}\\n", server.trim()));
                 }
-                run_script.push_str(&format!(
-                    "printf '{}' > /etc/resolv.conf 2>/dev/null || true\n",
-                    dns_str
-                ));
-            } else {
-                run_script.push_str("printf 'nameserver 192.168.64.1\\nnameserver 1.1.1.1\\nnameserver 8.8.8.8\\n' > /etc/resolv.conf 2>/dev/null || true\n");
             }
-        } else {
-            run_script.push_str("printf 'nameserver 192.168.64.1\\nnameserver 1.1.1.1\\nnameserver 8.8.8.8\\n' > /etc/resolv.conf 2>/dev/null || true\n");
         }
-    } else {
-        run_script.push_str("printf 'nameserver 192.168.64.1\\nnameserver 1.1.1.1\\nnameserver 8.8.8.8\\n' > /etc/resolv.conf 2>/dev/null || true\n");
+    }
+    let dns_search_file = bundle_path.join("dns_search.json");
+    if dns_search_file.exists() {
+        if let Ok(content) = fs::read_to_string(&dns_search_file) {
+            if let Ok(domains) = serde_json::from_str::<Vec<String>>(&content) {
+                if !domains.is_empty() {
+                    dns_str.push_str(&format!("search {}\\n", domains.join(" ")));
+                }
+            }
+        }
+    }
+    let dns_opt_file = bundle_path.join("dns_option.json");
+    if dns_opt_file.exists() {
+        if let Ok(content) = fs::read_to_string(&dns_opt_file) {
+            if let Ok(opts) = serde_json::from_str::<Vec<String>>(&content) {
+                if !opts.is_empty() {
+                    dns_str.push_str(&format!("options {}\\n", opts.join(" ")));
+                }
+            }
+        }
+    }
+    if let Some(domain) = &spec.domainname {
+        dns_str.push_str(&format!("domain {}\\n", domain));
+    }
+    if dns_str.is_empty() {
+        dns_str = "nameserver 192.168.64.1\\nnameserver 1.1.1.1\\nnameserver 8.8.8.8\\n".to_string();
+    }
+    run_script.push_str(&format!(
+        "printf '{}' > /etc/resolv.conf 2>/dev/null || true\n",
+        dns_str
+    ));
+    if let Some(umask_val) = spec.process.umask {
+        run_script.push_str(&format!("umask {:04o} 2>/dev/null || true\n", umask_val));
     }
     run_script.push_str("mkdir -p /tmp /run 2>/dev/null; chmod 1777 /tmp 2>/dev/null || true\n");
     run_script

@@ -186,20 +186,13 @@ pub async fn run_cli(cli: Cli) -> Result<i32> {
             Ok(0)
         }
         Commands::Save(args) => {
-            let output_path = args.output.map(PathBuf::from).unwrap_or_else(|| {
-                PathBuf::from(format!(
-                    "{}.tar",
-                    args.image.replace('/', "_").replace(':', "_")
-                ))
-            });
-            auth::ImageArchiver::save(&args.image, &output_path)?;
+            let output_path = args.output.map(PathBuf::from);
+            auth::ImageArchiver::save(&args.image, output_path.as_deref())?;
             Ok(0)
         }
         Commands::Load(args) => {
-            let input_path = args.input.map(PathBuf::from).ok_or_else(|| {
-                anyhow::anyhow!("Input tar archive (-i/--input) is required for load")
-            })?;
-            auth::ImageArchiver::load(&input_path)?;
+            let input_path = args.input.map(PathBuf::from);
+            auth::ImageArchiver::load(input_path.as_deref())?;
             Ok(0)
         }
         Commands::Push(args) => {
@@ -354,7 +347,7 @@ pub async fn run_cli(cli: Cli) -> Result<i32> {
             }
             cli::ImageAction::Rm(rmi_args) => {
                 for img in &rmi_args.images {
-                    remove_image(img, rmi_args.force)?;
+                    remove_image(img, rmi_args.force, rmi_args.no_prune)?;
                 }
                 Ok(0)
             }
@@ -367,20 +360,13 @@ pub async fn run_cli(cli: Cli) -> Result<i32> {
                 Ok(0)
             }
             cli::ImageAction::Save(save_args) => {
-                let output_path = save_args.output.map(PathBuf::from).unwrap_or_else(|| {
-                    PathBuf::from(format!(
-                        "{}.tar",
-                        save_args.image.replace('/', "_").replace(':', "_")
-                    ))
-                });
-                auth::ImageArchiver::save(&save_args.image, &output_path)?;
+                let output_path = save_args.output.map(PathBuf::from);
+                auth::ImageArchiver::save(&save_args.image, output_path.as_deref())?;
                 Ok(0)
             }
             cli::ImageAction::Load(load_args) => {
-                let input_path = load_args.input.map(PathBuf::from).ok_or_else(|| {
-                    anyhow::anyhow!("Input tar archive (-i/--input) is required for load")
-                })?;
-                auth::ImageArchiver::load(&input_path)?;
+                let input_path = load_args.input.map(PathBuf::from);
+                auth::ImageArchiver::load(input_path.as_deref())?;
                 Ok(0)
             }
             cli::ImageAction::Import(import_args) => {
@@ -477,7 +463,7 @@ pub async fn run_cli(cli: Cli) -> Result<i32> {
             Ok(0)
         }
         Commands::Pod(args) => {
-            handle_pod(args)?;
+            handle_pod(args).await?;
             Ok(0)
         }
         Commands::Play(args) => {
@@ -512,13 +498,13 @@ pub async fn run_cli(cli: Cli) -> Result<i32> {
         }
         Commands::Rm(args) => {
             for c in &args.containers {
-                remove_container(c, args.force)?;
+                remove_container_opts(c, args.force, args.volumes)?;
             }
             Ok(0)
         }
         Commands::Rmi(args) => {
             for img in &args.images {
-                remove_image(img, args.force)?;
+                remove_image(img, args.force, args.no_prune)?;
             }
             Ok(0)
         }
@@ -791,6 +777,9 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
     if let Some(mem_str) = &args.memory {
         limits.memory_max_bytes = cgroups::ResourceLimits::parse_memory(mem_str).ok();
     }
+    if let Some(res_str) = &args.memory_reservation {
+        limits.memory_reservation_bytes = cgroups::ResourceLimits::parse_memory(res_str).ok();
+    }
     if let Some(cpus_str) = &args.cpus {
         if let Ok((quota, period)) = cgroups::ResourceLimits::parse_cpus(cpus_str) {
             limits.cpu_quota_us = Some(quota);
@@ -798,9 +787,11 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
         }
     }
     limits.cpu_shares = args.cpu_shares;
+    limits.cpuset_cpus = args.cpuset_cpus.clone();
     if let Some(swap_str) = &args.memory_swap {
         limits.memory_swap_max_bytes = cgroups::ResourceLimits::parse_memory(swap_str).ok();
     }
+    limits.memory_swappiness = args.memory_swappiness.map(|s| s as u64);
     limits.pids_max = args.pids_limit;
 
     if let Ok(cgroup_mgr) = cgroups::CgroupV2Manager::new(&container_id) {
@@ -903,6 +894,48 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
     if let Some(c) = &args.cpus {
         annotations.insert("boxr.cpus".to_string(), c.clone());
     }
+    if let Some(cpuset) = &args.cpuset_cpus {
+        annotations.insert("boxr.cpuset_cpus".to_string(), cpuset.clone());
+    }
+    if let Some(mres) = limits.memory_reservation_bytes {
+        annotations.insert("boxr.memory_reservation".to_string(), mres.to_string());
+    }
+    if let Some(swappiness) = args.memory_swappiness {
+        annotations.insert("boxr.memory_swappiness".to_string(), swappiness.to_string());
+    }
+    if args.oom_kill_disable {
+        annotations.insert("boxr.oom_kill_disable".to_string(), "true".to_string());
+    }
+    if let Some(adj) = args.oom_score_adj {
+        annotations.insert("boxr.oom_score_adj".to_string(), adj.to_string());
+    }
+    if !args.group_add.is_empty() {
+        let mut gids = Vec::new();
+        for g in &args.group_add {
+            if let Ok(gid) = g.parse::<u32>() {
+                gids.push(gid);
+            }
+        }
+        if !gids.is_empty() {
+            spec.process.user.additional_gids = Some(gids);
+        }
+        annotations.insert("boxr.group_add".to_string(), serde_json::to_string(&args.group_add)?);
+    }
+    if let Some(umask_str) = &args.umask {
+        let u = if let Some(stripped) = umask_str.strip_prefix("0o") {
+            u32::from_str_radix(stripped, 8).unwrap_or(0o022)
+        } else if umask_str.starts_with('0') && umask_str.len() > 1 {
+            u32::from_str_radix(umask_str, 8).unwrap_or(0o022)
+        } else {
+            umask_str.parse::<u32>().unwrap_or(0o022)
+        };
+        spec.process.umask = Some(u);
+        annotations.insert("boxr.umask".to_string(), umask_str.clone());
+    }
+    if let Some(domain) = &args.domainname {
+        spec.domainname = Some(domain.clone());
+        annotations.insert("boxr.domainname".to_string(), domain.clone());
+    }
     for ann in &args.annotations {
         if let Some((k, v)) = ann.split_once('=') {
             annotations.insert(k.to_string(), v.to_string());
@@ -935,6 +968,14 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
         let dns_json = serde_json::to_string(&args.dns)?;
         let _ = fs::write(bundle_dir.join("dns.json"), dns_json);
     }
+    if !args.dns_search.is_empty() {
+        let search_json = serde_json::to_string(&args.dns_search)?;
+        let _ = fs::write(bundle_dir.join("dns_search.json"), search_json);
+    }
+    if !args.dns_option.is_empty() {
+        let opt_json = serde_json::to_string(&args.dns_option)?;
+        let _ = fs::write(bundle_dir.join("dns_option.json"), opt_json);
+    }
     if !args.labels.is_empty() {
         let labels_json = serde_json::to_string(&args.labels)?;
         let _ = fs::write(bundle_dir.join("labels.json"), labels_json);
@@ -953,6 +994,38 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
     }
     if let Some(cidfile) = &args.cidfile {
         fs::write(cidfile, &container_id)?;
+    }
+    for vf in &args.volumes_from {
+        let (target_cont_name, mode) = if let Some((c, m)) = vf.split_once(':') {
+            (c, Some(m))
+        } else {
+            (vf.as_str(), None)
+        };
+        let c_lookup = ContainerStore::new();
+        if let Some(src_cont) = c_lookup.find(target_cont_name) {
+            let src_config_path = PathBuf::from(&src_cont.bundle_path).join("config.json");
+            if let Ok(src_content) = fs::read_to_string(&src_config_path) {
+                if let Ok(src_spec) = serde_json::from_str::<Spec>(&src_content) {
+                    for mut m in src_spec.mounts {
+                        if m.destination != "/proc"
+                            && m.destination != "/sys"
+                            && m.destination != "/dev"
+                            && m.destination != "/dev/pts"
+                            && m.destination != "/dev/shm"
+                            && m.destination != "/dev/mqueue"
+                        {
+                            if mode == Some("ro") {
+                                let mut opts = m.options.unwrap_or_default();
+                                opts.retain(|o| o != "rw");
+                                opts.push("ro".to_string());
+                                m.options = Some(opts);
+                            }
+                            spec.mounts.push(m);
+                        }
+                    }
+                }
+            }
+        }
     }
     for t in &args.tmpfs {
         let (dest, opts) = if let Some((d, o)) = t.split_once(':') {
@@ -1086,6 +1159,7 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
         health_status: initial_health,
         restart_count: 0,
         ports: parsed_ports.clone(),
+        exposed_ports: args.expose.clone(),
     };
 
     let mut event_attrs = HashMap::new();
@@ -1231,6 +1305,15 @@ pub fn stop_container_with_home(
     signal: Option<&str>,
     home_opt: Option<&Path>,
 ) -> Result<()> {
+    stop_container_with_home_and_timeout(container, signal, None, home_opt)
+}
+
+pub fn stop_container_with_home_and_timeout(
+    container: &str,
+    signal: Option<&str>,
+    timeout_secs: Option<u64>,
+    home_opt: Option<&Path>,
+) -> Result<()> {
     let store = match home_opt {
         Some(h) => ContainerStore::with_home(h.to_path_buf()),
         None => ContainerStore::new(),
@@ -1259,13 +1342,15 @@ pub fn stop_container_with_home(
                 pids.push(pid);
             }
         }
+        let grace_ms = timeout_secs.unwrap_or(3) * 1000;
+        let iters = (grace_ms / 50).max(1);
         for pid in pids {
             unsafe {
                 libc::kill(pid, sig_num);
                 let _ = libc::kill(-pid, sig_num);
             }
-            // Wait up to 3.0 seconds (60 * 50ms) for graceful hypervisor/process stop
-            for _ in 0..60 {
+            // Wait up to graceful timeout for hypervisor/process stop
+            for _ in 0..iters {
                 std::thread::sleep(std::time::Duration::from_millis(50));
                 if unsafe { libc::kill(pid, 0) != 0 } {
                     break;
@@ -1392,7 +1477,9 @@ pub fn container_logs(args: &LogsArgs) -> Result<()> {
     }
 
     if let Some(tail) = args.tail {
-        if lines.len() > tail {
+        if tail == 0 {
+            lines.clear();
+        } else if lines.len() > tail {
             lines = lines[lines.len() - tail..].to_vec();
         }
     }
@@ -1505,6 +1592,11 @@ pub fn inspect_target(args: &cli::InspectArgs) -> Result<()> {
             } else {
                 0
             };
+            let mut exposed_map = HashMap::new();
+            for ep in &c.exposed_ports {
+                let key = if ep.contains('/') { ep.clone() } else { format!("{}/tcp", ep) };
+                exposed_map.insert(key, serde_json::json!({}));
+            }
             let docker_compat_inspect = serde_json::json!([{
                 "Id": c.id,
                 "Created": c.created_at.to_rfc3339(),
@@ -1533,6 +1625,7 @@ pub fn inspect_target(args: &cli::InspectArgs) -> Result<()> {
                 "Config": {
                     "Image": c.image,
                     "Labels": labels_map,
+                    "ExposedPorts": exposed_map,
                 },
                 "HostConfig": {
                     "PortBindings": {},
@@ -1631,6 +1724,10 @@ pub fn top_container(args: &TopArgs) -> Result<()> {
         .find(&args.container)
         .ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
 
+    if !matches!(cont.status, ContainerStatus::Running) {
+        return Err(anyhow!("Container {} is not running", args.container));
+    }
+
     let bundle_path = PathBuf::from(&cont.bundle_path);
     runtime::top::ContainerTop::list_processes(&bundle_path, &args.ps_args)?;
     Ok(())
@@ -1642,13 +1739,28 @@ pub fn commit_container(args: &cli::CommitArgs) -> Result<()> {
         .find(&args.container)
         .ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
 
+    let was_running = matches!(cont.status, ContainerStatus::Running);
+    if was_running && args.pause {
+        if let Ok(cgroup_mgr) = cgroups::CgroupV2Manager::new(&cont.id) {
+            let _ = cgroup_mgr.freeze();
+        }
+    }
+
     let i_store = ImageStore::new();
     let record = i_store.commit_container(
         &cont,
         args.repo_tag.as_deref(),
         args.message.as_deref(),
         args.author.as_deref(),
-    )?;
+    );
+
+    if was_running && args.pause {
+        if let Ok(cgroup_mgr) = cgroups::CgroupV2Manager::new(&cont.id) {
+            let _ = cgroup_mgr.unfreeze();
+        }
+    }
+
+    let record = record?;
 
     let mut attrs = HashMap::new();
     attrs.insert(
@@ -1672,6 +1784,10 @@ pub fn pause_container(args: &cli::PauseArgs) -> Result<()> {
     let cont = c_store
         .find(&args.container)
         .ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
+
+    if !matches!(cont.status, ContainerStatus::Running) {
+        return Err(anyhow!("Container {} is not running", args.container));
+    }
 
     if let Ok(cgroup_mgr) = cgroups::CgroupV2Manager::new(&cont.id) {
         let _ = cgroup_mgr.freeze();
@@ -1697,6 +1813,10 @@ pub fn unpause_container(args: &cli::UnpauseArgs) -> Result<()> {
     let cont = c_store
         .find(&args.container)
         .ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
+
+    if !matches!(cont.status, ContainerStatus::Paused) {
+        return Err(anyhow!("Container {} is not paused", args.container));
+    }
 
     if let Ok(cgroup_mgr) = cgroups::CgroupV2Manager::new(&cont.id) {
         let _ = cgroup_mgr.unfreeze();
@@ -1776,9 +1896,9 @@ pub fn wait_container(args: &cli::WaitArgs) -> Result<i32> {
                         false
                     };
                     if !is_running {
-                        let _ = c_store.update_status(&cont.id, ContainerStatus::Exited(0));
-                        println!("0");
-                        return Ok(0);
+                        let _ = c_store.update_status(&cont.id, ContainerStatus::Exited(137));
+                        println!("137");
+                        return Ok(137);
                     }
                 }
                 #[cfg(target_os = "windows")]
@@ -1801,9 +1921,9 @@ pub fn wait_container(args: &cli::WaitArgs) -> Result<i32> {
                         false
                     };
                     if !is_running {
-                        let _ = c_store.update_status(&cont.id, ContainerStatus::Exited(0));
-                        println!("0");
-                        return Ok(0);
+                        let _ = c_store.update_status(&cont.id, ContainerStatus::Exited(137));
+                        println!("137");
+                        return Ok(137);
                     }
                 }
                 std::thread::sleep(std::time::Duration::from_millis(200));
@@ -1846,6 +1966,28 @@ pub fn update_container(args: &cli::UpdateArgs) -> Result<()> {
 
     if let Ok(cgroup_mgr) = cgroups::CgroupV2Manager::new(&cont.id) {
         cgroup_mgr.apply_limits(&limits)?;
+    }
+
+    // Persist updated limits in bundle config.json
+    let bundle_path = PathBuf::from(&cont.bundle_path);
+    let config_path = bundle_path.join("config.json");
+    if let Ok(content) = fs::read_to_string(&config_path) {
+        if let Ok(mut spec) = serde_json::from_str::<Spec>(&content) {
+            if let Some(l) = &mut spec.linux {
+                if let Some(res) = &mut l.resources {
+                    if let Some(m) = limits.memory_max_bytes {
+                        res.memory = Some(oci::runtime::LinuxMemory {
+                            limit: Some(m),
+                            ..Default::default()
+                        });
+                    }
+                    if let Some(p) = limits.pids_max {
+                        res.pids = Some(oci::runtime::LinuxPids { limit: p });
+                    }
+                }
+            }
+            let _ = spec.save_to_bundle(&bundle_path);
+        }
     }
 
     if let Some(r_policy_str) = &args.restart {
@@ -1899,7 +2041,6 @@ pub fn attach_container(args: &cli::AttachArgs) -> Result<()> {
         None
     };
 
-    let mut idle_ticks = 0;
     loop {
         // Check if container has exited
         #[cfg(unix)]
@@ -1936,14 +2077,7 @@ pub fn attach_container(args: &cli::AttachArgs) -> Result<()> {
                 file.read_to_end(&mut buf)?;
                 print!("{}", String::from_utf8_lossy(&buf));
                 pos = new_len;
-                idle_ticks = 0;
-            } else {
-                idle_ticks += 1;
             }
-        }
-
-        if args.no_stdin && idle_ticks > 5 {
-            break;
         }
 
         std::thread::sleep(std::time::Duration::from_millis(200));
@@ -2426,20 +2560,46 @@ pub fn list_containers(args: PsArgs) -> Result<()> {
 }
 
 pub fn remove_container(container: &str, force: bool) -> Result<()> {
+    remove_container_opts(container, force, false)
+}
+
+pub fn remove_container_opts(container: &str, force: bool, remove_volumes: bool) -> Result<()> {
     let store = ContainerStore::new();
     let c = store
         .find(container)
         .ok_or_else(|| anyhow!("Container '{}' not found", container))?;
 
-    if matches!(c.status, ContainerStatus::Running) && !force {
+    let is_active = matches!(c.status, ContainerStatus::Running) || matches!(c.status, ContainerStatus::Paused);
+    if is_active && !force {
         return Err(anyhow!(
-            "Conflict. You cannot remove a running container {}. Stop the container before attempting removal or force remove",
+            "Conflict. You cannot remove a running or paused container {}. Stop the container before attempting removal or force remove",
             c.id
         ));
     }
 
-    if matches!(c.status, ContainerStatus::Running) {
+    if is_active {
         let _ = stop_container(container, None);
+    }
+
+    if remove_volumes {
+        let bundle_path = PathBuf::from(&c.bundle_path);
+        let config_file = bundle_path.join("config.json");
+        if let Ok(content) = fs::read_to_string(&config_file) {
+            if let Ok(spec) = serde_json::from_str::<Spec>(&content) {
+                let v_store = VolumeStore::new();
+                for m in spec.mounts {
+                    let m_src = m.source;
+                    for v in v_store.list() {
+                        if m_src.contains(&format!("volumes/{}/_data", v.name))
+                            || m_src.contains(&format!("volumes/{}", v.name))
+                            || m_src == v.name
+                        {
+                            let _ = v_store.remove_with_force(&v.name, true);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     let removed = store.remove(container)?;
@@ -2448,7 +2608,7 @@ pub fn remove_container(container: &str, force: bool) -> Result<()> {
     Ok(())
 }
 
-pub fn remove_image(image: &str, force: bool) -> Result<()> {
+pub fn remove_image(image: &str, force: bool, no_prune: bool) -> Result<()> {
     let img_store = ImageStore::new();
     let img = img_store
         .find(image)
@@ -2480,7 +2640,11 @@ pub fn remove_image(image: &str, force: bool) -> Result<()> {
         }
     }
 
-    let removed = img_store.remove(image)?;
+    let removed = if no_prune {
+        img_store.remove_metadata_only(image)?
+    } else {
+        img_store.remove(image)?
+    };
     println!("Untagged: {}:{}", removed.reference, removed.tag);
     println!("Deleted: {}", removed.id);
     Ok(())
@@ -2668,6 +2832,9 @@ pub async fn create_only_container_with_home(
     if let Some(mem_str) = &args.memory {
         limits.memory_max_bytes = cgroups::ResourceLimits::parse_memory(mem_str).ok();
     }
+    if let Some(res_str) = &args.memory_reservation {
+        limits.memory_reservation_bytes = cgroups::ResourceLimits::parse_memory(res_str).ok();
+    }
     if let Some(cpus_str) = &args.cpus {
         if let Ok((quota, period)) = cgroups::ResourceLimits::parse_cpus(cpus_str) {
             limits.cpu_quota_us = Some(quota);
@@ -2675,9 +2842,11 @@ pub async fn create_only_container_with_home(
         }
     }
     limits.cpu_shares = args.cpu_shares;
+    limits.cpuset_cpus = args.cpuset_cpus.clone();
     if let Some(swap_str) = &args.memory_swap {
         limits.memory_swap_max_bytes = cgroups::ResourceLimits::parse_memory(swap_str).ok();
     }
+    limits.memory_swappiness = args.memory_swappiness.map(|s| s as u64);
     limits.pids_max = args.pids_limit;
     if let Ok(cgroup_mgr) = cgroups::CgroupV2Manager::new(&container_id) {
         let _ = cgroup_mgr.apply_limits(&limits);
@@ -2703,6 +2872,48 @@ pub async fn create_only_container_with_home(
     if let Some(c) = &args.cpus {
         annotations.insert("boxr.cpus".to_string(), c.clone());
     }
+    if let Some(cpuset) = &args.cpuset_cpus {
+        annotations.insert("boxr.cpuset_cpus".to_string(), cpuset.clone());
+    }
+    if let Some(mres) = limits.memory_reservation_bytes {
+        annotations.insert("boxr.memory_reservation".to_string(), mres.to_string());
+    }
+    if let Some(swappiness) = args.memory_swappiness {
+        annotations.insert("boxr.memory_swappiness".to_string(), swappiness.to_string());
+    }
+    if args.oom_kill_disable {
+        annotations.insert("boxr.oom_kill_disable".to_string(), "true".to_string());
+    }
+    if let Some(adj) = args.oom_score_adj {
+        annotations.insert("boxr.oom_score_adj".to_string(), adj.to_string());
+    }
+    if !args.group_add.is_empty() {
+        let mut gids = Vec::new();
+        for g in &args.group_add {
+            if let Ok(gid) = g.parse::<u32>() {
+                gids.push(gid);
+            }
+        }
+        if !gids.is_empty() {
+            spec.process.user.additional_gids = Some(gids);
+        }
+        annotations.insert("boxr.group_add".to_string(), serde_json::to_string(&args.group_add)?);
+    }
+    if let Some(umask_str) = &args.umask {
+        let u = if let Some(stripped) = umask_str.strip_prefix("0o") {
+            u32::from_str_radix(stripped, 8).unwrap_or(0o022)
+        } else if umask_str.starts_with('0') && umask_str.len() > 1 {
+            u32::from_str_radix(umask_str, 8).unwrap_or(0o022)
+        } else {
+            umask_str.parse::<u32>().unwrap_or(0o022)
+        };
+        spec.process.umask = Some(u);
+        annotations.insert("boxr.umask".to_string(), umask_str.clone());
+    }
+    if let Some(domain) = &args.domainname {
+        spec.domainname = Some(domain.clone());
+        annotations.insert("boxr.domainname".to_string(), domain.clone());
+    }
     for ann in &args.annotations {
         if let Some((k, v)) = ann.split_once('=') {
             annotations.insert(k.to_string(), v.to_string());
@@ -2715,7 +2926,7 @@ pub async fn create_only_container_with_home(
         annotations.insert("boxr.stop_signal".to_string(), sig.clone());
     }
     annotations.insert("boxr.network".to_string(), args.network.clone());
-    spec.annotations = Some(annotations);
+    spec.annotations = Some(annotations.clone());
 
     if !args.add_host.is_empty() {
         let hosts_json = serde_json::to_string(&args.add_host)?;
@@ -2724,6 +2935,14 @@ pub async fn create_only_container_with_home(
     if !args.dns.is_empty() {
         let dns_json = serde_json::to_string(&args.dns)?;
         let _ = fs::write(bundle_dir.join("dns.json"), dns_json);
+    }
+    if !args.dns_search.is_empty() {
+        let search_json = serde_json::to_string(&args.dns_search)?;
+        let _ = fs::write(bundle_dir.join("dns_search.json"), search_json);
+    }
+    if !args.dns_option.is_empty() {
+        let opt_json = serde_json::to_string(&args.dns_option)?;
+        let _ = fs::write(bundle_dir.join("dns_option.json"), opt_json);
     }
     if !args.labels.is_empty() {
         let labels_json = serde_json::to_string(&args.labels)?;
@@ -2743,6 +2962,41 @@ pub async fn create_only_container_with_home(
     }
     if let Some(cidfile) = &args.cidfile {
         fs::write(cidfile, &container_id)?;
+    }
+    for vf in &args.volumes_from {
+        let (target_cont_name, mode) = if let Some((c, m)) = vf.split_once(':') {
+            (c, Some(m))
+        } else {
+            (vf.as_str(), None)
+        };
+        let c_lookup = match home_opt {
+            Some(h) => ContainerStore::with_home(h.to_path_buf()),
+            None => ContainerStore::new(),
+        };
+        if let Some(src_cont) = c_lookup.find(target_cont_name) {
+            let src_config_path = PathBuf::from(&src_cont.bundle_path).join("config.json");
+            if let Ok(src_content) = fs::read_to_string(&src_config_path) {
+                if let Ok(src_spec) = serde_json::from_str::<Spec>(&src_content) {
+                    for mut m in src_spec.mounts {
+                        if m.destination != "/proc"
+                            && m.destination != "/sys"
+                            && m.destination != "/dev"
+                            && m.destination != "/dev/pts"
+                            && m.destination != "/dev/shm"
+                            && m.destination != "/dev/mqueue"
+                        {
+                            if mode == Some("ro") {
+                                let mut opts = m.options.unwrap_or_default();
+                                opts.retain(|o| o != "rw");
+                                opts.push("ro".to_string());
+                                m.options = Some(opts);
+                            }
+                            spec.mounts.push(m);
+                        }
+                    }
+                }
+            }
+        }
     }
     for t in &args.tmpfs {
         let (dest, opts) = if let Some((d, o)) = t.split_once(':') {
@@ -2785,6 +3039,112 @@ pub async fn create_only_container_with_home(
                 mount_type,
                 source,
                 options: Some(opts),
+            });
+        }
+    }
+    {
+        let l = spec.linux.get_or_insert_with(Default::default);
+        let res = l.resources.get_or_insert_with(Default::default);
+        if let Some(m) = limits.memory_max_bytes {
+            let mem = res.memory.get_or_insert_with(Default::default);
+            mem.limit = Some(m);
+        }
+        if let Some(mres) = limits.memory_reservation_bytes {
+            let mem = res.memory.get_or_insert_with(Default::default);
+            mem.reservation = Some(mres);
+        }
+        if let Some(mswap) = limits.memory_swap_max_bytes {
+            let mem = res.memory.get_or_insert_with(Default::default);
+            mem.swap = Some(mswap);
+        }
+        if let Some(swappiness) = limits.memory_swappiness {
+            let mem = res.memory.get_or_insert_with(Default::default);
+            mem.swappiness = Some(swappiness);
+        }
+        if args.oom_kill_disable {
+            let mem = res.memory.get_or_insert_with(Default::default);
+            mem.disable_oom_killer = Some(true);
+        }
+        if let Some(adj) = args.oom_score_adj {
+            spec.process.oom_score_adj = Some(adj);
+            res.oom_score_adj = Some(adj);
+        }
+        if limits.cpu_shares.is_some() || limits.cpu_quota_us.is_some() || limits.cpuset_cpus.is_some() {
+            let cpu = res.cpu.get_or_insert_with(Default::default);
+            cpu.shares = limits.cpu_shares;
+            cpu.quota = limits.cpu_quota_us;
+            cpu.period = limits.cpu_period_us;
+            cpu.cpus = limits.cpuset_cpus.clone();
+        }
+        if let Some(p) = limits.pids_max {
+            res.pids = Some(oci::runtime::LinuxPids { limit: p });
+        }
+        if let Some(cg_parent) = &args.cgroup_parent {
+            l.cgroup_parent = Some(cg_parent.clone());
+            annotations.insert("boxr.cgroup-parent".to_string(), cg_parent.clone());
+        }
+        if let Some(ipc) = &args.ipc {
+            annotations.insert("boxr.ipc".to_string(), ipc.clone());
+            if ipc == "host" {
+                l.namespaces.retain(|ns| ns.ns_type != "ipc");
+            } else if !ipc.is_empty() {
+                l.namespaces.push(oci::runtime::LinuxNamespace {
+                    ns_type: "ipc".to_string(),
+                    path: if ipc.starts_with('/') { Some(ipc.clone()) } else { None },
+                });
+            }
+        }
+        if let Some(uts) = &args.uts {
+            annotations.insert("boxr.uts".to_string(), uts.clone());
+            if uts == "host" {
+                l.namespaces.retain(|ns| ns.ns_type != "uts");
+            } else if !uts.is_empty() {
+                l.namespaces.push(oci::runtime::LinuxNamespace {
+                    ns_type: "uts".to_string(),
+                    path: if uts.starts_with('/') { Some(uts.clone()) } else { None },
+                });
+            }
+        }
+        if let Some(userns) = &args.userns {
+            annotations.insert("boxr.userns".to_string(), userns.clone());
+            if userns == "host" {
+                l.namespaces.retain(|ns| ns.ns_type != "user");
+            } else if !userns.is_empty() {
+                l.namespaces.push(oci::runtime::LinuxNamespace {
+                    ns_type: "user".to_string(),
+                    path: if userns.starts_with('/') { Some(userns.clone()) } else { None },
+                });
+            }
+        }
+        if let Some(cgroupns) = &args.cgroupns {
+            annotations.insert("boxr.cgroupns".to_string(), cgroupns.clone());
+            if cgroupns == "host" {
+                l.namespaces.retain(|ns| ns.ns_type != "cgroup");
+            } else if !cgroupns.is_empty() {
+                l.namespaces.push(oci::runtime::LinuxNamespace {
+                    ns_type: "cgroup".to_string(),
+                    path: if cgroupns.starts_with('/') { Some(cgroupns.clone()) } else { None },
+                });
+            }
+        }
+        for dev_str in &args.devices {
+            let parts: Vec<&str> = dev_str.split(':').collect();
+            let host_path = parts[0];
+            let cont_path = if parts.len() > 1 { parts[1] } else { host_path };
+            spec.mounts.push(oci::runtime::Mount {
+                destination: cont_path.to_string(),
+                mount_type: "bind".to_string(),
+                source: host_path.to_string(),
+                options: Some(vec!["rbind".to_string(), "rprivate".to_string()]),
+            });
+            l.devices.push(oci::runtime::LinuxDevice {
+                dev_type: "c".to_string(),
+                path: cont_path.to_string(),
+                major: None,
+                minor: None,
+                file_mode: Some(0o666),
+                uid: Some(0),
+                gid: Some(0),
             });
         }
     }
@@ -2872,6 +3232,7 @@ pub async fn create_only_container_with_home(
         health_status: initial_health,
         restart_count: 0,
         ports: parsed_ports,
+        exposed_ports: args.expose.clone(),
     };
 
     let mut event_attrs = HashMap::new();
@@ -2906,15 +3267,36 @@ pub fn port_container(args: &cli::PortArgs) -> Result<()> {
         .find(&args.container)
         .ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
 
+    let parsed_query = args.port.as_deref().and_then(|q| {
+        let (num_str, proto) = if let Some((n, pr)) = q.split_once('/') {
+            (n, Some(pr.to_lowercase()))
+        } else {
+            (q, None)
+        };
+        num_str.parse::<u16>().ok().map(|p| (p, proto))
+    });
+
     for p in &cont.ports {
-        let entry = format!("{}/{}", p.container_port, p.protocol);
-        if let Some(query_port) = &args.port {
-            if !query_port.contains(&p.container_port.to_string()) {
+        if let Some((q_port, ref q_proto)) = parsed_query {
+            if p.container_port != q_port {
                 continue;
             }
+            if let Some(proto) = q_proto {
+                if !p.protocol.eq_ignore_ascii_case(proto) {
+                    continue;
+                }
+            }
+        } else if args.port.is_some() {
+            continue;
         }
+
         let host_ip = p.host_ip.as_deref().unwrap_or("0.0.0.0");
-        println!("{} -> {}:{}", entry, host_ip, p.host_port);
+        if args.port.is_some() {
+            println!("{}:{}", host_ip, p.host_port);
+        } else {
+            let entry = format!("{}/{}", p.container_port, p.protocol);
+            println!("{} -> {}:{}", entry, host_ip, p.host_port);
+        }
     }
     Ok(())
 }
@@ -2925,7 +3307,14 @@ pub fn tag_image(args: &cli::TagArgs) -> Result<()> {
         .find(&args.source)
         .ok_or_else(|| anyhow!("Image '{}' not found", args.source))?;
 
-    let (repo, tag) = if let Some((r, t)) = args.target.split_once(':') {
+    let (repo, tag) = if let Some(slash_idx) = args.target.rfind('/') {
+        let (prefix, rest) = args.target.split_at(slash_idx + 1);
+        if let Some((r, t)) = rest.rsplit_once(':') {
+            (format!("{}{}", prefix, r), t.to_string())
+        } else {
+            (args.target.clone(), "latest".to_string())
+        }
+    } else if let Some((r, t)) = args.target.rsplit_once(':') {
         (r.to_string(), t.to_string())
     } else {
         (args.target.clone(), "latest".to_string())
@@ -2954,42 +3343,51 @@ pub fn export_container(args: &cli::ExportArgs) -> Result<()> {
         .ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
 
     let rootfs_path = PathBuf::from(&cont.bundle_path).join("rootfs");
-    let out_file_path = args
-        .output
-        .clone()
-        .unwrap_or_else(|| format!("{}-export.tar", args.container));
-
-    let file = fs::File::create(&out_file_path)?;
-    let mut builder = tar::Builder::new(file);
-    builder.append_dir_all(".", &rootfs_path)?;
-    builder.finish()?;
-
-    println!("Exported container rootfs to: {}", out_file_path);
+    if let Some(out_path) = &args.output {
+        let file = fs::File::create(out_path)?;
+        let mut builder = tar::Builder::new(file);
+        builder.append_dir_all(".", &rootfs_path)?;
+        builder.finish()?;
+        println!("Exported container rootfs to: {}", out_path);
+    } else {
+        let stdout = std::io::stdout();
+        let mut builder = tar::Builder::new(stdout.lock());
+        builder.append_dir_all(".", &rootfs_path)?;
+        builder.finish()?;
+    }
     Ok(())
 }
 
 pub fn import_image(args: &cli::ImportArgs) -> Result<()> {
-    let file_path = PathBuf::from(&args.file);
-    if !file_path.exists() {
-        return Err(anyhow!("Archive file {:?} does not exist", file_path));
-    }
-
-    let file = fs::File::open(&file_path)?;
-    let mut archive = tar::Archive::new(file);
-
     let random_id = hex::encode(crate::storage::container_store::rand_id());
     let image_id = format!("sha256:{}", random_id);
     let safe_id = image_id.replace(':', "_");
 
     let home = storage::boxr_home();
     let dest_rootfs = home.join("images").join(&safe_id).join("rootfs");
-    oci::image::unpack_archive_safely(&mut archive, &dest_rootfs)?;
+
+    let size_bytes: i64 = if args.file == "-" {
+        let stdin = std::io::stdin();
+        let mut archive = tar::Archive::new(stdin.lock());
+        oci::image::unpack_archive_safely(&mut archive, &dest_rootfs)?;
+        1024 * 1024
+    } else {
+        let file_path = PathBuf::from(&args.file);
+        if !file_path.exists() {
+            return Err(anyhow!("Archive file {:?} does not exist", file_path));
+        }
+        let file = fs::File::open(&file_path)?;
+        let len = file.metadata()?.len() as i64;
+        let mut archive = tar::Archive::new(file);
+        oci::image::unpack_archive_safely(&mut archive, &dest_rootfs)?;
+        len
+    };
 
     let target_ref = args
         .reference
         .clone()
         .unwrap_or_else(|| format!("boxr-import:{}", &random_id[..8]));
-    let (repo, tag) = if let Some((r, t)) = target_ref.split_once(':') {
+    let (repo, tag) = if let Some((r, t)) = target_ref.rsplit_once(':') {
         (r.to_string(), t.to_string())
     } else {
         (target_ref, "latest".to_string())
@@ -3001,7 +3399,7 @@ pub fn import_image(args: &cli::ImportArgs) -> Result<()> {
         tag,
         manifest_digest: image_id.clone(),
         config_digest: image_id.clone(),
-        size_bytes: fs::metadata(&file_path)?.len() as i64,
+        size_bytes,
         created_at: Utc::now(),
         rootfs_path: dest_rootfs.to_string_lossy().to_string(),
         config: oci::image::ImageConfig {
@@ -3009,6 +3407,7 @@ pub fn import_image(args: &cli::ImportArgs) -> Result<()> {
             os: "linux".to_string(),
             config: Some(oci::image::ExecutionConfig::default()),
             rootfs: None,
+            history: Vec::new(),
         },
     };
 
@@ -3029,22 +3428,81 @@ pub fn history_image(args: &cli::HistoryArgs) -> Result<()> {
         "IMAGE", "CREATED", "CREATED BY", "SIZE"
     );
 
-    let size_str = format!("{:.2}MB", img.size_bytes as f64 / (1024.0 * 1024.0));
-    let cmd_str = img
-        .config
-        .config
-        .as_ref()
-        .and_then(|c| c.cmd.as_ref())
-        .map(|c| c.join(" "))
-        .unwrap_or_else(|| "/bin/sh".to_string());
+    if !img.config.history.is_empty() {
+        let diff_count = img.config.rootfs.as_ref().map(|r| r.diff_ids.len()).unwrap_or(1);
+        let per_layer_size = if diff_count > 0 { img.size_bytes / diff_count as i64 } else { img.size_bytes };
 
-    println!(
-        "{:<14} {:<24} {:<30} {:<10}",
-        &img.id[..12.min(img.id.len())],
-        img.created_at.format("%Y-%m-%d %H:%M:%S"),
-        &cmd_str[..30.min(cmd_str.len())],
-        size_str
-    );
+        for (i, h) in img.config.history.iter().rev().enumerate() {
+            let id = if i == 0 {
+                img.id[..12.min(img.id.len())].to_string()
+            } else {
+                "<missing>".to_string()
+            };
+            let created = h.created.as_deref().unwrap_or("");
+            let created_str = if created.is_empty() {
+                img.created_at.format("%Y-%m-%d %H:%M:%S").to_string()
+            } else {
+                created.chars().take(19).collect::<String>().replace('T', " ")
+            };
+            let created_by = h.created_by.as_deref().unwrap_or("/bin/sh -c #(nop)");
+            let size = if h.empty_layer.unwrap_or(false) {
+                "0B".to_string()
+            } else {
+                format!("{:.2}MB", per_layer_size as f64 / (1024.0 * 1024.0))
+            };
+            println!(
+                "{:<14} {:<24} {:<30} {:<10}",
+                id,
+                created_str,
+                &created_by[..30.min(created_by.len())],
+                size
+            );
+        }
+    } else if let Some(rootfs) = &img.config.rootfs {
+        let count = rootfs.diff_ids.len();
+        let per_layer_size = if count > 0 { img.size_bytes / count as i64 } else { img.size_bytes };
+        let size_str = format!("{:.2}MB", per_layer_size as f64 / (1024.0 * 1024.0));
+        let cmd_str = img
+            .config
+            .config
+            .as_ref()
+            .and_then(|c| c.cmd.as_ref())
+            .map(|c| c.join(" "))
+            .unwrap_or_else(|| "/bin/sh".to_string());
+
+        for (i, diff_id) in rootfs.diff_ids.iter().rev().enumerate() {
+            let hex_clean = diff_id.strip_prefix("sha256:").unwrap_or(diff_id);
+            let display_id = if i == 0 {
+                img.id[..12.min(img.id.len())].to_string()
+            } else {
+                hex_clean[..12.min(hex_clean.len())].to_string()
+            };
+            println!(
+                "{:<14} {:<24} {:<30} {:<10}",
+                display_id,
+                img.created_at.format("%Y-%m-%d %H:%M:%S"),
+                &cmd_str[..30.min(cmd_str.len())],
+                size_str
+            );
+        }
+    } else {
+        let size_str = format!("{:.2}MB", img.size_bytes as f64 / (1024.0 * 1024.0));
+        let cmd_str = img
+            .config
+            .config
+            .as_ref()
+            .and_then(|c| c.cmd.as_ref())
+            .map(|c| c.join(" "))
+            .unwrap_or_else(|| "/bin/sh".to_string());
+
+        println!(
+            "{:<14} {:<24} {:<30} {:<10}",
+            &img.id[..12.min(img.id.len())],
+            img.created_at.format("%Y-%m-%d %H:%M:%S"),
+            &cmd_str[..30.min(cmd_str.len())],
+            size_str
+        );
+    }
     Ok(())
 }
 
@@ -3053,69 +3511,111 @@ pub async fn search_hub(args: &cli::SearchArgs) -> Result<()> {
         "{:<24} {:<50} {:<8} {:<10}",
         "NAME", "DESCRIPTION", "STARS", "OFFICIAL"
     );
-    // Standard catalog lookup for search terms
-    let catalog = [
-        (
-            "alpine",
-            "A minimal Docker image based on Alpine Linux",
-            "10500",
-            "[OK]",
-        ),
-        (
-            "ubuntu",
-            "Ubuntu is a Debian-based Linux operating system",
-            "17200",
-            "[OK]",
-        ),
-        ("nginx", "Official build of Nginx.", "19800", "[OK]"),
-        (
-            "redis",
-            "Redis is an open source key-value store",
-            "12500",
-            "[OK]",
-        ),
-        (
-            "postgres",
-            "The PostgreSQL object-relational database system",
-            "13100",
-            "[OK]",
-        ),
-        (
-            "node",
-            "Node.js JavaScript runtime environment",
-            "13400",
-            "[OK]",
-        ),
-        (
-            "python",
-            "Python is an interpreted, interactive programming language",
-            "11200",
-            "[OK]",
-        ),
-        (
-            "golang",
-            "Go is an open source programming language",
-            "12000",
-            "[OK]",
-        ),
-        (
-            "rust",
-            "Rust is a language empowering everyone to build reliable software",
-            "1400",
-            "[OK]",
-        ),
-    ];
 
-    let term_lower = args.term.to_lowercase();
-    for (name, desc, stars, off) in catalog {
-        if name.contains(&term_lower) || desc.to_lowercase().contains(&term_lower) {
-            println!(
-                "{:<24} {:<50} {:<8} {:<10}",
-                name,
-                &desc[..50.min(desc.len())],
-                stars,
-                off
-            );
+    let mut found_online = false;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build();
+
+    if let Ok(client) = client {
+        let resp = client
+            .get("https://hub.docker.com/v2/search/repositories/")
+            .query(&[("query", &args.term), ("page_size", &"25".to_string())])
+            .send()
+            .await;
+
+        if let Ok(resp) = resp {
+            if resp.status().is_success() {
+                if let Ok(val) = resp.json::<serde_json::Value>().await {
+                    if let Some(results) = val.get("results").and_then(|r| r.as_array()) {
+                        for item in results {
+                            let name = item.get("repo_name").and_then(|n| n.as_str()).unwrap_or("");
+                            let desc = item.get("short_description").and_then(|d| d.as_str()).unwrap_or("");
+                            let stars = item.get("star_count").and_then(|s| s.as_i64()).unwrap_or(0).to_string();
+                            let is_official = item.get("is_official").and_then(|o| o.as_bool()).unwrap_or(false);
+                            let off = if is_official { "[OK]" } else { "" };
+                            if !name.is_empty() {
+                                found_online = true;
+                                println!(
+                                    "{:<24} {:<50} {:<8} {:<10}",
+                                    &name[..24.min(name.len())],
+                                    &desc[..50.min(desc.len())],
+                                    stars,
+                                    off
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if !found_online {
+        // Standard catalog lookup for search terms
+        let catalog = [
+            (
+                "alpine",
+                "A minimal Docker image based on Alpine Linux",
+                "10500",
+                "[OK]",
+            ),
+            (
+                "ubuntu",
+                "Ubuntu is a Debian-based Linux operating system",
+                "17200",
+                "[OK]",
+            ),
+            ("nginx", "Official build of Nginx.", "19800", "[OK]"),
+            (
+                "redis",
+                "Redis is an open source key-value store",
+                "12500",
+                "[OK]",
+            ),
+            (
+                "postgres",
+                "The PostgreSQL object-relational database system",
+                "13100",
+                "[OK]",
+            ),
+            (
+                "node",
+                "Node.js JavaScript runtime environment",
+                "13400",
+                "[OK]",
+            ),
+            (
+                "python",
+                "Python is an interpreted, interactive programming language",
+                "11200",
+                "[OK]",
+            ),
+            (
+                "golang",
+                "Go is an open source programming language",
+                "12000",
+                "[OK]",
+            ),
+            (
+                "rust",
+                "Rust is a language empowering everyone to build reliable software",
+                "1400",
+                "[OK]",
+            ),
+        ];
+
+        let term_lower = args.term.to_lowercase();
+        for (name, desc, stars, off) in catalog {
+            if name.contains(&term_lower) || desc.to_lowercase().contains(&term_lower) {
+                println!(
+                    "{:<24} {:<50} {:<8} {:<10}",
+                    name,
+                    &desc[..50.min(desc.len())],
+                    stars,
+                    off
+                );
+            }
         }
     }
     Ok(())
@@ -3138,15 +3638,31 @@ pub fn info_system() -> Result<()> {
         .filter(|c| matches!(c.status, ContainerStatus::Exited(_)))
         .count();
 
+    let storage_driver = if cfg!(target_os = "linux") {
+        "overlayfs"
+    } else if cfg!(target_os = "macos") {
+        "clonefile/virtiofs"
+    } else {
+        "windows-cow"
+    };
+
+    let cgroup_ver = if cfg!(target_os = "linux") && Path::new("/sys/fs/cgroup/cgroup.controllers").exists() {
+        "2"
+    } else if cfg!(target_os = "linux") {
+        "1"
+    } else {
+        "none"
+    };
+
     println!("Containers: {}", containers.len());
     println!(" Running: {}", running);
     println!(" Paused: {}", paused);
     println!(" Stopped: {}", stopped);
     println!("Images: {}", i_store.list().len());
     println!("Server Version: 0.1.0");
-    println!("Storage Driver: overlayfs");
+    println!("Storage Driver: {}", storage_driver);
     println!("Logging Driver: json-file");
-    println!("Cgroup Version: 2");
+    println!("Cgroup Version: {}", cgroup_ver);
     println!("Plugins:");
     println!(" Volume: local");
     println!(" Network: bridge");
@@ -3181,7 +3697,7 @@ pub fn generate_spec(args: SpecArgs) -> Result<()> {
     Ok(())
 }
 
-pub fn handle_pod(args: PodSubcommands) -> Result<()> {
+pub async fn handle_pod(args: PodSubcommands) -> Result<()> {
     let store = pod::PodStore::new();
     match args.command {
         PodAction::Create { name, ports } => {
@@ -3226,9 +3742,17 @@ pub fn handle_pod(args: PodSubcommands) -> Result<()> {
             for cid in &p.containers {
                 let _ = stop_container(cid, None);
             }
+            let _ = store.update_status(&p.name, "Exited");
             println!("{}", pod);
         }
         PodAction::Start { pod } => {
+            let p = store
+                .find(&pod)
+                .ok_or_else(|| anyhow!("Pod '{}' not found", pod))?;
+            for cid in &p.containers {
+                let _ = start_container(cid).await;
+            }
+            let _ = store.update_status(&p.name, "Running");
             println!("{}", pod);
         }
     }

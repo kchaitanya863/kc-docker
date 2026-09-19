@@ -104,17 +104,31 @@ impl CredentialStore {
         Ok(())
     }
 
+    fn normalize_server(server: &str) -> String {
+        let clean = server
+            .trim()
+            .trim_start_matches("https://")
+            .trim_start_matches("http://")
+            .trim_end_matches('/');
+
+        if clean == "docker.io"
+            || clean == "registry-1.docker.io"
+            || clean == "index.docker.io"
+            || clean == "index.docker.io/v1"
+            || clean == "https://index.docker.io/v1"
+        {
+            "https://index.docker.io/v1/".to_string()
+        } else {
+            clean.to_string()
+        }
+    }
+
     pub fn login(&self, server: &str, username: &str, secret: &str) -> Result<()> {
         let mut cfg = self.load();
         let creds = format!("{}:{}", username, secret);
         let encoded = custom_base64_encode(&creds);
 
-        let srv_key = if server == "docker.io" || server == "registry-1.docker.io" {
-            "https://index.docker.io/v1/".to_string()
-        } else {
-            server.to_string()
-        };
-
+        let srv_key = Self::normalize_server(server);
         cfg.auths.insert(srv_key, AuthEntry { auth: encoded });
         self.save(&cfg)?;
         Ok(())
@@ -122,11 +136,7 @@ impl CredentialStore {
 
     pub fn logout(&self, server: &str) -> Result<()> {
         let mut cfg = self.load();
-        let srv_key = if server == "docker.io" || server == "registry-1.docker.io" {
-            "https://index.docker.io/v1/".to_string()
-        } else {
-            server.to_string()
-        };
+        let srv_key = Self::normalize_server(server);
         cfg.auths.remove(&srv_key);
         self.save(&cfg)?;
         Ok(())
@@ -134,13 +144,9 @@ impl CredentialStore {
 
     pub fn get_credentials(&self, server: &str) -> Option<(String, String)> {
         let cfg = self.load();
-        let srv_key = if server == "docker.io" || server == "registry-1.docker.io" {
-            "https://index.docker.io/v1/"
-        } else {
-            server
-        };
+        let srv_key = Self::normalize_server(server);
 
-        if let Some(entry) = cfg.auths.get(srv_key) {
+        if let Some(entry) = cfg.auths.get(&srv_key) {
             if let Some(decoded_bytes) = custom_base64_decode(&entry.auth) {
                 if let Ok(decoded_str) = String::from_utf8(decoded_bytes) {
                     if let Some((user, pass)) = decoded_str.split_once(':') {
@@ -156,7 +162,7 @@ impl CredentialStore {
             if docker_config.exists() {
                 if let Ok(content) = fs::read_to_string(&docker_config) {
                     if let Ok(docker_cfg) = serde_json::from_str::<AuthConfig>(&content) {
-                        if let Some(entry) = docker_cfg.auths.get(srv_key) {
+                        if let Some(entry) = docker_cfg.auths.get(&srv_key) {
                             if let Some(decoded_bytes) = custom_base64_decode(&entry.auth) {
                                 if let Ok(decoded_str) = String::from_utf8(decoded_bytes) {
                                     if let Some((user, pass)) = decoded_str.split_once(':') {
@@ -189,16 +195,27 @@ pub struct ImageArchiver;
 
 impl ImageArchiver {
     /// Export an image to a standard tar archive (boxr save)
-    pub fn save(image_query: &str, dest_path: &Path) -> Result<()> {
+    pub fn save(image_query: &str, dest_path: Option<&Path>) -> Result<()> {
         let store = ImageStore::new();
         let image = store
             .find(image_query)
             .ok_or_else(|| anyhow!("Image '{}' not found", image_query))?;
 
-        let file = File::create(dest_path)
-            .with_context(|| format!("Failed to create archive at {:?}", dest_path))?;
-        let mut builder = Builder::new(file);
+        if let Some(path) = dest_path {
+            let file = File::create(path)
+                .with_context(|| format!("Failed to create archive at {:?}", path))?;
+            let mut builder = Builder::new(file);
+            Self::pack_image_tar(&image, &mut builder)?;
+            println!("Exported image {} to {:?}", image.reference, path);
+        } else {
+            let stdout = std::io::stdout();
+            let mut builder = Builder::new(stdout.lock());
+            Self::pack_image_tar(&image, &mut builder)?;
+        }
+        Ok(())
+    }
 
+    fn pack_image_tar<W: std::io::Write>(image: &ImageRecord, builder: &mut Builder<W>) -> Result<()> {
         // 1. Pack config JSON
         let config_filename = format!("{}.json", &image.config_digest.replace(':', "_"));
         let config_bytes = serde_json::to_vec_pretty(&image.config)?;
@@ -246,18 +263,22 @@ impl ImageArchiver {
         builder.append_data(&mut manifest_header, "manifest.json", &manifest_bytes[..])?;
 
         builder.finish()?;
-        println!("Exported image {} to {:?}", image.reference, dest_path);
         Ok(())
     }
 
     /// Import an image from a standard tar archive (boxr load)
-    pub fn load(src_path: &Path) -> Result<Vec<ImageRecord>> {
-        let file = File::open(src_path)
-            .with_context(|| format!("Failed to open image archive at {:?}", src_path))?;
-        let mut archive = Archive::new(file);
-
+    pub fn load(src_path: Option<&Path>) -> Result<Vec<ImageRecord>> {
         let temp_dir = tempfile::tempdir()?;
-        crate::oci::image::unpack_archive_safely(&mut archive, temp_dir.path())?;
+        if let Some(path) = src_path {
+            let file = File::open(path)
+                .with_context(|| format!("Failed to open image archive at {:?}", path))?;
+            let mut archive = Archive::new(file);
+            crate::oci::image::unpack_archive_safely(&mut archive, temp_dir.path())?;
+        } else {
+            let stdin = std::io::stdin();
+            let mut archive = Archive::new(stdin.lock());
+            crate::oci::image::unpack_archive_safely(&mut archive, temp_dir.path())?;
+        }
 
         let manifest_path = temp_dir.path().join("manifest.json");
         if !manifest_path.exists() {
@@ -282,6 +303,7 @@ impl ImageArchiver {
                     os: "linux".to_string(),
                     config: None,
                     rootfs: None,
+                    history: Vec::new(),
                 }
             };
 
@@ -355,6 +377,27 @@ impl ImageArchiver {
             if ft.is_dir() {
                 let _ = builder.append_dir(&entry_rel, &path);
                 let _ = Self::append_dir_resilient(builder, base, &entry_rel);
+            } else if ft.is_file() {
+                if let Ok(mut f) = fs::File::open(&path) {
+                    if let Ok(meta) = f.metadata() {
+                        let mut header = Header::new_gnu();
+                        header.set_size(meta.len());
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::fs::MetadataExt;
+                            header.set_mode(meta.mode());
+                            header.set_uid(meta.uid() as u64);
+                            header.set_gid(meta.gid() as u64);
+                            header.set_mtime(meta.mtime() as u64);
+                        }
+                        #[cfg(not(unix))]
+                        {
+                            header.set_mode(0o644);
+                        }
+                        header.set_cksum();
+                        let _ = builder.append_data(&mut header, &entry_rel, &mut f);
+                    }
+                }
             } else {
                 let _ = builder.append_path_with_name(&path, &entry_rel);
             }
@@ -414,5 +457,11 @@ mod tests {
 
         store.logout("docker.io").unwrap();
         assert!(store.get_credentials("docker.io").is_none());
+
+        // Test server normalization for https:// and index.docker.io
+        store.login("https://index.docker.io/v1/", "hubuser", "token999").unwrap();
+        let creds2 = store.get_credentials("registry-1.docker.io").unwrap();
+        assert_eq!(creds2.0, "hubuser");
+        assert_eq!(creds2.1, "token999");
     }
 }

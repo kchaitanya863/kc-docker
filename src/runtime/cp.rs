@@ -83,9 +83,21 @@ impl ContainerCopy {
 
     /// Parse source and destination strings: e.g. "my-container:/app/file.txt", "./local-file.txt"
     pub fn copy(src: &str, dest: &str) -> Result<()> {
+        let is_src_cont = !src.starts_with('.') && !src.starts_with('/') && src.contains(':');
+        let is_dest_cont = !dest.starts_with('.') && !dest.starts_with('/') && dest.contains(':');
+
+        if is_src_cont && is_dest_cont {
+            return Err(anyhow!(
+                "Container to container copy is not supported: '{}' to '{}'",
+                src,
+                dest
+            ));
+        }
+
         let store = ContainerStore::new();
 
-        if let Some((container_query, container_path)) = src.split_once(':') {
+        if is_src_cont {
+            let (container_query, container_path) = src.split_once(':').unwrap();
             // Container to Host copy
             let cont = store
                 .find(container_query)
@@ -109,7 +121,8 @@ impl ContainerCopy {
                 container_query, container_path, host_dest
             );
             Ok(())
-        } else if let Some((container_query, container_path)) = dest.split_once(':') {
+        } else if is_dest_cont {
+            let (container_query, container_path) = dest.split_once(':').unwrap();
             // Host to Container copy
             let cont = store
                 .find(container_query)
@@ -248,5 +261,18 @@ mod tests {
                     .contains("Path traversal rejected")
             );
         }
+    }
+
+    #[test]
+    fn test_copy_syntax_validation() {
+        // Container to container rejection
+        let err = ContainerCopy::copy("c1:/file", "c2:/file");
+        assert!(err.is_err());
+        assert!(err.unwrap_err().to_string().contains("Container to container copy is not supported"));
+
+        // Host path with colon should not be parsed as container
+        let err2 = ContainerCopy::copy("./local:file", "./dest:file");
+        assert!(err2.is_err());
+        assert!(err2.unwrap_err().to_string().contains("Invalid copy syntax"));
     }
 }

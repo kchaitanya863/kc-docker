@@ -214,6 +214,10 @@ impl NetworkStore {
     }
 
     pub fn remove(&self, query: &str) -> Result<NetworkRecord> {
+        self.remove_with_force(query, false)
+    }
+
+    pub fn remove_with_force(&self, query: &str, force: bool) -> Result<NetworkRecord> {
         crate::storage::index_lock::with_index_lock(&self.index_file, || {
             let mut data = self.load_unlocked();
             if query == Self::DEFAULT_NETWORK {
@@ -225,6 +229,12 @@ impl NetworkStore {
                 .iter()
                 .position(|n| n.id.starts_with(query) || n.name == query)
             {
+                if !force && !data.networks[pos].containers.is_empty() {
+                    return Err(anyhow!(
+                        "network {} has active endpoints",
+                        data.networks[pos].name
+                    ));
+                }
                 let removed = data.networks.remove(pos);
                 self.save_unlocked(&data)?;
                 Ok(removed)

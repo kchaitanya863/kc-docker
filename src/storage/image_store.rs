@@ -220,13 +220,50 @@ impl ImageStore {
         })
     }
 
+    pub fn remove_metadata_only(&self, query: &str) -> Result<ImageRecord> {
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+            let mut data = self.load_unlocked();
+            let query_trimmed = query.trim();
+            let (q_name, q_tag) = if let Some((n, t)) = query_trimmed.split_once(':') {
+                (n, Some(t))
+            } else {
+                (query_trimmed, None)
+            };
+
+            let pos = data.images.iter().position(|img| {
+                if img.id.starts_with(query_trimmed) {
+                    return true;
+                }
+                let img_short = img
+                    .reference
+                    .strip_prefix("library/")
+                    .unwrap_or(&img.reference);
+                let name_matches = img.reference == q_name || img_short == q_name;
+
+                if let Some(tag) = q_tag {
+                    name_matches && img.tag == tag
+                } else {
+                    name_matches && (img.tag == "latest" || img.tag == query_trimmed)
+                }
+            });
+
+            if let Some(index) = pos {
+                let removed = data.images.remove(index);
+                self.save_unlocked(&data)?;
+                Ok(removed)
+            } else {
+                Err(anyhow!("Image not found: {}", query))
+            }
+        })
+    }
+
     /// Commit a container's current filesystem snapshot into a new image
     pub fn commit_container(
         &self,
         container: &crate::storage::ContainerRecord,
         repo_tag: Option<&str>,
-        _message: Option<&str>,
-        _author: Option<&str>,
+        message: Option<&str>,
+        author: Option<&str>,
     ) -> Result<ImageRecord> {
         let home = boxr_home();
         let random_id = hex::encode(crate::storage::container_store::rand_id());
@@ -259,7 +296,7 @@ impl ImageStore {
             (full_tag.to_string(), "latest".to_string())
         };
 
-        let base_config = self
+        let mut base_config = self
             .find(&container.image)
             .map(|i| i.config)
             .unwrap_or_else(|| crate::oci::image::ImageConfig {
@@ -270,7 +307,25 @@ impl ImageStore {
                     ..Default::default()
                 }),
                 rootfs: None,
+                history: Vec::new(),
             });
+
+        if let Some(auth) = author {
+            if let Some(cfg) = &mut base_config.config {
+                let mut labels = cfg.labels.take().unwrap_or_default();
+                labels.insert("author".to_string(), auth.to_string());
+                cfg.labels = Some(labels);
+            }
+        }
+        if let Some(msg) = message {
+            if let Some(cfg) = &mut base_config.config {
+                let mut labels = cfg.labels.take().unwrap_or_default();
+                labels.insert("commit_message".to_string(), msg.to_string());
+                cfg.labels = Some(labels);
+            }
+        }
+
+        let total_size = crate::system::dir_size(&dest_rootfs);
 
         let record = ImageRecord {
             id: random_id[..12].to_string(),
@@ -278,7 +333,7 @@ impl ImageStore {
             tag,
             manifest_digest: image_id.clone(),
             config_digest: image_id.clone(),
-            size_bytes: 1024 * 1024,
+            size_bytes: if total_size > 0 { total_size as i64 } else { 1024 * 1024 },
             created_at: Utc::now(),
             rootfs_path: dest_rootfs.to_string_lossy().to_string(),
             config: base_config,
@@ -325,6 +380,7 @@ mod tests {
                 os: "linux".to_string(),
                 config: Some(ExecutionConfig::default()),
                 rootfs: None,
+                history: Vec::new(),
             },
         };
 

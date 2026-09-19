@@ -29,6 +29,24 @@ impl StatsCollector {
             0
         };
 
+        // Read container's configured memory limit from bundle config if available
+        let bundle = PathBuf::from(&c.bundle_path);
+        if let Ok(config_bytes) = fs::read(bundle.join("config.json")) {
+            if let Ok(spec) = serde_json::from_slice::<crate::oci::runtime::Spec>(&config_bytes) {
+                if let Some(l) = spec.linux {
+                    if let Some(res) = l.resources {
+                        if let Some(mem) = res.memory {
+                            if let Some(limit) = mem.limit {
+                                if limit > 0 {
+                                    mem_limit_bytes = limit as u64;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Attempt reading cgroup v2 stats if available
         let cgroup_dir = PathBuf::from("/sys/fs/cgroup/boxr").join(&c.id);
         if cgroup_dir.exists() {
@@ -105,6 +123,15 @@ impl StatsCollector {
     pub fn display_stats(targets: &[String], no_stream: bool) -> Result<()> {
         let store = ContainerStore::new();
 
+        if !targets.is_empty() {
+            let all = store.list();
+            for t in targets {
+                if !all.iter().any(|c| c.id.starts_with(t) || &c.name == t) {
+                    return Err(anyhow::anyhow!("No such container: {}", t));
+                }
+            }
+        }
+
         loop {
             let mut containers = store.list();
             if !targets.is_empty() {
@@ -174,6 +201,7 @@ mod tests {
             health_status: crate::health::HealthStatus::None,
             restart_count: 0,
             ports: Vec::new(),
+            exposed_ports: Vec::new(),
         };
 
         let stats = StatsCollector::collect_for_container(&rec);

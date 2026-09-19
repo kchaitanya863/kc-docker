@@ -256,10 +256,34 @@ pub fn run_trampoline(args: &[String]) -> Result<i32> {
                 }
 
                 // Now unshare container namespaces: PID, Mount, UTS, IPC
-                let flags = CloneFlags::CLONE_NEWPID
-                    | CloneFlags::CLONE_NEWNS
-                    | CloneFlags::CLONE_NEWUTS
-                    | CloneFlags::CLONE_NEWIPC;
+                let mut flags = CloneFlags::CLONE_NEWPID | CloneFlags::CLONE_NEWNS;
+                let ipc_host = spec
+                    .annotations
+                    .as_ref()
+                    .and_then(|a| a.get("boxr.ipc"))
+                    .map(|s| s == "host")
+                    .unwrap_or(false);
+                if !ipc_host {
+                    flags |= CloneFlags::CLONE_NEWIPC;
+                }
+                let uts_host = spec
+                    .annotations
+                    .as_ref()
+                    .and_then(|a| a.get("boxr.uts"))
+                    .map(|s| s == "host")
+                    .unwrap_or(false);
+                if !uts_host {
+                    flags |= CloneFlags::CLONE_NEWUTS;
+                }
+                let cgroup_private = spec
+                    .annotations
+                    .as_ref()
+                    .and_then(|a| a.get("boxr.cgroupns"))
+                    .map(|s| s == "private")
+                    .unwrap_or(false);
+                if cgroup_private {
+                    flags |= CloneFlags::CLONE_NEWCGROUP;
+                }
 
                 if let Err(e) = unshare(flags) {
                     eprintln!("Failed to unshare container namespaces: {:?}", e);
@@ -764,6 +788,29 @@ fn run_container_child(rootfs: &Path, spec: &Spec, mounts: &[MountSpec]) -> Resu
             dns_content.push_str("nameserver 8.8.8.8\n");
         }
     }
+    let dns_search_file = bundle_dir.join("dns_search.json");
+    if dns_search_file.exists() {
+        if let Ok(content) = fs::read_to_string(&dns_search_file) {
+            if let Ok(domains) = serde_json::from_str::<Vec<String>>(&content) {
+                if !domains.is_empty() {
+                    dns_content.push_str(&format!("search {}\n", domains.join(" ")));
+                }
+            }
+        }
+    }
+    let dns_opt_file = bundle_dir.join("dns_option.json");
+    if dns_opt_file.exists() {
+        if let Ok(content) = fs::read_to_string(&dns_opt_file) {
+            if let Ok(opts) = serde_json::from_str::<Vec<String>>(&content) {
+                if !opts.is_empty() {
+                    dns_content.push_str(&format!("options {}\n", opts.join(" ")));
+                }
+            }
+        }
+    }
+    if let Some(domain) = &spec.domainname {
+        dns_content.push_str(&format!("domain {}\n", domain));
+    }
     let _ = fs::write(&resolv_path, dns_content);
 
     // Ensure /etc/hosts exists and contains localhost and container hostname
@@ -932,6 +979,20 @@ fn run_container_child(rootfs: &Path, spec: &Spec, mounts: &[MountSpec]) -> Resu
                 }
             }
         }
+    }
+
+    if let Some(gids) = &spec.process.user.additional_gids {
+        let raw_gids: Vec<nix::unistd::Gid> =
+            gids.iter().map(|g| nix::unistd::Gid::from_raw(*g)).collect();
+        let _ = nix::unistd::setgroups(&raw_gids);
+    }
+    if let Some(u) = spec.process.umask {
+        unsafe {
+            libc::umask(u as libc::mode_t);
+        }
+    }
+    if let Some(adj) = spec.process.oom_score_adj {
+        let _ = fs::write("/proc/self/oom_score_adj", adj.to_string());
     }
 
     if spec.process.user.gid != 0 {

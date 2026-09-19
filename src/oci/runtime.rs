@@ -42,6 +42,10 @@ pub struct Process {
     pub no_new_privileges: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub capabilities: Option<LinuxCapabilities>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oom_score_adj: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub umask: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,32 +72,81 @@ pub struct LinuxNamespace {
     pub path: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LinuxCpu {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shares: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quota: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub period: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cpus: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mems: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LinuxDevice {
+    #[serde(rename = "type")]
+    pub dev_type: String,
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub major: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub minor: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_mode: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uid: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gid: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LinuxMemory {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reservation: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub swap: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub swappiness: Option<u64>,
+    #[serde(rename = "disableOOMKiller", skip_serializing_if = "Option::is_none")]
+    pub disable_oom_killer: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LinuxPids {
     pub limit: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LinuxResources {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub memory: Option<LinuxMemory>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub cpu: Option<LinuxCpu>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub pids: Option<LinuxPids>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub devices: Vec<LinuxDevice>,
+    #[serde(rename = "oomScoreAdj", skip_serializing_if = "Option::is_none")]
+    pub oom_score_adj: Option<i32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Linux {
     pub namespaces: Vec<LinuxNamespace>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resources: Option<LinuxResources>,
+    #[serde(rename = "cgroupParent", skip_serializing_if = "Option::is_none")]
+    pub cgroup_parent: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub seccomp: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub devices: Vec<LinuxDevice>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -137,6 +190,8 @@ pub struct Spec {
     pub root: Root,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hostname: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub domainname: Option<String>,
     pub mounts: Vec<Mount>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub annotations: Option<HashMap<String, String>>,
@@ -282,9 +337,14 @@ impl Spec {
             ],
             resources: Some(LinuxResources {
                 memory: None,
+                cpu: None,
                 pids: Some(LinuxPids { limit: 1024 }),
+                devices: Vec::new(),
+                oom_score_adj: None,
             }),
+            cgroup_parent: None,
             seccomp: None,
+            devices: Vec::new(),
         };
 
         Self {
@@ -302,12 +362,15 @@ impl Spec {
                 cwd,
                 no_new_privileges: Some(true),
                 capabilities: None,
+                oom_score_adj: None,
+                umask: None,
             },
             root: Root {
                 path: "rootfs".to_string(),
                 readonly: false,
             },
             hostname: Some("boxr-container".to_string()),
+            domainname: None,
             mounts,
             annotations: None,
             linux: Some(linux),

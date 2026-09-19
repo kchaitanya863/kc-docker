@@ -440,6 +440,7 @@ mod tests {
             health_status: crate::health::HealthStatus::None,
             restart_count: 0,
             ports: Vec::new(),
+            exposed_ports: Vec::new(),
         };
         store.add(record).unwrap();
 

@@ -84,6 +84,20 @@ impl FilesystemDiff {
                 continue;
             }
 
+            // Skip internal runtime scaffolding files injected by boxr hypervisor
+            if current_dir == root_dir
+                && (file_name == "libboxr_perm.so"
+                    || file_name == "libboxr_perm_x86_64.so"
+                    || file_name == "boxr-busybox"
+                    || file_name == "boxr-init.sh"
+                    || file_name == "boxr-run.sh"
+                    || file_name == "boxr-exitcode"
+                    || file_name == "logs.txt"
+                    || file_name.starts_with("boxr-exec-"))
+            {
+                continue;
+            }
+
             let rel_path = path.strip_prefix(root_dir)?;
             let rel_str = format!("/{}", rel_path.to_string_lossy());
 
@@ -211,7 +225,15 @@ mod tests {
         fs::create_dir_all(&nested_dev)?;
         fs::write(nested_dev.join("config.json"), b"nested dev content")?;
 
+        // Injected hypervisor runtime files (should be filtered out)
+        fs::write(container.join("libboxr_perm.so"), b"bin")?;
+        fs::write(container.join("boxr-run.sh"), b"sh")?;
+
         let diffs = FilesystemDiff::compare(&base, &container).unwrap();
+        assert!(
+            !diffs.iter().any(|d| d.path == "/libboxr_perm.so" || d.path == "/boxr-run.sh"),
+            "Injected runtime scaffolding must be filtered from diff"
+        );
         assert!(
             diffs
                 .iter()

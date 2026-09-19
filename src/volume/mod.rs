@@ -487,6 +487,7 @@ mod tests {
             health_status: crate::health::HealthStatus::None,
             restart_count: 0,
             ports: Vec::new(),
+            exposed_ports: Vec::new(),
         };
         c_store.add(c_record).unwrap();
 
@@ -531,6 +532,7 @@ mod tests {
             health_status: crate::health::HealthStatus::None,
             restart_count: 0,
             ports: Vec::new(),
+            exposed_ports: Vec::new(),
         };
         c_store.add(c_record).unwrap();
 

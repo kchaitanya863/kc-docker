@@ -60,6 +60,8 @@ pub struct ContainerRecord {
     pub restart_count: u32,
     #[serde(default)]
     pub ports: Vec<crate::network::PortMapping>,
+    #[serde(default)]
+    pub exposed_ports: Vec<String>,
 }
 
 fn default_health_status() -> crate::health::HealthStatus {
@@ -126,6 +128,18 @@ impl ContainerStore {
     }
 
     pub fn add(&self, record: ContainerRecord) -> Result<()> {
+        let name = record.name.trim();
+        if name.is_empty()
+            || !name
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.')
+        {
+            return Err(anyhow!(
+                "Invalid container name '{}': must be alphanumeric, '_', '-', or '.'",
+                record.name
+            ));
+        }
+
         crate::storage::index_lock::with_index_lock(&self.index_file, || {
             let mut data = self.load_unlocked();
             if let Some(existing) = data
@@ -181,12 +195,20 @@ impl ContainerStore {
     }
 
     pub fn rename(&self, old_query: &str, new_name: &str) -> Result<()> {
+        let new_name_trimmed = new_name.trim();
+        if new_name_trimmed.is_empty()
+            || !new_name_trimmed
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.')
+        {
+            return Err(anyhow!(
+                "Invalid container name '{}': must be alphanumeric, '_', '-', or '.'",
+                new_name
+            ));
+        }
+
         crate::storage::index_lock::with_index_lock(&self.index_file, || {
             let mut data = self.load_unlocked();
-            let new_name_trimmed = new_name.trim();
-            if new_name_trimmed.is_empty() {
-                return Err(anyhow!("New container name cannot be empty"));
-            }
 
             if data.containers.iter().any(|c| c.name == new_name_trimmed) {
                 return Err(anyhow!(
@@ -303,6 +325,7 @@ mod tests {
             health_status: crate::health::HealthStatus::None,
             restart_count: 0,
             ports: Vec::new(),
+            exposed_ports: Vec::new(),
         };
 
         store.add(rec).unwrap();

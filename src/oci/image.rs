@@ -80,6 +80,10 @@ pub struct ExecutionConfig {
     pub labels: Option<HashMap<String, String>>,
     #[serde(rename = "Volumes", skip_serializing_if = "Option::is_none")]
     pub volumes: Option<HashMap<String, serde_json::Value>>,
+    #[serde(rename = "ExposedPorts", skip_serializing_if = "Option::is_none")]
+    pub exposed_ports: Option<HashMap<String, serde_json::Value>>,
+    #[serde(rename = "Healthcheck", skip_serializing_if = "Option::is_none")]
+    pub healthcheck: Option<crate::health::HealthConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,6 +91,18 @@ pub struct RootFsConfig {
     #[serde(rename = "type")]
     pub fs_type: String,
     pub diff_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct HistoryEntry {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub empty_layer: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,6 +113,8 @@ pub struct ImageConfig {
     pub config: Option<ExecutionConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rootfs: Option<RootFsConfig>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub history: Vec<HistoryEntry>,
 }
 
 /// Unpacks a layer archive (.tar or .tar.gz) into a target rootfs directory.

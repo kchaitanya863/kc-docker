@@ -8,9 +8,12 @@ use std::path::PathBuf;
 pub struct ResourceLimits {
     pub memory_max_bytes: Option<i64>,
     pub memory_swap_max_bytes: Option<i64>,
+    pub memory_reservation_bytes: Option<i64>,
     pub cpu_quota_us: Option<i64>,
     pub cpu_period_us: Option<u64>,
     pub cpu_shares: Option<u64>,
+    pub cpuset_cpus: Option<String>,
+    pub memory_swappiness: Option<u64>,
     pub pids_max: Option<i64>,
 }
 
@@ -114,6 +117,12 @@ impl CgroupV2Manager {
             );
         }
 
+        // Apply memory reservation (cgroups v2 memory.low)
+        if let Some(res) = limits.memory_reservation_bytes {
+            let _ = fs::write(self.cgroup_path.join("memory.low"), res.to_string());
+            let _ = fs::write(self.cgroup_path.join("memory.soft_limit_in_bytes"), res.to_string());
+        }
+
         // Apply CPU quota (cgroups v2 and v1)
         if let (Some(quota), Some(period)) = (limits.cpu_quota_us, limits.cpu_period_us) {
             let val = format!("{} {}", quota, period);
@@ -123,6 +132,17 @@ impl CgroupV2Manager {
                 self.cgroup_path.join("cpu.cfs_period_us"),
                 period.to_string(),
             );
+        }
+
+        // Apply cpuset cpus
+        if let Some(cpus) = &limits.cpuset_cpus {
+            let _ = fs::write(self.cgroup_path.join("cpuset.cpus"), cpus);
+        }
+
+        // Apply memory swappiness
+        if let Some(swappiness) = limits.memory_swappiness {
+            let _ = fs::write(self.cgroup_path.join("memory.swap.high"), swappiness.to_string());
+            let _ = fs::write(self.cgroup_path.join("memory.swappiness"), swappiness.to_string());
         }
 
         // Apply PID limits

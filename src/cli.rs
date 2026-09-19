@@ -1418,6 +1418,10 @@ pub struct CommitArgs {
     #[arg(short = 'a', long = "author")]
     pub author: Option<String>,
 
+    /// Pause container during commit
+    #[arg(short = 'p', long = "pause", default_value_t = true)]
+    pub pause: bool,
+
     /// Container to commit
     pub container: String,
 

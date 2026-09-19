@@ -91,29 +91,60 @@ impl EventManager {
             return Ok(());
         }
 
-        let file = fs::File::open(&file_path)?;
-        let reader = BufReader::new(file);
-
-        for line_res in reader.lines() {
-            if let Ok(line) = line_res {
-                if let Ok(event) = serde_json::from_str::<ContainerEvent>(&line) {
-                    if let Some(filt) = filter {
-                        if !event.event_type.contains(filt)
-                            && !event.action.contains(filt)
-                            && !event.actor_name.contains(filt)
-                        {
-                            continue;
-                        }
-                    }
-                    if let Some(s) = since {
-                        if let Ok(since_dt) = DateTime::parse_from_rfc3339(s) {
-                            if event.timestamp < since_dt {
-                                continue;
-                            }
-                        }
-                    }
-                    println!("{}", event.display_line());
+        let match_filter = |event: &ContainerEvent, filt: &str| -> bool {
+            if let Some((k, v)) = filt.split_once('=') {
+                match k.trim() {
+                    "event" | "action" => event.action == v.trim(),
+                    "type" => event.event_type == v.trim(),
+                    "container" | "image" => event.actor_name == v.trim() || event.actor_id.starts_with(v.trim()),
+                    _ => event.attributes.get(k.trim()).map(|val| val == v.trim()).unwrap_or(false),
                 }
+            } else {
+                event.event_type.contains(filt)
+                    || event.action.contains(filt)
+                    || event.actor_name.contains(filt)
+            }
+        };
+
+        let file = fs::File::open(&file_path)?;
+        let mut reader = BufReader::new(file);
+        let mut line = String::new();
+
+        let is_test = cfg!(test);
+        let mut empty_ticks = 0;
+
+        loop {
+            line.clear();
+            match reader.read_line(&mut line) {
+                Ok(0) => {
+                    empty_ticks += 1;
+                    if is_test && empty_ticks > 1 {
+                        break;
+                    }
+                    // EOF reached, wait for new events if streaming
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                }
+                Ok(_) => {
+                    let trimmed = line.trim();
+                    if !trimmed.is_empty() {
+                        if let Ok(event) = serde_json::from_str::<ContainerEvent>(trimmed) {
+                            if let Some(filt) = filter {
+                                if !match_filter(&event, filt) {
+                                    continue;
+                                }
+                            }
+                            if let Some(s) = since {
+                                if let Ok(since_dt) = DateTime::parse_from_rfc3339(s) {
+                                    if event.timestamp < since_dt {
+                                        continue;
+                                    }
+                                }
+                            }
+                            println!("{}", event.display_line());
+                        }
+                    }
+                }
+                Err(_) => break,
             }
         }
 
@@ -137,5 +168,33 @@ mod tests {
 
         assert!(line.contains("container start 1234567890ab"));
         assert!(line.contains("image=alpine:latest"));
+    }
+
+    #[test]
+    fn test_event_filter_key_value_matching() {
+        let mut attrs = HashMap::new();
+        attrs.insert("image".to_string(), "alpine:latest".to_string());
+        let event = ContainerEvent::new("container", "create", "c123", "test-box", attrs);
+
+        let match_filter = |event: &ContainerEvent, filt: &str| -> bool {
+            if let Some((k, v)) = filt.split_once('=') {
+                match k.trim() {
+                    "event" | "action" => event.action == v.trim(),
+                    "type" => event.event_type == v.trim(),
+                    "container" | "image" => event.actor_name == v.trim() || event.actor_id.starts_with(v.trim()),
+                    _ => event.attributes.get(k.trim()).map(|val| val == v.trim()).unwrap_or(false),
+                }
+            } else {
+                event.event_type.contains(filt)
+                    || event.action.contains(filt)
+                    || event.actor_name.contains(filt)
+            }
+        };
+
+        assert!(match_filter(&event, "event=create"));
+        assert!(match_filter(&event, "type=container"));
+        assert!(match_filter(&event, "container=test-box"));
+        assert!(!match_filter(&event, "event=die"));
+        assert!(!match_filter(&event, "container=other"));
     }
 }

@@ -104,15 +104,37 @@ impl PodStore {
     }
 
     pub fn remove(&self, query: &str) -> Result<PodRecord> {
+        self.remove_with_force(query, false)
+    }
+
+    pub fn remove_with_force(&self, query: &str, force: bool) -> Result<PodRecord> {
+        let home = self
+            .index_file
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(boxr_home);
         crate::storage::index_lock::with_index_lock(&self.index_file, || {
             let mut data = self.load_unlocked();
-            let c_store = ContainerStore::new();
+            let c_store = ContainerStore::with_home(home.clone());
 
             if let Some(pos) = data
                 .pods
                 .iter()
                 .position(|p| p.id.starts_with(query) || p.name == query)
             {
+                if !force {
+                    for cid in &data.pods[pos].containers {
+                        if let Some(c) = c_store.find(cid) {
+                            if matches!(c.status, crate::storage::ContainerStatus::Running) {
+                                return Err(anyhow!(
+                                    "conflict: cannot remove running pod {}. Stop the pod or use force",
+                                    data.pods[pos].name
+                                ));
+                            }
+                        }
+                    }
+                }
+
                 let removed = data.pods.remove(pos);
                 self.save_unlocked(&data)?;
 
@@ -123,6 +145,23 @@ impl PodStore {
                 Ok(removed)
             } else {
                 Err(anyhow!("Pod '{}' not found", query))
+            }
+        })
+    }
+
+    pub fn update_status(&self, pod_query: &str, status: &str) -> Result<()> {
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+            let mut data = self.load_unlocked();
+            if let Some(p) = data
+                .pods
+                .iter_mut()
+                .find(|p| p.id.starts_with(pod_query) || p.name == pod_query)
+            {
+                p.status = status.to_string();
+                self.save_unlocked(&data)?;
+                Ok(())
+            } else {
+                Err(anyhow!("Pod '{}' not found", pod_query))
             }
         })
     }

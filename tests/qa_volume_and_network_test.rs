@@ -107,7 +107,9 @@ fn test_qa_network_default_protection_and_ipam() {
     // 3. Removing non-existent network must fail
     assert!(store.remove("non_existent_net_abc").is_err());
 
-    // Cleanup
+    // Cleanup: disconnect containers first, then remove
+    store.disconnect_container(&net_name, "c1").unwrap();
+    store.disconnect_container(&net_name, "c2").unwrap();
     store.remove(&net_name).unwrap();
 }
 
@@ -140,6 +142,7 @@ fn test_qa_port_collision_guard() {
             container_port: 80,
             protocol: "tcp".to_string(),
         }],
+        exposed_ports: Vec::new(),
     };
     store.add(record).unwrap();
 

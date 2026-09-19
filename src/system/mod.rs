@@ -162,8 +162,8 @@ impl SystemManager {
             }
         }
 
-        // 2. Prune images if all_images is requested
-        if all_images {
+        // 2. Prune images (all unused if all_images is true, or dangling untagged images by default)
+        {
             let i_store = ImageStore::new();
             let images = i_store.list();
             let remaining_containers = c_store.list();
@@ -172,13 +172,23 @@ impl SystemManager {
                 .map(|c| c.image.clone())
                 .collect();
 
-            println!("Deleted Images:");
+            let mut deleted_images = Vec::new();
             for img in images {
                 let tag = format!("{}:{}", img.reference, img.tag);
-                if !used_images.contains(&tag) && !used_images.contains(&img.reference) {
-                    reclaimed += img.size_bytes as u64;
-                    let _ = i_store.remove(&img.id);
-                    println!("deleted: sha256:{}", img.id);
+                let is_used = used_images.contains(&tag) || used_images.contains(&img.reference) || used_images.contains(&img.id);
+                if !is_used {
+                    let is_dangling = img.tag == "<none>" || img.reference.is_empty() || img.reference == "<none>";
+                    if all_images || is_dangling {
+                        reclaimed += img.size_bytes as u64;
+                        let _ = i_store.remove(&img.id);
+                        deleted_images.push(img.id);
+                    }
+                }
+            }
+            if !deleted_images.is_empty() {
+                println!("Deleted Images:");
+                for id in deleted_images {
+                    println!("deleted: sha256:{}", id);
                 }
             }
         }

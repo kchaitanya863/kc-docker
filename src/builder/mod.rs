@@ -138,12 +138,13 @@ impl DockerfileParser {
     }
 
     fn parse_line(line: &str) -> Result<Instruction> {
-        let (keyword, rest) = line
-            .split_once(char::is_whitespace)
-            .ok_or_else(|| anyhow!("Invalid Dockerfile instruction: '{}'", line))?;
+        let trimmed = line.trim();
+        let (keyword, rest) = match trimmed.split_once(char::is_whitespace) {
+            Some((kw, r)) => (kw, r.trim()),
+            None => (trimmed, ""),
+        };
 
         let keyword_upper = keyword.to_uppercase();
-        let rest = rest.trim();
 
         match keyword_upper.as_str() {
             "FROM" => {
@@ -464,6 +465,24 @@ impl ImageBuilder {
                     }
 
                     for s in src {
+                        if s.starts_with("http://") || s.starts_with("https://") {
+                            // Remote URL fetch
+                            let resp = reqwest::get(s).await.context("Failed to fetch ADD URL")?;
+                            let bytes = resp.bytes().await.context("Failed to read ADD URL body")?;
+                            if let Some(parent) = target_dir.parent() {
+                                fs::create_dir_all(parent)?;
+                            }
+                            let dest_file = if target_dir.is_dir() || dest.ends_with('/') {
+                                fs::create_dir_all(&target_dir)?;
+                                let url_file = s.rsplit('/').next().unwrap_or("download");
+                                target_dir.join(url_file)
+                            } else {
+                                target_dir.clone()
+                            };
+                            fs::write(&dest_file, &bytes)?;
+                            continue;
+                        }
+
                         if s.contains("..") || s.starts_with('/') {
                             return Err(anyhow!("Path traversal rejected in ADD source: '{}'", s));
                         }
@@ -486,7 +505,26 @@ impl ImageBuilder {
                                 continue;
                             }
                         }
-                        if source_path.is_dir() {
+
+                        // Auto-extract local tar/tar.gz archive
+                        let is_tar = s.ends_with(".tar")
+                            || s.ends_with(".tar.gz")
+                            || s.ends_with(".tgz")
+                            || s.ends_with(".tar.bz2")
+                            || s.ends_with(".tar.xz");
+
+                        if is_tar && source_path.is_file() {
+                            fs::create_dir_all(&target_dir)?;
+                            let f = fs::File::open(&source_path)?;
+                            if s.ends_with(".tar.gz") || s.ends_with(".tgz") {
+                                let gz = flate2::read::GzDecoder::new(f);
+                                let mut archive = tar::Archive::new(gz);
+                                crate::oci::image::unpack_archive_safely(&mut archive, &target_dir)?;
+                            } else {
+                                let mut archive = tar::Archive::new(f);
+                                crate::oci::image::unpack_archive_safely(&mut archive, &target_dir)?;
+                            }
+                        } else if source_path.is_dir() {
                             copy_dir_all(&source_path, &target_dir)?;
                         } else {
                             if let Some(parent) = target_dir.parent() {
@@ -542,7 +580,7 @@ impl ImageBuilder {
                     }
 
                     let source_root: PathBuf = if let Some(from_s) = from_stage {
-                        // Find matching stage by name or index
+                        // Find matching stage by name or index, or fallback to local image in store
                         let found_stage = stages
                             .iter()
                             .find(|s| s.name.as_deref() == Some(from_s.as_str()))
@@ -554,14 +592,15 @@ impl ImageBuilder {
                                 }
                             });
 
-                        match found_stage {
-                            Some(st) => st.rootfs.clone(),
-                            None => {
-                                return Err(anyhow!(
-                                    "Stage '{}' not found for COPY --from",
-                                    from_s
-                                ));
-                            }
+                        if let Some(st) = found_stage {
+                            st.rootfs.clone()
+                        } else if let Some(img_rec) = self.store.find(from_s) {
+                            PathBuf::from(&img_rec.rootfs_path)
+                        } else {
+                            return Err(anyhow!(
+                                "Stage or image '{}' not found for COPY --from",
+                                from_s
+                            ));
                         }
                     } else {
                         opts.context_dir.clone()
@@ -671,15 +710,24 @@ impl ImageBuilder {
                 Instruction::Entrypoint(args) => {
                     current_config.entrypoint = Some(args.clone());
                 }
-                Instruction::Expose(_port) => {}
+                Instruction::Expose(port) => {
+                    let mut exposed = current_config.exposed_ports.take().unwrap_or_default();
+                    exposed.insert(format!("{}/tcp", port), serde_json::json!({}));
+                    current_config.exposed_ports = Some(exposed);
+                    cache_key = format!("{}_expose_{}", cache_key, port);
+                }
                 Instruction::Label { key, value } => {
                     let mut labels = current_config.labels.take().unwrap_or_default();
                     labels.insert(key.clone(), value.clone());
                     current_config.labels = Some(labels);
                 }
-                Instruction::Healthcheck(_hc) => {}
+                Instruction::Healthcheck(hc) => {
+                    current_config.healthcheck = Some(hc.clone());
+                    cache_key = format!("{}_hc_{:?}", cache_key, hc.test);
+                }
                 Instruction::Arg { name, default } => {
                     let val = opts.build_args.get(name).cloned().or(default.clone());
+                    let val_str = val.clone().unwrap_or_default();
                     if let Some(v) = val {
                         let env_entry = format!("{}={}", name, v);
                         if let Some(envs) = &mut current_config.env {
@@ -689,7 +737,7 @@ impl ImageBuilder {
                             current_config.env = Some(vec![env_entry]);
                         }
                     }
-                    cache_key = format!("{}_arg_{}", cache_key, name);
+                    cache_key = format!("{}_arg_{}_{}", cache_key, name, val_str);
                 }
                 Instruction::User(user) => {
                     current_config.user = Some(user.clone());
@@ -740,6 +788,7 @@ impl ImageBuilder {
                 os: "linux".to_string(),
                 config: Some(current_config),
                 rootfs: None,
+                history: Vec::new(),
             },
         };
 
@@ -902,5 +951,21 @@ CMD ["/app/server"]
                 .to_string()
                 .contains("Path traversal rejected")
         );
+    }
+
+    #[test]
+    fn test_dockerfile_whitespace_preceded_instructions() {
+        let df = "   FROM   alpine:latest   \n  \t RUN echo ok  \n   EXPOSE 8080 \n";
+        let instrs = DockerfileParser::parse_str(df).unwrap();
+        assert_eq!(instrs.len(), 3);
+        assert_eq!(
+            instrs[0],
+            Instruction::From {
+                image: "alpine:latest".to_string(),
+                as_stage: None
+            }
+        );
+        assert_eq!(instrs[1], Instruction::Run("echo ok".to_string()));
+        assert_eq!(instrs[2], Instruction::Expose(8080));
     }
 }
