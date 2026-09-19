@@ -99,6 +99,104 @@ fn pattern_matches(pattern: &str, path: &str) -> bool {
     path == p || path.starts_with(&format!("{}/", p)) || path.ends_with(&format!("/{}", p))
 }
 
+pub fn matches_wildcard(pattern: &str, text: &str) -> bool {
+    let p_chars: Vec<char> = pattern.chars().collect();
+    let t_chars: Vec<char> = text.chars().collect();
+    let mut p = 0;
+    let mut t = 0;
+    let mut star = None;
+    let mut match_idx = 0;
+
+    while t < t_chars.len() {
+        if p < p_chars.len() && (p_chars[p] == '?' || p_chars[p] == t_chars[t]) {
+            p += 1;
+            t += 1;
+        } else if p < p_chars.len() && p_chars[p] == '*' {
+            star = Some(p);
+            match_idx = t;
+            p += 1;
+        } else if let Some(s) = star {
+            p = s + 1;
+            match_idx += 1;
+            t = match_idx;
+        } else {
+            return false;
+        }
+    }
+    while p < p_chars.len() && p_chars[p] == '*' {
+        p += 1;
+    }
+    p == p_chars.len()
+}
+
+pub fn parse_key_value_pairs(rest: &str) -> Vec<(String, String)> {
+    if !rest.contains('=') {
+        if let Some((k, v)) = rest.split_once(char::is_whitespace) {
+            let key = k.trim().to_string();
+            let val = v.trim().trim_matches('"').trim_matches('\'').to_string();
+            return vec![(key, val)];
+        }
+        return Vec::new();
+    }
+
+    let mut pairs = Vec::new();
+    let chars: Vec<char> = rest.chars().collect();
+    let mut i = 0;
+    let n = chars.len();
+
+    while i < n {
+        while i < n && chars[i].is_whitespace() {
+            i += 1;
+        }
+        if i >= n {
+            break;
+        }
+
+        let mut key = String::new();
+        while i < n && chars[i] != '=' && !chars[i].is_whitespace() {
+            key.push(chars[i]);
+            i += 1;
+        }
+
+        while i < n && chars[i].is_whitespace() {
+            i += 1;
+        }
+        if i < n && chars[i] == '=' {
+            i += 1;
+        }
+
+        while i < n && chars[i].is_whitespace() {
+            i += 1;
+        }
+
+        let mut val = String::new();
+        if i < n && (chars[i] == '"' || chars[i] == '\'') {
+            let quote = chars[i];
+            i += 1;
+            while i < n && chars[i] != quote {
+                if chars[i] == '\\' && i + 1 < n {
+                    i += 1;
+                }
+                val.push(chars[i]);
+                i += 1;
+            }
+            if i < n && chars[i] == quote {
+                i += 1;
+            }
+        } else {
+            while i < n && !chars[i].is_whitespace() {
+                val.push(chars[i]);
+                i += 1;
+            }
+        }
+
+        if !key.is_empty() {
+            pairs.push((key, val));
+        }
+    }
+    pairs
+}
+
 pub struct DockerfileParser;
 
 impl DockerfileParser {
@@ -128,8 +226,8 @@ impl DockerfileParser {
 
             let full_line = current_line.trim();
             if !full_line.is_empty() {
-                let inst = Self::parse_line(full_line)?;
-                instructions.push(inst);
+                let insts = Self::parse_line(full_line)?;
+                instructions.extend(insts);
             }
             current_line.clear();
         }
@@ -137,7 +235,7 @@ impl DockerfileParser {
         Ok(instructions)
     }
 
-    fn parse_line(line: &str) -> Result<Instruction> {
+    fn parse_line(line: &str) -> Result<Vec<Instruction>> {
         let trimmed = line.trim();
         let (keyword, rest) = match trimmed.split_once(char::is_whitespace) {
             Some((kw, r)) => (kw, r.trim()),
@@ -158,9 +256,9 @@ impl DockerfileParser {
                 } else {
                     None
                 };
-                Ok(Instruction::From { image, as_stage })
+                Ok(vec![Instruction::From { image, as_stage }])
             }
-            "RUN" => Ok(Instruction::Run(rest.to_string())),
+            "RUN" => Ok(vec![Instruction::Run(rest.to_string())]),
             "COPY" => {
                 let parts = parse_words(rest);
                 let mut from_stage = None;
@@ -181,11 +279,11 @@ impl DockerfileParser {
                 }
                 let dest = filtered_parts.last().unwrap().clone();
                 let src = filtered_parts[..filtered_parts.len() - 1].to_vec();
-                Ok(Instruction::Copy {
+                Ok(vec![Instruction::Copy {
                     from_stage,
                     src,
                     dest,
-                })
+                }])
             }
             "ADD" => {
                 let parts = parse_words(rest);
@@ -196,31 +294,26 @@ impl DockerfileParser {
                 }
                 let dest = parts.last().unwrap().clone();
                 let src = parts[..parts.len() - 1].to_vec();
-                Ok(Instruction::Add { src, dest })
+                Ok(vec![Instruction::Add { src, dest }])
             }
-            "WORKDIR" => Ok(Instruction::Workdir(rest.to_string())),
+            "WORKDIR" => Ok(vec![Instruction::Workdir(rest.to_string())]),
             "ENV" => {
-                if let Some((k, v)) = rest.split_once('=') {
-                    Ok(Instruction::Env {
-                        key: k.trim().to_string(),
-                        value: v.trim().trim_matches('"').to_string(),
-                    })
-                } else if let Some((k, v)) = rest.split_once(char::is_whitespace) {
-                    Ok(Instruction::Env {
-                        key: k.trim().to_string(),
-                        value: v.trim().trim_matches('"').to_string(),
-                    })
-                } else {
-                    Err(anyhow!("Invalid ENV format: '{}'", rest))
+                let pairs = parse_key_value_pairs(rest);
+                if pairs.is_empty() {
+                    return Err(anyhow!("Invalid ENV format: '{}'", rest));
                 }
+                Ok(pairs
+                    .into_iter()
+                    .map(|(key, value)| Instruction::Env { key, value })
+                    .collect())
             }
             "CMD" => {
                 let args = parse_array_or_words(rest);
-                Ok(Instruction::Cmd(args))
+                Ok(vec![Instruction::Cmd(args)])
             }
             "ENTRYPOINT" => {
                 let args = parse_array_or_words(rest);
-                Ok(Instruction::Entrypoint(args))
+                Ok(vec![Instruction::Entrypoint(args)])
             }
             "EXPOSE" => {
                 let port: u16 = rest
@@ -230,17 +323,17 @@ impl DockerfileParser {
                     .trim()
                     .parse()
                     .with_context(|| format!("Invalid port in EXPOSE: {}", rest))?;
-                Ok(Instruction::Expose(port))
+                Ok(vec![Instruction::Expose(port)])
             }
             "LABEL" => {
-                if let Some((k, v)) = rest.split_once('=') {
-                    Ok(Instruction::Label {
-                        key: k.trim().to_string(),
-                        value: v.trim().trim_matches('"').to_string(),
-                    })
-                } else {
-                    Err(anyhow!("Invalid LABEL format: '{}'", rest))
+                let pairs = parse_key_value_pairs(rest);
+                if pairs.is_empty() {
+                    return Err(anyhow!("Invalid LABEL format: '{}'", rest));
                 }
+                Ok(pairs
+                    .into_iter()
+                    .map(|(key, value)| Instruction::Label { key, value })
+                    .collect())
             }
             "HEALTHCHECK" => {
                 let mut cmd_str = rest;
@@ -248,31 +341,31 @@ impl DockerfileParser {
                     cmd_str = rest[cmd_idx + 3..].trim();
                 }
                 let test = parse_array_or_words(cmd_str);
-                Ok(Instruction::Healthcheck(HealthConfig {
+                Ok(vec![Instruction::Healthcheck(HealthConfig {
                     test,
                     interval_secs: 30,
                     timeout_secs: 30,
                     start_period_secs: 0,
                     retries: 3,
-                }))
+                })])
             }
             "ARG" => {
                 if let Some((k, v)) = rest.split_once('=') {
-                    Ok(Instruction::Arg {
+                    Ok(vec![Instruction::Arg {
                         name: k.trim().to_string(),
                         default: Some(v.trim().trim_matches('"').to_string()),
-                    })
+                    }])
                 } else {
-                    Ok(Instruction::Arg {
+                    Ok(vec![Instruction::Arg {
                         name: rest.trim().to_string(),
                         default: None,
-                    })
+                    }])
                 }
             }
-            "USER" => Ok(Instruction::User(rest.to_string())),
+            "USER" => Ok(vec![Instruction::User(rest.to_string())]),
             "VOLUME" => {
                 let vols = parse_array_or_words(rest);
-                Ok(Instruction::Volume(vols))
+                Ok(vec![Instruction::Volume(vols)])
             }
             other => Err(anyhow!("Unsupported Dockerfile instruction: {}", other)),
         }
@@ -351,6 +444,27 @@ impl ImageBuilder {
         let instructions = DockerfileParser::parse_file(&opts.dockerfile_path)?;
         if instructions.is_empty() {
             return Err(anyhow!("Empty Dockerfile"));
+        }
+
+        let first_non_arg = instructions
+            .iter()
+            .find(|i| !matches!(i, Instruction::Arg { .. }));
+        match first_non_arg {
+            Some(Instruction::From { .. }) => {}
+            _ => return Err(anyhow!("Dockerfile must begin with FROM instruction")),
+        }
+
+        if let Some(target_stage) = &opts.target {
+            let target_exists = instructions.iter().any(|inst| {
+                if let Instruction::From { as_stage, .. } = inst {
+                    as_stage.as_deref() == Some(target_stage.as_str())
+                } else {
+                    false
+                }
+            });
+            if !target_exists {
+                return Err(anyhow!("target stage {} could not be found", target_stage));
+            }
         }
 
         let dockerignore = DockerIgnore::load_from_context(&opts.context_dir);
@@ -464,59 +578,109 @@ impl ImageBuilder {
                         }
                     }
 
+                    let mut resolved_sources: Vec<PathBuf> = Vec::new();
+                    let mut url_sources: Vec<String> = Vec::new();
                     for s in src {
                         if s.starts_with("http://") || s.starts_with("https://") {
-                            // Remote URL fetch
-                            let resp = reqwest::get(s).await.context("Failed to fetch ADD URL")?;
-                            let bytes = resp.bytes().await.context("Failed to read ADD URL body")?;
-                            if let Some(parent) = target_dir.parent() {
-                                fs::create_dir_all(parent)?;
-                            }
-                            let dest_file = if target_dir.is_dir() || dest.ends_with('/') {
-                                fs::create_dir_all(&target_dir)?;
-                                let url_file = s.rsplit('/').next().unwrap_or("download");
-                                target_dir.join(url_file)
-                            } else {
-                                target_dir.clone()
-                            };
-                            fs::write(&dest_file, &bytes)?;
+                            url_sources.push(s.clone());
                             continue;
                         }
 
                         if s.contains("..") || s.starts_with('/') {
                             return Err(anyhow!("Path traversal rejected in ADD source: '{}'", s));
                         }
-                        let source_path = opts.context_dir.join(s);
-                        if let Ok(canon_ctx) = opts.context_dir.canonicalize() {
-                            if let Ok(canon_src) = source_path.canonicalize() {
-                                if !canon_src.starts_with(&canon_ctx) {
-                                    return Err(anyhow!(
-                                        "ADD source escapes build context: '{}'",
-                                        s
-                                    ));
+
+                        if s.contains('*') || s.contains('?') {
+                            let (dir_part, pattern) = if let Some(last_slash) = s.rfind('/') {
+                                (&s[..last_slash], &s[last_slash + 1..])
+                            } else {
+                                ("", s.as_str())
+                            };
+                            let search_dir = if dir_part.is_empty() {
+                                opts.context_dir.clone()
+                            } else {
+                                opts.context_dir.join(dir_part.trim_start_matches('/'))
+                            };
+
+                            if !search_dir.exists() {
+                                return Err(anyhow!("Source file not found: {:?}", search_dir));
+                            }
+
+                            let mut matches_count = 0;
+                            if let Ok(entries) = fs::read_dir(&search_dir) {
+                                let mut sorted_entries: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+                                sorted_entries.sort_by_key(|e| e.file_name());
+                                for entry in sorted_entries {
+                                    let fname = entry.file_name().to_string_lossy().to_string();
+                                    if matches_wildcard(pattern, &fname) {
+                                        resolved_sources.push(entry.path());
+                                        matches_count += 1;
+                                    }
                                 }
                             }
+                            if matches_count == 0 {
+                                return Err(anyhow!("No files matching pattern: '{}'", s));
+                            }
+                        } else {
+                            let source_path = opts.context_dir.join(s);
+                            if let Ok(canon_ctx) = opts.context_dir.canonicalize() {
+                                if let Ok(canon_src) = source_path.canonicalize() {
+                                    if !canon_src.starts_with(&canon_ctx) {
+                                        return Err(anyhow!(
+                                            "ADD source escapes build context: '{}'",
+                                            s
+                                        ));
+                                    }
+                                }
+                            }
+                            if !source_path.exists() {
+                                return Err(anyhow!("Source file not found: {:?}", source_path));
+                            }
+                            resolved_sources.push(source_path);
                         }
-                        if !source_path.exists() {
-                            return Err(anyhow!("Source file not found: {:?}", source_path));
+                    }
+
+                    if (resolved_sources.len() + url_sources.len()) > 1 && !dest.ends_with('/') && !target_dir.is_dir() {
+                        return Err(anyhow!(
+                            "When adding multiple files, destination must end with /: '{}'",
+                            dest
+                        ));
+                    }
+
+                    for s in url_sources {
+                        let resp = reqwest::get(&s).await.context("Failed to fetch ADD URL")?;
+                        let bytes = resp.bytes().await.context("Failed to read ADD URL body")?;
+                        if let Some(parent) = target_dir.parent() {
+                            fs::create_dir_all(parent)?;
                         }
+                        let dest_file = if target_dir.is_dir() || dest.ends_with('/') {
+                            fs::create_dir_all(&target_dir)?;
+                            let url_file = s.rsplit('/').next().unwrap_or("download");
+                            target_dir.join(url_file)
+                        } else {
+                            target_dir.clone()
+                        };
+                        fs::write(&dest_file, &bytes)?;
+                    }
+
+                    for source_path in resolved_sources {
                         if let Ok(rel) = source_path.strip_prefix(&opts.context_dir) {
                             if dockerignore.is_ignored(rel) {
                                 continue;
                             }
                         }
 
-                        // Auto-extract local tar/tar.gz archive
-                        let is_tar = s.ends_with(".tar")
-                            || s.ends_with(".tar.gz")
-                            || s.ends_with(".tgz")
-                            || s.ends_with(".tar.bz2")
-                            || s.ends_with(".tar.xz");
+                        let s_str = source_path.to_string_lossy().to_string();
+                        let is_tar = s_str.ends_with(".tar")
+                            || s_str.ends_with(".tar.gz")
+                            || s_str.ends_with(".tgz")
+                            || s_str.ends_with(".tar.bz2")
+                            || s_str.ends_with(".tar.xz");
 
                         if is_tar && source_path.is_file() {
                             fs::create_dir_all(&target_dir)?;
                             let f = fs::File::open(&source_path)?;
-                            if s.ends_with(".tar.gz") || s.ends_with(".tgz") {
+                            if s_str.ends_with(".tar.gz") || s_str.ends_with(".tgz") {
                                 let gz = flate2::read::GzDecoder::new(f);
                                 let mut archive = tar::Archive::new(gz);
                                 crate::oci::image::unpack_archive_safely(&mut archive, &target_dir)?;
@@ -606,6 +770,7 @@ impl ImageBuilder {
                         opts.context_dir.clone()
                     };
 
+                    let mut resolved_sources: Vec<PathBuf> = Vec::new();
                     for s in src {
                         if s.contains("..") {
                             return Err(anyhow!("Path traversal rejected in COPY source: '{}'", s));
@@ -613,27 +778,73 @@ impl ImageBuilder {
                         if from_stage.is_none() && s.starts_with('/') {
                             return Err(anyhow!("COPY source cannot be absolute: '{}'", s));
                         }
-                        let source_path = if from_stage.is_some() && s.starts_with('/') {
-                            source_root.join(s.trim_start_matches('/'))
-                        } else {
-                            source_root.join(s)
-                        };
 
-                        if let Ok(canon_src_root) = source_root.canonicalize() {
-                            if let Ok(canon_src) = source_path.canonicalize() {
-                                if !canon_src.starts_with(&canon_src_root) {
-                                    return Err(anyhow!(
-                                        "COPY source escapes context directory: '{}'",
-                                        s
-                                    ));
+                        if s.contains('*') || s.contains('?') {
+                            let (dir_part, pattern) = if let Some(last_slash) = s.rfind('/') {
+                                (&s[..last_slash], &s[last_slash + 1..])
+                            } else {
+                                ("", s.as_str())
+                            };
+                            let search_dir = if from_stage.is_some() && dir_part.starts_with('/') {
+                                source_root.join(dir_part.trim_start_matches('/'))
+                            } else if dir_part.is_empty() {
+                                source_root.clone()
+                            } else {
+                                source_root.join(dir_part)
+                            };
+
+                            if !search_dir.exists() {
+                                return Err(anyhow!("Source file not found: {:?}", search_dir));
+                            }
+
+                            let mut matches_count = 0;
+                            if let Ok(entries) = fs::read_dir(&search_dir) {
+                                let mut sorted_entries: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+                                sorted_entries.sort_by_key(|e| e.file_name());
+                                for entry in sorted_entries {
+                                    let fname = entry.file_name().to_string_lossy().to_string();
+                                    if matches_wildcard(pattern, &fname) {
+                                        resolved_sources.push(entry.path());
+                                        matches_count += 1;
+                                    }
                                 }
                             }
-                        }
+                            if matches_count == 0 {
+                                return Err(anyhow!("No files matching pattern: '{}'", s));
+                            }
+                        } else {
+                            let source_path = if from_stage.is_some() && s.starts_with('/') {
+                                source_root.join(s.trim_start_matches('/'))
+                            } else {
+                                source_root.join(s)
+                            };
 
-                        if !source_path.exists() {
-                            return Err(anyhow!("Source file not found: {:?}", source_path));
-                        }
+                            if let Ok(canon_src_root) = source_root.canonicalize() {
+                                if let Ok(canon_src) = source_path.canonicalize() {
+                                    if !canon_src.starts_with(&canon_src_root) {
+                                        return Err(anyhow!(
+                                            "COPY source escapes context directory: '{}'",
+                                            s
+                                        ));
+                                    }
+                                }
+                            }
 
+                            if !source_path.exists() {
+                                return Err(anyhow!("Source file not found: {:?}", source_path));
+                            }
+                            resolved_sources.push(source_path);
+                        }
+                    }
+
+                    if resolved_sources.len() > 1 && !dest.ends_with('/') && !target_dir.is_dir() {
+                        return Err(anyhow!(
+                            "When copying multiple files, destination must end with /: '{}'",
+                            dest
+                        ));
+                    }
+
+                    for source_path in resolved_sources {
                         // Check .dockerignore for context copies
                         if from_stage.is_none() {
                             if let Ok(rel) = source_path.strip_prefix(&opts.context_dir) {

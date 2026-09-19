@@ -131,8 +131,10 @@ fn test_docker_parity_volume_crud() {
     let json_str = String::from_utf8_lossy(&out.stdout);
     let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
     let name_val = parsed
-        .get("name")
-        .or_else(|| parsed.get("Name"))
+        .as_array()
+        .and_then(|arr| arr.first())
+        .and_then(|obj| obj.get("Name").or_else(|| obj.get("name")))
+        .or_else(|| parsed.get("name").or_else(|| parsed.get("Name")))
         .unwrap()
         .as_str()
         .unwrap();
@@ -181,8 +183,10 @@ fn test_docker_parity_network_crud() {
     let json_str = String::from_utf8_lossy(&out.stdout);
     let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
     let name_val = parsed
-        .get("name")
-        .or_else(|| parsed.get("Name"))
+        .as_array()
+        .and_then(|arr| arr.first())
+        .and_then(|obj| obj.get("Name").or_else(|| obj.get("name")))
+        .or_else(|| parsed.get("name").or_else(|| parsed.get("Name")))
         .unwrap()
         .as_str()
         .unwrap();

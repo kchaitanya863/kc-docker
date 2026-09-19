@@ -223,7 +223,7 @@ EXPOSE 8000
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 "#;
     let instructions = DockerfileParser::parse_str(df).unwrap();
-    assert_eq!(instructions.len(), 7);
+    assert_eq!(instructions.len(), 8);
 }
 
 /// 9. Golang - Compiled Systems & Cloud-Native Runtime
@@ -277,7 +277,7 @@ EXPOSE 3000
 CMD ["bundle", "exec", "puma", "-C", "config/puma.rb"]
 "#;
     let instructions = DockerfileParser::parse_str(df).unwrap();
-    assert_eq!(instructions.len(), 6);
+    assert_eq!(instructions.len(), 7);
 }
 
 /// 12. PHP - Web Framework & FPM Engine

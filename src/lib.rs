@@ -712,6 +712,13 @@ fn apply_capabilities_and_security(
 }
 
 pub async fn run_container(args: RunArgs) -> Result<i32> {
+    let restart_policy = health::parse_restart_policy(&args.restart)?;
+    if args.rm && !matches!(restart_policy, health::RestartPolicy::No) {
+        return Err(anyhow!(
+            "Conflicting options: cannot specify both --restart and --rm"
+        ));
+    }
+
     let image_store = ImageStore::new();
     let image_record = match image_store.find_with_platform(&args.image, args.platform.as_deref()) {
         Some(record) if Path::new(&record.rootfs_path).exists() => record,
@@ -756,24 +763,28 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
     // Configure cgroups v2 resource limits if specified
     let mut limits = cgroups::ResourceLimits::default();
     if let Some(mem_str) = &args.memory {
-        limits.memory_max_bytes = cgroups::ResourceLimits::parse_memory(mem_str).ok();
+        limits.memory_max_bytes = Some(cgroups::ResourceLimits::parse_memory(mem_str)?);
     }
     if let Some(res_str) = &args.memory_reservation {
-        limits.memory_reservation_bytes = cgroups::ResourceLimits::parse_memory(res_str).ok();
+        limits.memory_reservation_bytes = Some(cgroups::ResourceLimits::parse_memory(res_str)?);
     }
     if let Some(cpus_str) = &args.cpus {
-        if let Ok((quota, period)) = cgroups::ResourceLimits::parse_cpus(cpus_str) {
-            limits.cpu_quota_us = Some(quota);
-            limits.cpu_period_us = Some(period);
-        }
+        let (quota, period) = cgroups::ResourceLimits::parse_cpus(cpus_str)?;
+        limits.cpu_quota_us = Some(quota);
+        limits.cpu_period_us = Some(period);
     }
     limits.cpu_shares = args.cpu_shares;
     limits.cpuset_cpus = args.cpuset_cpus.clone();
     if let Some(swap_str) = &args.memory_swap {
-        limits.memory_swap_max_bytes = cgroups::ResourceLimits::parse_memory(swap_str).ok();
+        limits.memory_swap_max_bytes = Some(cgroups::ResourceLimits::parse_memory(swap_str)?);
     }
     limits.memory_swappiness = args.memory_swappiness.map(|s| s as u64);
-    limits.pids_max = args.pids_limit;
+    if let Some(pids) = args.pids_limit {
+        if pids == 0 {
+            return Err(anyhow!("--pids-limit must be greater than 0 or -1"));
+        }
+        limits.pids_max = Some(pids);
+    }
 
     if let Ok(cgroup_mgr) = cgroups::CgroupV2Manager::new(&container_id) {
         let _ = cgroup_mgr.apply_limits(&limits);
@@ -799,8 +810,17 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
         }
     }
 
-    let env_override = if !combined_env.is_empty() {
-        Some(combined_env.as_slice())
+    let mut normalized_env = Vec::new();
+    for env_spec in &combined_env {
+        if env_spec.contains('=') {
+            normalized_env.push(env_spec.clone());
+        } else if let Ok(val) = std::env::var(env_spec) {
+            normalized_env.push(format!("{}={}", env_spec, val));
+        }
+    }
+
+    let env_override = if !normalized_env.is_empty() {
+        Some(normalized_env.as_slice())
     } else {
         None
     };
@@ -832,6 +852,7 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
     }
 
     if let Some(shm) = &args.shm_size {
+        cgroups::ResourceLimits::parse_memory(shm)?;
         if let Some(m) = spec.mounts.iter_mut().find(|m| m.destination == "/dev/shm") {
             m.options = Some(vec![
                 "nosuid".to_string(),
@@ -852,7 +873,17 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
     }
 
     if let Some(w) = &args.workdir {
-        spec.process.cwd = w.clone();
+        let clean_w = if w.starts_with('/') {
+            w.clone()
+        } else {
+            let base_cwd = spec.process.cwd.trim_end_matches('/');
+            if base_cwd.is_empty() {
+                format!("/{}", w)
+            } else {
+                format!("{}/{}", base_cwd, w)
+            }
+        };
+        spec.process.cwd = clean_w;
     }
 
     let mut annotations = HashMap::new();
@@ -942,10 +973,26 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
 
     fs::create_dir_all(&bundle_dir)?;
     if !args.add_host.is_empty() {
+        for host_entry in &args.add_host {
+            let (host, ip_str) = host_entry.split_once(':').ok_or_else(|| {
+                anyhow!("bad format for add-host: \"{}\"", host_entry)
+            })?;
+            if host.is_empty() {
+                return Err(anyhow!("bad format for add-host: \"{}\"", host_entry));
+            }
+            if ip_str.parse::<std::net::IpAddr>().is_err() {
+                return Err(anyhow!("bad format for add-host: \"{}\"", host_entry));
+            }
+        }
         let hosts_json = serde_json::to_string(&args.add_host)?;
         let _ = fs::write(bundle_dir.join("hosts.json"), hosts_json);
     }
     if !args.dns.is_empty() {
+        for dns_ip in &args.dns {
+            if dns_ip.parse::<std::net::IpAddr>().is_err() {
+                return Err(anyhow!("invalid DNS server address: '{}'", dns_ip));
+            }
+        }
         let dns_json = serde_json::to_string(&args.dns)?;
         let _ = fs::write(bundle_dir.join("dns.json"), dns_json);
     }
@@ -2051,13 +2098,13 @@ pub fn update_container(args: &cli::UpdateArgs) -> Result<()> {
 
     let mut limits = cgroups::ResourceLimits::default();
     if let Some(mem_str) = &args.memory {
-        limits.memory_max_bytes = cgroups::ResourceLimits::parse_memory(mem_str).ok();
+        let mem = cgroups::ResourceLimits::parse_memory(mem_str)?;
+        limits.memory_max_bytes = Some(mem);
     }
     if let Some(cpus_str) = &args.cpus {
-        if let Ok((quota, period)) = cgroups::ResourceLimits::parse_cpus(cpus_str) {
-            limits.cpu_quota_us = Some(quota);
-            limits.cpu_period_us = Some(period);
-        }
+        let (quota, period) = cgroups::ResourceLimits::parse_cpus(cpus_str)?;
+        limits.cpu_quota_us = Some(quota);
+        limits.cpu_period_us = Some(period);
     }
     if let (Some(q), Some(p)) = (args.cpu_quota, args.cpu_period) {
         limits.cpu_quota_us = Some(q);
@@ -2067,9 +2114,15 @@ pub fn update_container(args: &cli::UpdateArgs) -> Result<()> {
         limits.cpu_shares = Some(shares);
     }
     if let Some(swap_str) = &args.memory_swap {
-        limits.memory_swap_max_bytes = cgroups::ResourceLimits::parse_memory(swap_str).ok();
+        let swap = cgroups::ResourceLimits::parse_memory(swap_str)?;
+        limits.memory_swap_max_bytes = Some(swap);
     }
-    limits.pids_max = args.pids_limit;
+    if let Some(pids) = args.pids_limit {
+        if pids == 0 {
+            return Err(anyhow!("--pids-limit must be greater than 0 or -1"));
+        }
+        limits.pids_max = Some(pids);
+    }
 
     if let Ok(cgroup_mgr) = cgroups::CgroupV2Manager::new(&cont.id) {
         cgroup_mgr.apply_limits(&limits)?;
@@ -2302,6 +2355,7 @@ pub fn handle_volume(args: VolumeSubcommands) -> Result<()> {
         VolumeAction::Create {
             name,
             driver,
+            opts,
             labels,
             scope,
             ..
@@ -2312,11 +2366,20 @@ pub fn handle_volume(args: VolumeSubcommands) -> Result<()> {
                     label_map.insert(k.to_string(), v.to_string());
                 }
             }
+            let mut opt_map = HashMap::new();
+            for o in opts {
+                if let Some((k, v)) = o.split_once('=') {
+                    opt_map.insert(k.to_string(), v.to_string());
+                } else {
+                    opt_map.insert(o.to_string(), "".to_string());
+                }
+            }
             let vol = store.create_with_options(
                 name.as_deref(),
                 &driver,
                 Some(label_map),
                 scope.as_deref().unwrap_or("local"),
+                Some(opt_map),
             )?;
             println!("{}", vol.name);
         }
@@ -2331,7 +2394,16 @@ pub fn handle_volume(args: VolumeSubcommands) -> Result<()> {
             let vol = store
                 .find(&name)
                 .ok_or_else(|| anyhow!("Volume '{}' not found", name))?;
-            println!("{}", serde_json::to_string_pretty(&vol)?);
+            let compat = serde_json::json!([{
+                "CreatedAt": vol.created_at.to_rfc3339(),
+                "Driver": vol.driver,
+                "Labels": vol.labels,
+                "Mountpoint": vol.mountpoint,
+                "Name": vol.name,
+                "Options": vol.options,
+                "Scope": vol.scope,
+            }]);
+            println!("{}", serde_json::to_string_pretty(&compat)?);
         }
         VolumeAction::Rm { name } => {
             store.remove(&name)?;
@@ -2400,7 +2472,28 @@ pub fn handle_network(args: NetworkSubcommands) -> Result<()> {
             let net = store
                 .find(&name)
                 .ok_or_else(|| anyhow!("Network '{}' not found", name))?;
-            println!("{}", serde_json::to_string_pretty(&net)?);
+            let compat = serde_json::json!([{
+                "Name": net.name,
+                "Id": net.id,
+                "Created": net.created_at.to_rfc3339(),
+                "Scope": "local",
+                "Driver": net.driver,
+                "EnableIPv6": false,
+                "IPAM": {
+                    "Driver": "default",
+                    "Options": null,
+                    "Config": [{
+                        "Subnet": net.subnet,
+                        "Gateway": net.gateway,
+                    }]
+                },
+                "Internal": net.internal,
+                "Attachable": net.attachable,
+                "Containers": net.containers,
+                "Options": {},
+                "Labels": net.labels,
+            }]);
+            println!("{}", serde_json::to_string_pretty(&compat)?);
         }
         NetworkAction::Rm { name } => {
             store.remove(&name)?;
@@ -2422,7 +2515,11 @@ pub fn handle_network(args: NetworkSubcommands) -> Result<()> {
             }
         }
         NetworkAction::Connect { network, container } => {
-            let ep = store.connect_container(&network, &container, &container)?;
+            let c_store = ContainerStore::new();
+            let c = c_store
+                .find(&container)
+                .ok_or_else(|| anyhow!("Error: No such container: {}", container))?;
+            let ep = store.connect_container(&network, &c.id, &c.name)?;
             println!("Connected {} with IP {}", container, ep.ipv4_address);
         }
         NetworkAction::Disconnect { network, container } => {
@@ -2844,6 +2941,13 @@ pub async fn create_only_container_with_home(
     args: RunArgs,
     home_opt: Option<&Path>,
 ) -> Result<String> {
+    let restart_policy = health::parse_restart_policy(&args.restart)?;
+    if args.rm && !matches!(restart_policy, health::RestartPolicy::No) {
+        return Err(anyhow!(
+            "Conflicting options: cannot specify both --restart and --rm"
+        ));
+    }
+
     let image_store = match home_opt {
         Some(h) => ImageStore::with_home(h.to_path_buf()),
         None => ImageStore::new(),
@@ -2908,8 +3012,17 @@ pub async fn create_only_container_with_home(
         }
     }
 
-    let env_override = if !combined_env.is_empty() {
-        Some(combined_env.as_slice())
+    let mut normalized_env = Vec::new();
+    for env_spec in &combined_env {
+        if env_spec.contains('=') {
+            normalized_env.push(env_spec.clone());
+        } else if let Ok(val) = std::env::var(env_spec) {
+            normalized_env.push(format!("{}={}", env_spec, val));
+        }
+    }
+
+    let env_override = if !normalized_env.is_empty() {
+        Some(normalized_env.as_slice())
     } else {
         None
     };
@@ -2941,6 +3054,7 @@ pub async fn create_only_container_with_home(
     }
 
     if let Some(shm) = &args.shm_size {
+        cgroups::ResourceLimits::parse_memory(shm)?;
         if let Some(m) = spec.mounts.iter_mut().find(|m| m.destination == "/dev/shm") {
             m.options = Some(vec![
                 "nosuid".to_string(),
@@ -2961,29 +3075,43 @@ pub async fn create_only_container_with_home(
     }
 
     if let Some(w) = &args.workdir {
-        spec.process.cwd = w.clone();
+        let clean_w = if w.starts_with('/') {
+            w.clone()
+        } else {
+            let base_cwd = spec.process.cwd.trim_end_matches('/');
+            if base_cwd.is_empty() {
+                format!("/{}", w)
+            } else {
+                format!("{}/{}", base_cwd, w)
+            }
+        };
+        spec.process.cwd = clean_w;
     }
 
     let mut limits = cgroups::ResourceLimits::default();
     if let Some(mem_str) = &args.memory {
-        limits.memory_max_bytes = cgroups::ResourceLimits::parse_memory(mem_str).ok();
+        limits.memory_max_bytes = Some(cgroups::ResourceLimits::parse_memory(mem_str)?);
     }
     if let Some(res_str) = &args.memory_reservation {
-        limits.memory_reservation_bytes = cgroups::ResourceLimits::parse_memory(res_str).ok();
+        limits.memory_reservation_bytes = Some(cgroups::ResourceLimits::parse_memory(res_str)?);
     }
     if let Some(cpus_str) = &args.cpus {
-        if let Ok((quota, period)) = cgroups::ResourceLimits::parse_cpus(cpus_str) {
-            limits.cpu_quota_us = Some(quota);
-            limits.cpu_period_us = Some(period);
-        }
+        let (quota, period) = cgroups::ResourceLimits::parse_cpus(cpus_str)?;
+        limits.cpu_quota_us = Some(quota);
+        limits.cpu_period_us = Some(period);
     }
     limits.cpu_shares = args.cpu_shares;
     limits.cpuset_cpus = args.cpuset_cpus.clone();
     if let Some(swap_str) = &args.memory_swap {
-        limits.memory_swap_max_bytes = cgroups::ResourceLimits::parse_memory(swap_str).ok();
+        limits.memory_swap_max_bytes = Some(cgroups::ResourceLimits::parse_memory(swap_str)?);
     }
     limits.memory_swappiness = args.memory_swappiness.map(|s| s as u64);
-    limits.pids_max = args.pids_limit;
+    if let Some(pids) = args.pids_limit {
+        if pids == 0 {
+            return Err(anyhow!("--pids-limit must be greater than 0 or -1"));
+        }
+        limits.pids_max = Some(pids);
+    }
     if let Ok(cgroup_mgr) = cgroups::CgroupV2Manager::new(&container_id) {
         let _ = cgroup_mgr.apply_limits(&limits);
     }
@@ -3065,10 +3193,26 @@ pub async fn create_only_container_with_home(
     spec.annotations = Some(annotations.clone());
 
     if !args.add_host.is_empty() {
+        for host_entry in &args.add_host {
+            let (host, ip_str) = host_entry.split_once(':').ok_or_else(|| {
+                anyhow!("bad format for add-host: \"{}\"", host_entry)
+            })?;
+            if host.is_empty() {
+                return Err(anyhow!("bad format for add-host: \"{}\"", host_entry));
+            }
+            if ip_str.parse::<std::net::IpAddr>().is_err() {
+                return Err(anyhow!("bad format for add-host: \"{}\"", host_entry));
+            }
+        }
         let hosts_json = serde_json::to_string(&args.add_host)?;
         let _ = fs::write(bundle_dir.join("hosts.json"), hosts_json);
     }
     if !args.dns.is_empty() {
+        for dns_ip in &args.dns {
+            if dns_ip.parse::<std::net::IpAddr>().is_err() {
+                return Err(anyhow!("invalid DNS server address: '{}'", dns_ip));
+            }
+        }
         let dns_json = serde_json::to_string(&args.dns)?;
         let _ = fs::write(bundle_dir.join("dns.json"), dns_json);
     }
@@ -3476,6 +3620,37 @@ pub fn tag_image(args: &cli::TagArgs) -> Result<()> {
     Ok(())
 }
 
+fn append_clean_dir_all<W: std::io::Write>(
+    builder: &mut tar::Builder<W>,
+    root: &Path,
+    rel: &Path,
+) -> Result<()> {
+    let current = if rel.as_os_str().is_empty() {
+        root.to_path_buf()
+    } else {
+        root.join(rel)
+    };
+    if current.is_dir() {
+        for entry in fs::read_dir(&current)? {
+            let entry = entry?;
+            let path = entry.path();
+            let child_rel = if rel.as_os_str().is_empty() {
+                PathBuf::from(entry.file_name())
+            } else {
+                rel.join(entry.file_name())
+            };
+            if path.is_dir() {
+                builder.append_dir(&child_rel, &path)?;
+                append_clean_dir_all(builder, root, &child_rel)?;
+            } else {
+                let mut f = fs::File::open(&path)?;
+                builder.append_file(&child_rel, &mut f)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn export_container(args: &cli::ExportArgs) -> Result<()> {
     let store = ContainerStore::new();
     let cont = store
@@ -3486,13 +3661,13 @@ pub fn export_container(args: &cli::ExportArgs) -> Result<()> {
     if let Some(out_path) = &args.output {
         let file = fs::File::create(out_path)?;
         let mut builder = tar::Builder::new(file);
-        builder.append_dir_all(".", &rootfs_path)?;
+        append_clean_dir_all(&mut builder, &rootfs_path, Path::new(""))?;
         builder.finish()?;
         println!("Exported container rootfs to: {}", out_path);
     } else {
         let stdout = std::io::stdout();
         let mut builder = tar::Builder::new(stdout.lock());
-        builder.append_dir_all(".", &rootfs_path)?;
+        append_clean_dir_all(&mut builder, &rootfs_path, Path::new(""))?;
         builder.finish()?;
     }
     Ok(())
@@ -3937,6 +4112,20 @@ fn evaluate_simple_template(template: &str, value: &serde_json::Value) -> String
         serde_json::Value::Null => String::new(),
         other => other.to_string(),
     }
+}
+
+#[doc(hidden)]
+pub fn evaluate_template_for_test(template: &str, value: &serde_json::Value) -> String {
+    evaluate_simple_template(template, value)
+}
+
+#[doc(hidden)]
+pub fn append_clean_dir_all_for_test<W: std::io::Write>(
+    builder: &mut tar::Builder<W>,
+    root: &Path,
+    rel: &Path,
+) -> Result<()> {
+    append_clean_dir_all(builder, root, rel)
 }
 
 pub fn generate_spec(args: SpecArgs) -> Result<()> {

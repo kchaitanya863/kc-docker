@@ -14,6 +14,8 @@ pub struct VolumeRecord {
     pub created_at: DateTime<Utc>,
     pub labels: HashMap<String, String>,
     pub scope: String,
+    #[serde(default)]
+    pub options: HashMap<String, String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -48,6 +50,7 @@ pub trait VolumeWriter: Send + Sync {
         driver: &str,
         labels: Option<HashMap<String, String>>,
         scope: &str,
+        options: Option<HashMap<String, String>>,
     ) -> Result<VolumeRecord>;
     fn remove(&self, name: &str) -> Result<VolumeRecord>;
     fn prune(&self) -> Result<Vec<String>>;
@@ -114,7 +117,7 @@ impl VolumeStore {
         name: Option<&str>,
         labels: Option<HashMap<String, String>>,
     ) -> Result<VolumeRecord> {
-        self.create_with_options(name, "local", labels, "local")
+        self.create_with_options(name, "local", labels, "local", None)
     }
 
     pub fn create_with_options(
@@ -123,6 +126,7 @@ impl VolumeStore {
         driver: &str,
         labels: Option<HashMap<String, String>>,
         scope: &str,
+        options: Option<HashMap<String, String>>,
     ) -> Result<VolumeRecord> {
         crate::storage::index_lock::with_index_lock(&self.index_file, || {
             let mut data = self.load_unlocked();
@@ -187,6 +191,7 @@ impl VolumeStore {
                 created_at: Utc::now(),
                 labels: labels.unwrap_or_default(),
                 scope: scope.to_string(),
+                options: options.unwrap_or_default(),
             };
 
             data.volumes.push(record.clone());
@@ -416,8 +421,9 @@ impl VolumeWriter for VolumeStore {
         driver: &str,
         labels: Option<HashMap<String, String>>,
         scope: &str,
+        options: Option<HashMap<String, String>>,
     ) -> Result<VolumeRecord> {
-        self.create_with_options(name, driver, labels, scope)
+        self.create_with_options(name, driver, labels, scope, options)
     }
 
     fn remove(&self, name: &str) -> Result<VolumeRecord> {

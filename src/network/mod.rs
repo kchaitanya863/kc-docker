@@ -84,6 +84,10 @@ pub struct NetworkRecord {
     pub subnet: String,
     pub gateway: String,
     pub internal: bool,
+    #[serde(default)]
+    pub attachable: bool,
+    #[serde(default)]
+    pub labels: HashMap<String, String>,
     pub created_at: DateTime<Utc>,
     pub containers: HashMap<String, NetworkEndpoint>,
 }
@@ -206,6 +210,8 @@ impl NetworkStore {
                     subnet: "172.28.0.0/16".to_string(),
                     gateway: "172.28.0.1".to_string(),
                     internal: false,
+                    attachable: false,
+                    labels: HashMap::new(),
                     created_at: Utc::now(),
                     containers: HashMap::new(),
                 };
@@ -255,8 +261,8 @@ impl NetworkStore {
         subnet: Option<&str>,
         gateway: Option<&str>,
         internal: bool,
-        _attachable: bool,
-        _labels: HashMap<String, String>,
+        attachable: bool,
+        labels: HashMap<String, String>,
     ) -> Result<NetworkRecord> {
         let name_trimmed = name.trim();
         if name_trimmed.is_empty()
@@ -292,6 +298,8 @@ impl NetworkStore {
                 subnet: chosen_subnet,
                 gateway: chosen_gw,
                 internal,
+                attachable,
+                labels,
                 created_at: Utc::now(),
                 containers: HashMap::new(),
             };

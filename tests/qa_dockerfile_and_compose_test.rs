@@ -30,7 +30,7 @@ CMD ["/bin/sh", "-c", "echo ready"]
 "#;
 
     let instructions = DockerfileParser::parse_str(content).unwrap();
-    assert_eq!(instructions.len(), 6);
+    assert_eq!(instructions.len(), 7);
 
     match &instructions[0] {
         Instruction::From { image, as_stage } => {

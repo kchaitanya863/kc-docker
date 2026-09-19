@@ -47,6 +47,11 @@ fn find_boxr_executable() -> PathBuf {
     boxr_home().join("bin").join("boxr")
 }
 
+#[doc(hidden)]
+pub fn find_boxr_executable_for_test() -> PathBuf {
+    find_boxr_executable()
+}
+
 pub struct ServiceManager;
 
 impl ServiceManager {
