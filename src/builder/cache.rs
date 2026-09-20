@@ -1,0 +1,65 @@
+use crate::storage::boxr_home;
+use anyhow::Result;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+pub struct BuildCache;
+
+impl BuildCache {
+    fn cache_dir() -> PathBuf {
+        boxr_home().join("buildcache")
+    }
+
+    pub fn get(key: &str) -> Option<PathBuf> {
+        let dir = Self::cache_dir().join(key).join("rootfs");
+        if dir.exists() { Some(dir) } else { None }
+    }
+
+    pub fn put(key: &str, rootfs: &Path) -> Result<()> {
+        let dir = Self::cache_dir().join(key).join("rootfs");
+        fs::create_dir_all(&dir)?;
+        copy_dir_all(rootfs, &dir)?;
+        Ok(())
+    }
+
+    pub fn prune() -> Result<usize> {
+        let cache = Self::cache_dir();
+        if cache.exists() {
+            let mut count = 0;
+            for entry in fs::read_dir(&cache)? {
+                let path = entry?.path();
+                if path.is_dir() {
+                    let _ = fs::remove_dir_all(&path);
+                    count += 1;
+                }
+            }
+            Ok(count)
+        } else {
+            Ok(0)
+        }
+    }
+}
+
+pub fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+
+        if ty.is_dir() {
+            copy_dir_all(&from, &to)?;
+        } else if ty.is_symlink() {
+            #[cfg(unix)]
+            {
+                if let Ok(target) = fs::read_link(&from) {
+                    let _ = std::os::unix::fs::symlink(target, &to);
+                }
+            }
+        } else {
+            let _ = fs::copy(&from, &to);
+        }
+    }
+    Ok(())
+}
