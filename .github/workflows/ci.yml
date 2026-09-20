@@ -54,6 +54,16 @@ jobs:
       - name: Run Test Suite
         run: cargo test --all --verbose -- --test-threads=1
 
+      - name: Run Black-Box QA (shell smoke)
+        run: ./scripts/run_blackbox_qa.sh -b ./target/debug/boxr --no-rust -s negative
+
+      - name: Run Black-Box QA (Rust integration)
+        run: |
+          cargo test --test blackbox_negative_test \
+                     --test blackbox_resources_test \
+                     --test blackbox_volumes_test \
+                     -- --test-threads=1
+
   bump-and-tag:
     name: Bump Version & Create Git Tag
     needs: test

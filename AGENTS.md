@@ -56,4 +56,8 @@ cargo test --lib
 
 # 3. Run full integration & parity suites sequentially
 cargo test -- --test-threads=1
+
+# 4. Enterprise black-box QA (compose, volumes, networking, security)
+./scripts/run_blackbox_qa.sh -b ./target/release/boxr
+# See docs/BLACKBOX_QA.md for section filters and Rust-only runs
 ```

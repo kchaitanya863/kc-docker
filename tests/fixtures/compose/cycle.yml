@@ -1,0 +1,12 @@
+services:
+  a:
+    image: alpine:latest
+    command: ["sleep", "10"]
+    depends_on:
+      - b
+
+  b:
+    image: alpine:latest
+    command: ["sleep", "10"]
+    depends_on:
+      - a

@@ -1,0 +1,16 @@
+services:
+  web:
+    image: alpine:latest
+    command: ["sleep", "300"]
+    networks:
+      - appnet
+
+  db:
+    image: alpine:latest
+    command: ["sleep", "300"]
+    networks:
+      - appnet
+
+networks:
+  appnet:
+    driver: bridge

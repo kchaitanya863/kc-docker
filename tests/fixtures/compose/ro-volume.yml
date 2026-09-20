@@ -1,0 +1,12 @@
+services:
+  app:
+    image: alpine:latest
+    command:
+      - /bin/sh
+      - -c
+      - "echo ro-test > /data/marker.txt 2>&1 || echo RO_WRITE_FAILED"
+    volumes:
+      - data-vol:/data:ro
+
+volumes:
+  data-vol:

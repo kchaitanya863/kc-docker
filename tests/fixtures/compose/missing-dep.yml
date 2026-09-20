@@ -1,0 +1,6 @@
+services:
+  app:
+    image: alpine:latest
+    command: ["echo", "ok"]
+    depends_on:
+      - nonexistent_service
