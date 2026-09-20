@@ -92,3 +92,22 @@ Use this skill when developing, debugging, benchmarking, or packaging `boxr` (th
   brew install boxr
   brew services start boxr
   ```
+
+---
+
+## 6. Architecture & SOLID Decomposition Notes
+
+When refactoring or extending `boxr`:
+- **Single Responsibility (SRP)**:
+  - `src/cli/`: Separate CLI domain submodules (`container.rs`, `image.rs`, `system.rs`, `volumes_networks.rs`). Keep subcommands grouped by domain rather than accumulating in a single file.
+  - `src/daemon/`: Domain-isolated endpoint route modules (`containers.rs`, `images.rs`, `prune.rs`, `system.rs`, `volumes_networks.rs`).
+  - `src/builder/`: Clear distinction between AST parsing (`parser.rs`), image container execution (`executor.rs`), caching (`cache.rs`), and ignore rules (`dockerignore.rs`).
+  - `src/network/usernet/`: Protocol frame codecs (`packets.rs`) decoupled from in-memory NAT routing loops (`engine.rs`).
+- **Interface Segregation (ISP)**:
+  - Storage backends implement split traits: `ContainerReader` / `ContainerWriter`, `ImageReader` / `ImageWriter`, `VolumeReader` / `VolumeWriter`, and `NetworkReader` / `NetworkWriter` / `NetworkConnector`.
+  - Prefer passing `&impl ContainerReader` or `&impl ImageReader` when read-only inspection or stats queries are executed.
+- **Dependency Inversion (DIP) & Open/Closed (OCP)**:
+  - Use runtime engine traits (`ContainerRuntime`, `ProcessKiller`, `HealthProbe`, `ResourceManager`, `IpAllocator`, `EventSink`) to allow alternative platform runners or mock drivers without touching orchestration logic.
+- **Regression String Assertions Guardrail**:
+  - `tests/issues_47_to_111_test.rs` validates specific architectural code strings via `include_str!`. Retain explicit symbol exports and key function signatures in `src/builder/mod.rs`, `src/daemon/mod.rs`, and `src/lib.rs`.
+

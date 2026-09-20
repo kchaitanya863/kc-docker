@@ -228,3 +228,29 @@ See **[Enterprise Container Runtimes & Hardening Guide](ENTERPRISE_RUNTIMES.md)*
 | **Networking** | Pure-Rust `usernet` or `pasta` tap virtualization | VirtIO NAT + port forwarder proxy | TCP port proxying / WinNAT |
 | **Filesystem Isolation** | Native `pivot_root()` + private mount namespace | `virtiofs` zero-copy share + micro-VM mounts | Host directory bind mounts |
 | **Resource Limits** | Linux cgroups v2 controllers | VirtIO CPU/RAM allocation | Windows Job Objects / cgroups inside WSL |
+
+---
+
+## 5. SOLID Design & Modular Subsystem Architecture
+
+To prevent architectural degradation and maintain sub-millisecond execution guarantees, `boxr` adheres to SOLID object-oriented and trait-driven design:
+
+### 5.1. Single Responsibility Principle (SRP)
+- **CLI Parsing (`src/cli/`)**: Subcommands are divided into domain modules (`container.rs`, `image.rs`, `system.rs`, `volumes_networks.rs`), isolating flag definitions from global command dispatching.
+- **REST Daemon (`src/daemon/`)**: HTTP handlers are decoupled by resource (`containers.rs`, `images.rs`, `prune.rs`, `system.rs`, `volumes_networks.rs`) rather than housed in a single monolithic router.
+- **Image Builder (`src/builder/`)**: Syntax parsing (`parser.rs`), containerized build execution (`executor.rs`), cache lookups (`cache.rs`), and wildcard filtering (`dockerignore.rs`) exist as independent units.
+- **Network Virtualization (`src/network/usernet/`)**: Low-level protocol codecs and checksum verifications (`packets.rs`) are separated from TAP event loops and proxying (`engine.rs`).
+
+### 5.2. Interface Segregation Principle (ISP) & Liskov Substitution (LSP)
+- **Segregated Storage Traits (`src/storage/traits.rs`)**:
+  - `ContainerReader` / `ContainerWriter`
+  - `ImageReader` / `ImageWriter`
+  - `VolumeReader` / `VolumeWriter`
+  - `NetworkReader` / `NetworkWriter` / `NetworkConnector`
+- Components performing inspection (such as `SystemManager::df_with_readers` or `StatsCollector::display_stats_with_reader`) require only read-only traits, preventing unintended store mutations.
+
+### 5.3. Dependency Inversion (DIP) & Open/Closed Principle (OCP)
+- **Pluggable Execution Backends (`src/runtime/traits.rs`)**: `ContainerRuntime` and `ProcessKiller` allow alternative execution engines (Wasm, gVisor, Firecracker) without altering lifecycle supervisors.
+- **Pluggable Distribution Client (`src/oci/distribution.rs`)**: `ImageDistribution` defines manifest fetching and blob streaming contracts.
+- **Health Probing & Resource Control**: `HealthProbe` (`src/health/mod.rs`) and `ResourceManager` (`src/cgroups/mod.rs`) invert control from concrete OS routines to testable traits.
+

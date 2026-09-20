@@ -31,21 +31,27 @@ Comprehensive engineering guides, architectural diagrams, and command manuals:
 ```
 boxr/
 ├── src/
-│   ├── main.rs                 # CLI entrypoint and command routing
-│   ├── lib.rs                  # Library crate root and command handlers
-│   ├── cli.rs                  # Clap CLI arguments, options, and subcommands
+│   ├── main.rs                 # CLI entrypoint, unshare, and single-threaded trampolines
+│   ├── lib.rs                  # Library crate root and command orchestration
+│   ├── cli/                    # Clap CLI arguments, options, and command definitions
+│   │   ├── mod.rs              # Top-level Cli and Commands enum
+│   │   ├── container.rs        # Container flags (RunArgs, ExecArgs, LogsArgs, PsArgs)
+│   │   ├── image.rs            # Image flags (BuildArgs, ImagesArgs, PullArgs, Save/Load)
+│   │   ├── system.rs           # System flags (DaemonArgs, EventsArgs, ServiceArgs, Pods)
+│   │   └── volumes_networks.rs # VolumeSubcommands and NetworkSubcommands
 │   ├── oci/
 │   │   ├── mod.rs              # OCI module definitions
 │   │   ├── reference.rs        # Image reference parsing (e.g. library/hello-world:latest)
-│   │   ├── distribution.rs     # OCI Distribution Spec / Registry v2 HTTP client
+│   │   ├── distribution.rs     # OCI Distribution Spec / Registry v2 HTTP client & ImageDistribution trait
 │   │   ├── image.rs            # OCI Image Spec: manifests, configs, layer unpacker & whiteouts
 │   │   └── runtime.rs          # OCI Runtime Spec: config.json bundle generator
 │   ├── security/
 │   │   └── mod.rs              # Rootless user namespaces, UID/GID maps, capabilities, seccomp
 │   ├── cgroups/
-│   │   └── mod.rs              # cgroups v2 resource limit controllers (memory, cpus, pids)
+│   │   └── mod.rs              # cgroups v2 resource limit controllers & ResourceManager trait
 │   ├── storage/
 │   │   ├── mod.rs              # Local storage manager (~/.boxr/)
+│   │   ├── traits.rs           # ISP storage traits (ContainerReader/Writer, ImageReader/Writer)
 │   │   ├── overlay.rs          # OverlayFS & Copy-on-Write storage driver
 │   │   ├── image_store.rs      # Local image index & content-addressable layer store
 │   │   └── container_store.rs  # Container lifecycle & state tracking
@@ -54,38 +60,59 @@ boxr/
 │   ├── terminal/
 │   │   └── mod.rs              # Raw terminal PTY guard and window size detection
 │   ├── builder/
-│   │   └── mod.rs              # Dockerfile parser, step executor, and image builder
+│   │   ├── mod.rs              # Builder module exports and regression contracts
+│   │   ├── parser.rs           # Multi-stage Dockerfile parser & Instruction AST
+│   │   ├── executor.rs         # Build stage executor and containerized step runner
+│   │   ├── cache.rs            # Content-addressed build cache manager
+│   │   └── dockerignore.rs     # .dockerignore pattern matcher and wildcard resolver
 │   ├── compose/
 │   │   └── mod.rs              # Compose YAML parser, dependency graph, and orchestrator
 │   ├── network/
-│   │   ├── mod.rs              # Bridge networks, IPAM, and port forwarding
+│   │   ├── mod.rs              # Bridge networks, IPAM, and NetworkReader/Writer traits
 │   │   ├── pasta.rs            # Pasta user-mode tap rootless network driver
-│   │   ├── usernet.rs          # Pure-Rust native user-mode L2/L3/L4 network stack
+│   │   ├── usernet/            # Pure-Rust native user-mode L2/L3/L4 network stack
+│   │   │   ├── mod.rs          # UserNet exports and TAP packet loop integration
+│   │   │   ├── packets.rs      # Ethernet, ARP, IPv4, UDP, and TCP header serializers & checksums
+│   │   │   └── engine.rs       # In-memory ARP, ICMP echo, and TCP NAT proxy engine
 │   │   └── rootless.rs         # Rootless user-space TCP port forwarder proxy
 │   ├── pod/
-│   │   └── mod.rs              # Podman pod lifecycle and namespace sharing
+│   │   └── mod.rs              # Podman pod lifecycle and namespace sharing (PodReader/Writer)
 │   ├── kube/
 │   │   └── mod.rs              # Kubernetes Pod YAML play, generate, and unshare
 │   ├── health/
-│   │   └── mod.rs              # Container healthcheck probes and restart policies
+│   │   └── mod.rs              # Container healthcheck probes (HealthProbe trait) and restart supervisor
 │   ├── stats/
 │   │   └── mod.rs              # Real-time resource usage collector (CPU %, RAM, PIDs)
 │   ├── events/
-│   │   └── mod.rs              # Real-time JSONL lifecycle events recorder and streamer
+│   │   └── mod.rs              # Real-time JSONL lifecycle events recorder (EventSink & EventFilter)
 │   ├── system/
-│   │   └── mod.rs              # Disk space auditing (df) and automated pruning
+│   │   └── mod.rs              # Disk space auditing (df_with_readers) and automated pruning
 │   ├── volume/
-│   │   └── mod.rs              # Named volume storage and bind mount resolver
+│   │   └── mod.rs              # Named volume storage and bind mount resolver (VolumeReader/Writer)
 │   ├── daemon/
-│   │   └── mod.rs              # Unix domain socket server & Docker-compatible REST API
+│   │   ├── mod.rs              # Unix domain socket server & router dispatcher
+│   │   ├── containers.rs       # Container lifecycle REST endpoints (create, inspect, wait, logs)
+│   │   ├── images.rs           # Image management REST endpoints (list, create, tag, inspect)
+│   │   ├── system.rs           # Daemon health and system info endpoints (_ping, version, info)
+│   │   ├── prune.rs            # Resource cleanup endpoints (containers, images, volumes, networks)
+│   │   └── volumes_networks.rs # Volume & network REST CRUD endpoints
 │   └── runtime/
-│       ├── mod.rs              # Execution runtime trait & platform routing
+│       ├── mod.rs              # Execution runtime traits (ContainerRuntime & ProcessKiller)
+│       ├── traits.rs           # Container runtime engine abstractions
+│       ├── kill.rs             # Process termination & signal parsing
+│       ├── cp.rs               # Container-to-host and host-to-container copy engine
+│       ├── diff.rs             # Container filesystem diff engine
+│       ├── top.rs              # Process inspection inside container bundles
 │       ├── linux.rs            # Native Linux execution (unshare, pivot_root, mounts)
-│       └── darwin.rs           # macOS container execution bridge
+│       └── darwin.rs           # macOS container execution bridge (Virtualization.framework)
 └── tests/
-    ├── e2e_test.rs             # End-to-end workload and integration test suite
+    ├── docker_parity_test.rs   # Upstream Docker and Podman CLI parity tests
+    ├── e2e_test.rs             # End-to-end container, network, and compose tests
+    ├── enterprise_scenarios_test.rs # Enterprise workload and security isolation tests
     ├── integration_test.rs     # Integration test suite
-    └── qa_*.rs                 # Exhaustive edge case and breaking test suites
+    ├── issues_47_to_111_test.rs # Regression tests for issues #47 to #111
+    ├── issues_113_to_162_test.rs# Regression tests for issues #113 to #162
+    └── qa_*.rs                 # Edge-case, negative, and breaking test matrices
 ```
 
 ---
