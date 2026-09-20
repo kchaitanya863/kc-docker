@@ -20,6 +20,8 @@ pub struct SaveArgs {
 pub struct LoadArgs {
     #[arg(short = 'i', long = "input")]
     pub input: Option<String>,
+    #[arg(short = 'q', long = "quiet")]
+    pub quiet: bool,
 }
 
 #[derive(Args, Debug)]
@@ -33,6 +35,8 @@ pub struct LoginArgs {
     pub username: Option<String>,
     #[arg(short = 'p', long = "password")]
     pub password: Option<String>,
+    #[arg(long = "password-stdin")]
+    pub password_stdin: bool,
     pub server: Option<String>,
 }
 
@@ -120,6 +124,21 @@ pub struct BuildArgs {
     #[arg(long = "squash")]
     pub squash: bool,
 
+    #[arg(long = "disable-content-trust")]
+    pub disable_content_trust: bool,
+
+    #[arg(long = "output")]
+    pub output: Option<String>,
+
+    #[arg(long = "progress")]
+    pub progress: Option<String>,
+
+    #[arg(long = "secret")]
+    pub secret: Vec<String>,
+
+    #[arg(long = "ssh")]
+    pub ssh: Vec<String>,
+
     #[arg(default_value = ".")]
     pub path: String,
 }
@@ -133,7 +152,23 @@ pub struct BuilderSubcommands {
 #[derive(Subcommand, Debug)]
 pub enum BuilderAction {
     /// Prune build cache
-    Prune,
+    Prune(BuilderPruneArgs),
+    /// Build an image
+    Build(BuildArgs),
+    /// Show build cache disk usage
+    Du,
+}
+
+#[derive(Args, Debug, Clone, Default)]
+pub struct BuilderPruneArgs {
+    #[arg(short = 'a', long = "all")]
+    pub all: bool,
+    #[arg(short = 'f', long = "force")]
+    pub force: bool,
+    #[arg(long = "filter")]
+    pub filter: Vec<String>,
+    #[arg(long = "keep-storage")]
+    pub keep_storage: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -149,28 +184,175 @@ pub struct ComposeArgs {
 pub enum ComposeSubcommand {
     Up(ComposeUpArgs),
     Down(ComposeDownArgs),
-    Ps,
+    Ps(ComposePsArgs),
     Logs(ComposeLogsArgs),
+    Config,
+    Restart(ComposeRestartArgs),
+    Exec(ComposeExecArgs),
+    Build(ComposeBuildArgs),
+    Stop(ComposeServiceArgs),
+    Start(ComposeServiceArgs),
+    Rm(ComposeRmArgs),
+    Cp(ComposeCpArgs),
+    Create,
+    Events,
+    Images,
+    Kill(ComposeServiceArgs),
+    Ls,
+    Pause(ComposeServiceArgs),
+    Port(ComposePortArgs),
+    Pull,
+    Push,
+    Run(ComposeRunArgs),
+    Top(ComposeServiceArgs),
+    Unpause(ComposeServiceArgs),
+    Version,
+    Wait(ComposeServiceArgs),
 }
 
-#[derive(Args, Debug)]
+#[derive(Args, Debug, Default)]
 pub struct ComposeUpArgs {
     #[arg(short = 'd', long = "detach")]
     pub detach: bool,
-
     #[arg(long = "build")]
     pub build: bool,
+    #[arg(long = "no-build")]
+    pub no_build: bool,
+    #[arg(long = "no-start")]
+    pub no_start: bool,
+    #[arg(long = "force-recreate")]
+    pub force_recreate: bool,
+    #[arg(long = "no-deps")]
+    pub no_deps: bool,
+    #[arg(long = "no-recreate")]
+    pub no_recreate: bool,
+    #[arg(long = "pull")]
+    pub pull: Option<String>,
+    #[arg(long = "quiet-pull")]
+    pub quiet_pull: bool,
+    #[arg(long = "remove-orphans")]
+    pub remove_orphans: bool,
+    #[arg(long = "renew-anon-volumes")]
+    pub renew_anon_volumes: bool,
+    #[arg(long = "scale")]
+    pub scale: Vec<String>,
+    #[arg(long = "timeout")]
+    pub timeout: Option<String>,
+    #[arg(long = "wait-timeout")]
+    pub wait_timeout: Option<String>,
+    #[arg(long = "wait")]
+    pub wait: bool,
+    #[arg(long = "timestamps")]
+    pub timestamps: bool,
 }
 
-#[derive(Args, Debug)]
+#[derive(Args, Debug, Default)]
 pub struct ComposeDownArgs {
     #[arg(short = 'v', long = "volumes")]
     pub volumes: bool,
+    #[arg(long = "remove-orphans")]
+    pub remove_orphans: bool,
+    #[arg(long = "rmi")]
+    pub rmi: Option<String>,
+    #[arg(long = "timeout")]
+    pub timeout: Option<String>,
+}
+
+#[derive(Args, Debug, Default)]
+pub struct ComposePsArgs {
+    #[arg(short = 'q', long = "quiet")]
+    pub quiet: bool,
+    #[arg(long = "format")]
+    pub format: Option<String>,
+    #[arg(short = 'a', long = "all")]
+    pub all: bool,
+    #[arg(short = 'f', long = "filter")]
+    pub filter: Vec<String>,
+    #[arg(long = "services")]
+    pub services: bool,
+    #[arg(long = "status")]
+    pub status: Vec<String>,
+}
+
+#[derive(Args, Debug, Default)]
+pub struct ComposeLogsArgs {
+    pub service: Option<String>,
+    #[arg(short = 'f', long = "follow")]
+    pub follow: bool,
+    #[arg(long = "tail")]
+    pub tail: Option<String>,
+    #[arg(short = 't', long = "timestamps")]
+    pub timestamps: bool,
+    #[arg(long = "no-color")]
+    pub no_color: bool,
+    #[arg(long = "no-log-prefix")]
+    pub no_log_prefix: bool,
+    #[arg(long = "since")]
+    pub since: Option<String>,
+    #[arg(long = "until")]
+    pub until: Option<String>,
+}
+
+#[derive(Args, Debug, Default)]
+pub struct ComposeRestartArgs {
+    pub service: Option<String>,
+    #[arg(long = "no-deps")]
+    pub no_deps: bool,
+}
+
+#[derive(Args, Debug, Default)]
+pub struct ComposeExecArgs {
+    pub service: String,
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    pub command: Vec<String>,
+}
+
+#[derive(Args, Debug, Default)]
+pub struct ComposeBuildArgs {
+    pub service: Option<String>,
+    #[arg(long = "no-cache")]
+    pub no_cache: bool,
+    #[arg(long = "build-arg")]
+    pub build_arg: Vec<String>,
+    #[arg(long = "pull")]
+    pub pull: bool,
+    #[arg(long = "push")]
+    pub push: bool,
+    #[arg(short = 'q', long = "quiet")]
+    pub quiet: bool,
+}
+
+#[derive(Args, Debug, Default)]
+pub struct ComposeServiceArgs {
+    pub service: Option<String>,
+}
+
+#[derive(Args, Debug, Default)]
+pub struct ComposeRmArgs {
+    #[arg(short = 'f', long = "force")]
+    pub force: bool,
+    #[arg(short = 's', long = "stop")]
+    pub stop: bool,
+    pub service: Option<String>,
 }
 
 #[derive(Args, Debug)]
-pub struct ComposeLogsArgs {
-    pub service: Option<String>,
+pub struct ComposeCpArgs {
+    pub src: String,
+    pub dest: String,
+}
+
+#[derive(Args, Debug, Default)]
+pub struct ComposeRunArgs {
+    pub service: String,
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    pub command: Vec<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct ComposePortArgs {
+    pub service: String,
+    pub private_port: u16,
 }
 
 #[derive(Args, Debug)]
@@ -204,6 +386,9 @@ pub struct ImagePruneArgs {
 
     #[arg(short = 'f', long = "force")]
     pub force: bool,
+
+    #[arg(long = "filter")]
+    pub filter: Vec<String>,
 }
 
 #[derive(Args, Debug, Clone, Default)]
@@ -284,6 +469,16 @@ pub enum ManifestAction {
         #[arg(long = "purge")]
         purge: bool,
     },
+    /// Remove one or more manifest lists
+    Rm {
+        target: String,
+    },
+    /// Add or update annotations on a manifest list
+    Annotate {
+        target: String,
+        #[arg(long = "annotation")]
+        annotation: Vec<String>,
+    },
 }
 
 #[derive(Args, Debug)]
@@ -302,12 +497,33 @@ pub struct ImportArgs {
 
     /// Repository and optional tag to apply
     pub reference: Option<String>,
+
+    #[arg(long = "change")]
+    pub change: Vec<String>,
+
+    #[arg(short = 'm', long = "message")]
+    pub message: Option<String>,
+
+    #[arg(long = "platform")]
+    pub platform: Option<String>,
 }
 
 #[derive(Args, Debug)]
 pub struct HistoryArgs {
     /// Image to show history for
     pub image: String,
+
+    #[arg(short = 'f', long = "format")]
+    pub format: Option<String>,
+
+    #[arg(long = "human", default_value_t = true)]
+    pub human: bool,
+
+    #[arg(short = 'q', long = "quiet")]
+    pub quiet: bool,
+
+    #[arg(long = "no-trunc")]
+    pub no_trunc: bool,
 }
 
 #[derive(Args, Debug)]
@@ -315,6 +531,15 @@ pub struct SearchArgs {
     /// Max number of search results
     #[arg(long = "limit", default_value_t = 25)]
     pub limit: usize,
+
+    #[arg(short = 'f', long = "filter")]
+    pub filter: Vec<String>,
+
+    #[arg(long = "format")]
+    pub format: Option<String>,
+
+    #[arg(long = "no-trunc")]
+    pub no_trunc: bool,
 
     /// Search term
     pub term: String,

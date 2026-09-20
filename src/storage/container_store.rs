@@ -214,7 +214,24 @@ impl ContainerStore {
         crate::storage::index_lock::with_index_lock(&self.index_file, || {
             let mut data = self.load_unlocked();
 
-            if data.containers.iter().any(|c| c.name == new_name_trimmed) {
+            let old_container = data
+                .containers
+                .iter()
+                .find(|c| {
+                    c.id == old_query || c.id.starts_with(old_query) || c.name == old_query
+                })
+                .ok_or_else(|| anyhow!("Container not found: {}", old_query))?;
+
+            let old_id = old_container.id.clone();
+            if old_container.name == new_name_trimmed {
+                return Ok(());
+            }
+
+            if data
+                .containers
+                .iter()
+                .any(|c| c.name == new_name_trimmed && c.id != old_id)
+            {
                 return Err(anyhow!(
                     "Container name '{}' is already in use",
                     new_name_trimmed
@@ -224,7 +241,7 @@ impl ContainerStore {
             if let Some(c) = data
                 .containers
                 .iter_mut()
-                .find(|c| c.id == old_query || c.id.starts_with(old_query) || c.name == old_query)
+                .find(|c| c.id == old_id)
             {
                 c.name = new_name_trimmed.to_string();
                 self.save_unlocked(&data)?;

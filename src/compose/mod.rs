@@ -222,6 +222,7 @@ impl ComposeProject {
                             add_host: Vec::new(),
                             memory: None,
                             shm_size: None,
+                            quiet: false,
                         })
                         .await?;
                     record.reference
@@ -317,6 +318,7 @@ impl ComposeProject {
                 platform: None,
                 privileged: false,
                 network: "bridge".to_string(),
+                disable_content_trust: false,
                 gpus: None,
                 entrypoint: None,
                 env_file: None,
@@ -478,6 +480,38 @@ impl ComposeProject {
         let _ = net_store.remove(&project_net_name);
 
         println!("Project '{}' stopped and removed.", self.name);
+        Ok(())
+    }
+
+    pub async fn build(&self, no_cache: bool, quiet: bool) -> Result<()> {
+        let root_dir = self.compose_file_path.parent().unwrap_or(Path::new("."));
+        for (svc_name, svc) in &self.compose.services {
+            if let Some(build_ctx) = &svc.build {
+                let ctx_path = root_dir.join(build_ctx);
+                let dockerfile = ctx_path.join("Dockerfile");
+                if dockerfile.exists() {
+                    let builder = ImageBuilder::new();
+                    let tag = svc
+                        .image
+                        .clone()
+                        .unwrap_or_else(|| format!("{}_{}:latest", self.name, svc_name));
+                    let _ = builder
+                        .build(BuildOptions {
+                            context_dir: ctx_path,
+                            dockerfile_path: dockerfile,
+                            tag: Some(tag),
+                            no_cache,
+                            build_args: HashMap::new(),
+                            target: None,
+                            add_host: Vec::new(),
+                            memory: None,
+                            shm_size: None,
+                            quiet,
+                        })
+                        .await?;
+                }
+            }
+        }
         Ok(())
     }
 

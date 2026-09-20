@@ -198,4 +198,22 @@ pub enum Commands {
 
     /// Manage the Boxr background daemon service (launchd on macOS, systemd on Linux)
     Service(ServiceArgs),
+
+    /// Manage Swarm (stub)
+    Swarm,
+
+    /// Manage plugins (stub)
+    Plugin,
+
+    /// Manage Swarm configs (stub)
+    Config,
+
+    /// Manage Swarm secrets (stub)
+    Secret,
+
+    /// Manage Swarm nodes (stub)
+    Node,
+
+    /// Manage trust (stub)
+    Trust,
 }

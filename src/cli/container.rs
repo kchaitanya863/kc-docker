@@ -86,8 +86,11 @@ pub struct RunArgs {
     pub platform: Option<String>,
 
     /// Connect a container to a network
-    #[arg(long = "network", default_value = "auto")]
+    #[arg(long = "network", alias = "net", default_value = "auto")]
     pub network: String,
+
+    #[arg(long = "disable-content-trust")]
+    pub disable_content_trust: bool,
 
     /// Give extended privileges to this container
     #[arg(long = "privileged")]
@@ -570,12 +573,18 @@ pub enum ContainerAction {
     Diff(DiffArgs),
     Prune(ContainerPruneArgs),
     Update(UpdateArgs),
+    Export(ExportArgs),
+    Rename(RenameArgs),
+    Stats(super::system::StatsArgs),
+    Commit(CommitArgs),
 }
 
 #[derive(Args, Debug, Clone, Default)]
 pub struct ContainerPruneArgs {
     #[arg(short = 'f', long = "force")]
     pub force: bool,
+    #[arg(long = "filter")]
+    pub filter: Vec<String>,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -667,18 +676,23 @@ pub struct CommitArgs {
 
     /// Repository and optional tag (e.g., "my-image:v1")
     pub repo_tag: Option<String>,
+
+    #[arg(long = "change")]
+    pub change: Vec<String>,
 }
 
 #[derive(Args, Debug)]
 pub struct PauseArgs {
-    /// Container to pause
-    pub container: String,
+    /// Containers to pause
+    #[arg(required = true)]
+    pub containers: Vec<String>,
 }
 
 #[derive(Args, Debug)]
 pub struct UnpauseArgs {
-    /// Container to unpause
-    pub container: String,
+    /// Containers to unpause
+    #[arg(required = true)]
+    pub containers: Vec<String>,
 }
 
 #[derive(Args, Debug)]
@@ -692,8 +706,9 @@ pub struct RenameArgs {
 
 #[derive(Args, Debug)]
 pub struct WaitArgs {
-    /// Container to wait on
-    pub container: String,
+    /// Containers to wait on
+    #[arg(required = true)]
+    pub containers: Vec<String>,
 }
 
 #[derive(Args, Debug)]
@@ -703,6 +718,15 @@ pub struct CpArgs {
 
     /// Destination path (e.g. "./dest" or "my-container:/app/dest")
     pub dest: String,
+
+    #[arg(long = "archive")]
+    pub archive: bool,
+
+    #[arg(long = "follow-link")]
+    pub follow_link: bool,
+
+    #[arg(short = 'q', long = "quiet")]
+    pub quiet: bool,
 }
 
 #[derive(Args, Debug)]
@@ -792,6 +816,9 @@ pub struct RestartArgs {
     /// Seconds to wait before killing the container
     #[arg(short = 't', long = "time", default_value_t = 10)]
     pub time: u32,
+
+    #[arg(short = 's', long = "signal")]
+    pub signal: Option<String>,
 
     /// Container to restart
     pub container: String,

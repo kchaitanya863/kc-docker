@@ -119,6 +119,7 @@ impl KubeManager {
                 platform: None,
                 privileged: false,
                 network: "auto".to_string(),
+                disable_content_trust: false,
                 gpus: None,
                 entrypoint: None,
                 env_file: None,

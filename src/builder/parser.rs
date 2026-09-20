@@ -38,6 +38,9 @@ pub enum Instruction {
     },
     User(String),
     Volume(Vec<String>),
+    StopSignal(String),
+    Shell(Vec<String>),
+    OnBuild(Box<Instruction>),
 }
 
 pub struct DockerfileParser;
@@ -236,6 +239,18 @@ impl DockerfileParser {
             "VOLUME" => {
                 let vols = parse_array_or_words(rest);
                 Ok(vec![Instruction::Volume(vols)])
+            }
+            "STOPSIGNAL" => Ok(vec![Instruction::StopSignal(rest.to_string())]),
+            "SHELL" => {
+                let shell = parse_array_or_words(rest);
+                Ok(vec![Instruction::Shell(shell)])
+            }
+            "ONBUILD" => {
+                let insts = Self::parse_line(rest)?;
+                if insts.len() != 1 {
+                    return Err(anyhow!("ONBUILD requires exactly one instruction"));
+                }
+                Ok(vec![Instruction::OnBuild(Box::new(insts[0].clone()))])
             }
             other => Err(anyhow!("Unsupported Dockerfile instruction: {}", other)),
         }

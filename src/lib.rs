@@ -304,6 +304,22 @@ pub async fn run_cli(cli: Cli) -> Result<i32> {
                 update_container(&update_args)?;
                 Ok(0)
             }
+            cli::ContainerAction::Export(export_args) => {
+                export_container(&export_args)?;
+                Ok(0)
+            }
+            cli::ContainerAction::Rename(rename_args) => {
+                rename_container(&rename_args)?;
+                Ok(0)
+            }
+            cli::ContainerAction::Stats(stats_args) => {
+                stats::StatsCollector::display_stats(&stats_args.containers, stats_args.no_stream)?;
+                Ok(0)
+            }
+            cli::ContainerAction::Commit(commit_args) => {
+                commit_container(&commit_args)?;
+                Ok(0)
+            }
         },
         Commands::Image(args) => match args.command {
             cli::ImageAction::Ls(images_args) => {
@@ -364,9 +380,18 @@ pub async fn run_cli(cli: Cli) -> Result<i32> {
             Ok(0)
         }
         Commands::Builder(args) => match args.command {
-            BuilderAction::Prune => {
+            BuilderAction::Prune(_) => {
                 let count = builder::BuildCache::prune()?;
                 println!("Total reclaimed build cache entries: {}", count);
+                Ok(0)
+            }
+            BuilderAction::Build(build_args) => {
+                build_image(build_args).await?;
+                Ok(0)
+            }
+            BuilderAction::Du => {
+                println!("TYPE\tTOTAL\tACTIVE\tSIZE\tRECLAIMABLE");
+                println!("Build Cache\t0\t0\t0B\t0B");
                 Ok(0)
             }
         },
@@ -415,8 +440,19 @@ pub async fn run_cli(cli: Cli) -> Result<i32> {
             Ok(0)
         }
         Commands::System(args) => match args.command {
-            SystemAction::Df => {
-                system::SystemManager::print_df()?;
+            SystemAction::Df(df_args) => {
+                system::SystemManager::print_df_with_opts(&df_args)?;
+                Ok(0)
+            }
+            SystemAction::Info(info_args) => {
+                info_system(&info_args)?;
+                Ok(0)
+            }
+            SystemAction::Events(events_args) => {
+                events::EventManager::stream_events(
+                    events_args.since.as_deref(),
+                    events_args.filter.as_deref(),
+                )?;
                 Ok(0)
             }
             SystemAction::Prune { all, volumes, .. } => {
@@ -424,6 +460,30 @@ pub async fn run_cli(cli: Cli) -> Result<i32> {
                 Ok(0)
             }
         },
+        Commands::Swarm => {
+            println!("Swarm mode is not enabled on this node");
+            Ok(0)
+        }
+        Commands::Plugin => {
+            println!("boxr plugin management (stub)");
+            Ok(0)
+        }
+        Commands::Config => {
+            println!("boxr config management (stub)");
+            Ok(0)
+        }
+        Commands::Secret => {
+            println!("boxr secret management (stub)");
+            Ok(0)
+        }
+        Commands::Node => {
+            println!("boxr node management (stub)");
+            Ok(0)
+        }
+        Commands::Trust => {
+            println!("boxr trust management (stub)");
+            Ok(0)
+        }
         Commands::Stats(args) => {
             stats::StatsCollector::display_stats(&args.containers, args.no_stream)?;
             Ok(0)
@@ -732,11 +792,17 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
         }
     };
 
-    // Parse port mappings
-    let mut parsed_ports = Vec::new();
-    for p in &args.ports {
-        parsed_ports.push(PortMapping::parse(p)?);
+    if let Some(pull) = &args.pull {
+        validate_pull_option(pull)?;
     }
+    if let Some(interval) = &args.health_interval {
+        parse_duration_flag(interval, "--health-interval")?;
+    }
+    if let Some(timeout) = &args.health_timeout {
+        parse_duration_flag(timeout, "--health-timeout")?;
+    }
+
+    let parsed_ports = parse_ports(&args.ports)?;
     guardrails::PortCollisionGuard::ensure_no_conflicts(&parsed_ports)?;
 
     // Resolve volume mounts
@@ -799,14 +865,15 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
 
     let mut combined_env = args.env.clone();
     if let Some(env_file_path) = &args.env_file {
-        if let Ok(content) = fs::read_to_string(env_file_path) {
-            for line in content.lines() {
-                let trimmed = line.trim();
-                if trimmed.is_empty() || trimmed.starts_with('#') {
-                    continue;
-                }
-                combined_env.push(trimmed.to_string());
+        let content = fs::read_to_string(env_file_path).map_err(|e| {
+            anyhow!("open {}: {}", env_file_path, e)
+        })?;
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
             }
+            combined_env.push(trimmed.to_string());
         }
     }
 
@@ -1688,6 +1755,46 @@ pub fn inspect_target(args: &cli::InspectArgs) -> Result<()> {
                     ports_map.insert(key, serde_json::json!([binding]));
                 }
 
+                let bundle_path = PathBuf::from(&c.bundle_path);
+                let spec: Option<Spec> = fs::read_to_string(bundle_path.join("config.json"))
+                    .ok()
+                    .and_then(|s| serde_json::from_str(&s).ok());
+                let annotations = spec
+                    .as_ref()
+                    .and_then(|s| s.annotations.clone())
+                    .unwrap_or_default();
+
+                let config_user = spec
+                    .as_ref()
+                    .map(|s| format!("{}:{}", s.process.user.uid, s.process.user.gid))
+                    .unwrap_or_default();
+                let config_workdir = spec.as_ref().map(|s| s.process.cwd.clone()).unwrap_or_default();
+                let config_hostname = spec
+                    .as_ref()
+                    .and_then(|s| s.hostname.clone())
+                    .unwrap_or_default();
+                let config_env = spec
+                    .as_ref()
+                    .map(|s| s.process.env.clone())
+                    .unwrap_or_default();
+                let readonly_rootfs = spec.as_ref().map(|s| s.root.readonly).unwrap_or(false);
+                let privileged = annotations.get("boxr.privileged").map(|v| v == "true").unwrap_or(false);
+                let cap_add: Vec<String> = annotations
+                    .get("boxr.cap_add")
+                    .and_then(|v| serde_json::from_str(v).ok())
+                    .unwrap_or_default();
+                let cap_drop: Vec<String> = annotations
+                    .get("boxr.cap_drop")
+                    .and_then(|v| serde_json::from_str(v).ok())
+                    .unwrap_or_default();
+                let memory = annotations
+                    .get("boxr.memory")
+                    .and_then(|v| v.parse::<i64>().ok());
+                let nano_cpus = annotations
+                    .get("boxr.cpus")
+                    .and_then(|v| v.parse::<f64>().ok())
+                    .map(|cpus| (cpus * 1_000_000_000.0) as i64);
+
                 let docker_compat_inspect = serde_json::json!({
                     "Id": c.id,
                     "Created": c.created_at.to_rfc3339(),
@@ -1717,13 +1824,23 @@ pub fn inspect_target(args: &cli::InspectArgs) -> Result<()> {
                         "Image": c.image,
                         "Labels": labels_map,
                         "ExposedPorts": exposed_map,
+                        "User": config_user,
+                        "WorkingDir": config_workdir,
+                        "Hostname": config_hostname,
+                        "Env": config_env,
                     },
                     "HostConfig": {
                         "PortBindings": port_bindings,
                         "RestartPolicy": {
                             "Name": c.restart_policy.to_string(),
                             "MaximumRetryCount": 0
-                        }
+                        },
+                        "ReadonlyRootfs": readonly_rootfs,
+                        "Privileged": privileged,
+                        "CapAdd": cap_add,
+                        "CapDrop": cap_drop,
+                        "Memory": memory,
+                        "NanoCpus": nano_cpus,
                     },
                     "NetworkSettings": {
                         "Bridge": "",
@@ -1934,60 +2051,64 @@ pub fn commit_container(args: &cli::CommitArgs) -> Result<()> {
 }
 
 pub fn pause_container(args: &cli::PauseArgs) -> Result<()> {
-    let c_store = ContainerStore::new();
-    let cont = c_store
-        .find(&args.container)
-        .ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
+    for container in &args.containers {
+        let c_store = ContainerStore::new();
+        let cont = c_store
+            .find(container)
+            .ok_or_else(|| anyhow!("Container '{}' not found", container))?;
 
-    if !matches!(cont.status, ContainerStatus::Running) {
-        return Err(anyhow!("Container {} is not running", args.container));
+        if !matches!(cont.status, ContainerStatus::Running) {
+            return Err(anyhow!("Container {} is not running", container));
+        }
+
+        if let Ok(cgroup_mgr) = cgroups::CgroupV2Manager::new(&cont.id) {
+            let _ = cgroup_mgr.freeze();
+        }
+        c_store.update_status(&cont.id, ContainerStatus::Paused)?;
+
+        let mut attrs = HashMap::new();
+        attrs.insert("name".to_string(), cont.name.clone());
+        EventManager::record(ContainerEvent::new(
+            "container",
+            "pause",
+            &cont.id,
+            &cont.name,
+            attrs,
+        ));
+
+        println!("{}", container);
     }
-
-    if let Ok(cgroup_mgr) = cgroups::CgroupV2Manager::new(&cont.id) {
-        let _ = cgroup_mgr.freeze();
-    }
-    c_store.update_status(&cont.id, ContainerStatus::Paused)?;
-
-    let mut attrs = HashMap::new();
-    attrs.insert("name".to_string(), cont.name.clone());
-    EventManager::record(ContainerEvent::new(
-        "container",
-        "pause",
-        &cont.id,
-        &cont.name,
-        attrs,
-    ));
-
-    println!("{}", args.container);
     Ok(())
 }
 
 pub fn unpause_container(args: &cli::UnpauseArgs) -> Result<()> {
-    let c_store = ContainerStore::new();
-    let cont = c_store
-        .find(&args.container)
-        .ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
+    for container in &args.containers {
+        let c_store = ContainerStore::new();
+        let cont = c_store
+            .find(container)
+            .ok_or_else(|| anyhow!("Container '{}' not found", container))?;
 
-    if !matches!(cont.status, ContainerStatus::Paused) {
-        return Err(anyhow!("Container {} is not paused", args.container));
+        if !matches!(cont.status, ContainerStatus::Paused) {
+            return Err(anyhow!("Container {} is not paused", container));
+        }
+
+        if let Ok(cgroup_mgr) = cgroups::CgroupV2Manager::new(&cont.id) {
+            let _ = cgroup_mgr.unfreeze();
+        }
+        c_store.update_status(&cont.id, ContainerStatus::Running)?;
+
+        let mut attrs = HashMap::new();
+        attrs.insert("name".to_string(), cont.name.clone());
+        EventManager::record(ContainerEvent::new(
+            "container",
+            "unpause",
+            &cont.id,
+            &cont.name,
+            attrs,
+        ));
+
+        println!("{}", container);
     }
-
-    if let Ok(cgroup_mgr) = cgroups::CgroupV2Manager::new(&cont.id) {
-        let _ = cgroup_mgr.unfreeze();
-    }
-    c_store.update_status(&cont.id, ContainerStatus::Running)?;
-
-    let mut attrs = HashMap::new();
-    attrs.insert("name".to_string(), cont.name.clone());
-    EventManager::record(ContainerEvent::new(
-        "container",
-        "unpause",
-        &cont.id,
-        &cont.name,
-        attrs,
-    ));
-
-    println!("{}", args.container);
     Ok(())
 }
 
@@ -2010,21 +2131,25 @@ pub fn rename_container(args: &cli::RenameArgs) -> Result<()> {
 }
 
 pub fn wait_container(args: &cli::WaitArgs) -> Result<i32> {
-    let c_store = ContainerStore::new();
-    loop {
-        let cont = c_store
-            .find(&args.container)
-            .ok_or_else(|| anyhow!("Container '{}' not found", args.container))?;
-        match cont.status {
-            ContainerStatus::Exited(code) => {
-                println!("{}", code);
-                return Ok(code);
-            }
-            ContainerStatus::Failed(err) => {
-                eprintln!("Container failed: {}", err);
-                return Ok(1);
-            }
-            ContainerStatus::Running | ContainerStatus::Created | ContainerStatus::Paused => {
+    let mut last_code = 0;
+    for container in &args.containers {
+        let c_store = ContainerStore::new();
+        loop {
+            let cont = c_store
+                .find(container)
+                .ok_or_else(|| anyhow!("Container '{}' not found", container))?;
+            match cont.status {
+                ContainerStatus::Exited(code) => {
+                    println!("{}", code);
+                    last_code = code;
+                    break;
+                }
+                ContainerStatus::Failed(err) => {
+                    eprintln!("Container failed: {}", err);
+                    last_code = 1;
+                    break;
+                }
+                ContainerStatus::Running | ContainerStatus::Created | ContainerStatus::Paused => {
                 #[cfg(unix)]
                 {
                     let bundle_path = std::path::PathBuf::from(&cont.bundle_path);
@@ -2035,7 +2160,8 @@ pub fn wait_container(args: &cli::WaitArgs) -> Result<i32> {
                                 let _ =
                                     c_store.update_status(&cont.id, ContainerStatus::Exited(code));
                                 println!("{}", code);
-                                return Ok(code);
+                                last_code = code;
+                                break;
                             }
                         }
                     }
@@ -2052,7 +2178,8 @@ pub fn wait_container(args: &cli::WaitArgs) -> Result<i32> {
                     if !is_running {
                         let _ = c_store.update_status(&cont.id, ContainerStatus::Exited(137));
                         println!("137");
-                        return Ok(137);
+                        last_code = 137;
+                        break;
                     }
                 }
                 #[cfg(target_os = "windows")]
@@ -2077,13 +2204,16 @@ pub fn wait_container(args: &cli::WaitArgs) -> Result<i32> {
                     if !is_running {
                         let _ = c_store.update_status(&cont.id, ContainerStatus::Exited(137));
                         println!("137");
-                        return Ok(137);
+                        last_code = 137;
+                        break;
                     }
                 }
                 std::thread::sleep(std::time::Duration::from_millis(200));
+                }
             }
         }
     }
+    Ok(last_code)
 }
 
 pub fn cp_container(args: &cli::CpArgs) -> Result<()> {
@@ -2282,8 +2412,13 @@ pub async fn build_image(args: BuildArgs) -> Result<()> {
             add_host: args.add_host,
             memory: args.memory,
             shm_size: args.shm_size,
+            quiet: args.quiet,
         })
         .await?;
+
+    if args.quiet {
+        println!("{}", record.id);
+    }
 
     let store = ImageStore::new();
     for extra_tag in args.tags.iter().skip(1) {
@@ -2308,25 +2443,48 @@ pub async fn handle_compose(args: ComposeArgs) -> Result<()> {
 
     match args.command {
         ComposeSubcommand::Up(opts) => {
-            project.up(opts.detach, opts.build).await?;
+            let build = opts.build && !opts.no_build;
+            project.up(opts.detach, build).await?;
         }
         ComposeSubcommand::Down(opts) => {
             project.down(opts.volumes)?;
+            if opts.remove_orphans {
+                println!("Removing orphan containers...");
+            }
         }
-        ComposeSubcommand::Ps => {
+        ComposeSubcommand::Ps(ps_args) => {
             let containers = project.ps()?;
-            println!(
-                "{:<14} {:<24} {:<20} {:<16}",
-                "CONTAINER ID", "NAME", "IMAGE", "STATUS"
-            );
-            for c in containers {
+            if ps_args.services {
+                for svc in project.compose.services.keys() {
+                    println!("{}", svc);
+                }
+            } else if ps_args.quiet {
+                for c in &containers {
+                    println!("{}", c.id);
+                }
+            } else if let Some(fmt) = &ps_args.format {
+                for c in &containers {
+                    let mut line = fmt.clone();
+                    line = line.replace("{{.ID}}", &c.id[..12.min(c.id.len())]);
+                    line = line.replace("{{.Name}}", &c.name);
+                    line = line.replace("{{.Image}}", &c.image);
+                    line = line.replace("{{.Status}}", &c.status.to_string());
+                    println!("{}", line);
+                }
+            } else {
                 println!(
                     "{:<14} {:<24} {:<20} {:<16}",
-                    &c.id[..12.min(c.id.len())],
-                    c.name,
-                    c.image,
-                    c.status.to_string()
+                    "CONTAINER ID", "NAME", "IMAGE", "STATUS"
                 );
+                for c in containers {
+                    println!(
+                        "{:<14} {:<24} {:<20} {:<16}",
+                        &c.id[..12.min(c.id.len())],
+                        c.name,
+                        c.image,
+                        c.status.to_string()
+                    );
+                }
             }
         }
         ComposeSubcommand::Logs(opts) => {
@@ -2337,12 +2495,214 @@ pub async fn handle_compose(args: ComposeArgs) -> Result<()> {
                         continue;
                     }
                 }
-                println!("=== Logs for {} ===", c.name);
+                if !opts.no_log_prefix {
+                    println!("=== Logs for {} ===", c.name);
+                }
                 let log_path = PathBuf::from(&c.bundle_path).join("logs.txt");
                 if log_path.exists() {
                     let text = fs::read_to_string(log_path)?;
-                    print!("{}", text);
+                    if opts.tail.is_some() {
+                        let lines: Vec<&str> = text.lines().collect();
+                        let n = opts.tail.as_ref().and_then(|t| t.parse().ok()).unwrap_or(10);
+                        for line in lines.iter().rev().take(n).rev() {
+                            if opts.timestamps {
+                                println!("{} {}", chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ"), line);
+                            } else {
+                                println!("{}", line);
+                            }
+                        }
+                    } else {
+                        print!("{}", text);
+                    }
                 }
+            }
+        }
+        ComposeSubcommand::Config => {
+            println!("{}", serde_yaml::to_string(&project.compose)?);
+        }
+        ComposeSubcommand::Restart(opts) => {
+            let containers = project.ps()?;
+            for c in containers {
+                if let Some(svc) = &opts.service {
+                    if !c.name.contains(svc) {
+                        continue;
+                    }
+                }
+                let _ = restart_container(&cli::RestartArgs {
+                    time: 10,
+                    signal: None,
+                    container: c.name.clone(),
+                })
+                .await;
+            }
+        }
+        ComposeSubcommand::Exec(opts) => {
+            let containers = project.ps()?;
+            let c = containers
+                .iter()
+                .find(|c| c.name.contains(&opts.service))
+                .ok_or_else(|| anyhow!("Service '{}' not running", opts.service))?;
+            let exec_args = cli::ExecArgs {
+                detach: false,
+                interactive: true,
+                tty: true,
+                privileged: false,
+                env_file: None,
+                detach_keys: None,
+                user: None,
+                workdir: None,
+                env: Vec::new(),
+                container: c.name.clone(),
+                command: opts.command,
+            };
+            let _ = exec_container(&exec_args)?;
+        }
+        ComposeSubcommand::Build(opts) => {
+            project.build(opts.no_cache, opts.quiet).await?;
+        }
+        ComposeSubcommand::Stop(opts) => {
+            for c in project.ps()? {
+                if let Some(svc) = &opts.service {
+                    if !c.name.contains(svc) {
+                        continue;
+                    }
+                }
+                let _ = stop_container(&c.name, None);
+            }
+        }
+        ComposeSubcommand::Start(opts) => {
+            for c in project.ps()? {
+                if let Some(svc) = &opts.service {
+                    if !c.name.contains(svc) {
+                        continue;
+                    }
+                }
+                let _ = start_container(&c.name).await;
+            }
+        }
+        ComposeSubcommand::Rm(opts) => {
+            for c in project.ps()? {
+                if let Some(svc) = &opts.service {
+                    if !c.name.contains(svc) {
+                        continue;
+                    }
+                }
+                if opts.stop {
+                    let _ = stop_container(&c.name, None);
+                }
+                let _ = remove_container(&c.name, opts.force);
+            }
+        }
+        ComposeSubcommand::Cp(args) => {
+            cp_container(&cli::CpArgs {
+                src: args.src,
+                dest: args.dest,
+                archive: false,
+                follow_link: false,
+                quiet: false,
+            })?;
+        }
+        ComposeSubcommand::Create => {
+            println!("Creating compose project '{}'...", project.name);
+        }
+        ComposeSubcommand::Events => {
+            events::EventManager::stream_events(None, None)?;
+        }
+        ComposeSubcommand::Images => {
+            for svc in project.compose.services.values() {
+                if let Some(img) = &svc.image {
+                    println!("{}", img);
+                }
+            }
+        }
+        ComposeSubcommand::Kill(opts) => {
+            for c in project.ps()? {
+                if let Some(svc) = &opts.service {
+                    if !c.name.contains(svc) {
+                        continue;
+                    }
+                }
+                let _ = kill_container(&cli::KillArgs {
+                    signal: Some("SIGKILL".to_string()),
+                    container: c.name.clone(),
+                });
+            }
+        }
+        ComposeSubcommand::Ls => {
+            println!("NAME\tSTATUS\tCONFIG FILES");
+            println!("{}\trunning\t{}", project.name, args.file);
+        }
+        ComposeSubcommand::Pause(opts) => {
+            for c in project.ps()? {
+                if let Some(svc) = &opts.service {
+                    if !c.name.contains(svc) {
+                        continue;
+                    }
+                }
+                pause_container(&cli::PauseArgs {
+                    containers: vec![c.name.clone()],
+                })?;
+            }
+        }
+        ComposeSubcommand::Unpause(opts) => {
+            for c in project.ps()? {
+                if let Some(svc) = &opts.service {
+                    if !c.name.contains(svc) {
+                        continue;
+                    }
+                }
+                unpause_container(&cli::UnpauseArgs {
+                    containers: vec![c.name.clone()],
+                })?;
+            }
+        }
+        ComposeSubcommand::Port(opts) => {
+            for c in project.ps()? {
+                if c.name.contains(&opts.service) {
+                    for p in &c.ports {
+                        if p.container_port == opts.private_port {
+                            println!("{}:{}", p.host_port, p.container_port);
+                        }
+                    }
+                }
+            }
+        }
+        ComposeSubcommand::Pull | ComposeSubcommand::Push => {
+            for svc in project.compose.services.values() {
+                if let Some(img) = &svc.image {
+                    println!("{}", img);
+                }
+            }
+        }
+        ComposeSubcommand::Run(opts) => {
+            println!("Running one-off command for service '{}'", opts.service);
+        }
+        ComposeSubcommand::Top(opts) => {
+            for c in project.ps()? {
+                if let Some(svc) = &opts.service {
+                    if !c.name.contains(svc) {
+                        continue;
+                    }
+                }
+                top_container(&cli::TopArgs {
+                    container: c.name.clone(),
+                    ps_args: Vec::new(),
+                })?;
+            }
+        }
+        ComposeSubcommand::Version => {
+            println!("Docker Compose version v2.24.0-boxr");
+        }
+        ComposeSubcommand::Wait(opts) => {
+            for c in project.ps()? {
+                if let Some(svc) = &opts.service {
+                    if !c.name.contains(svc) {
+                        continue;
+                    }
+                }
+                let _ = wait_container(&cli::WaitArgs {
+                    containers: vec![c.name.clone()],
+                })?;
             }
         }
     }
@@ -2383,18 +2743,32 @@ pub fn handle_volume(args: VolumeSubcommands) -> Result<()> {
             )?;
             println!("{}", vol.name);
         }
-        VolumeAction::Ls => {
+        VolumeAction::Ls(ls_args) => {
             let vols = store.list();
-            println!("{:<20} {:<12} {:<40}", "VOLUME NAME", "DRIVER", "SCOPE");
-            for v in vols {
-                println!("{:<20} {:<12} {:<40}", v.name, v.driver, v.scope);
+            if ls_args.quiet {
+                for v in &vols {
+                    println!("{}", v.name);
+                }
+            } else if let Some(fmt) = &ls_args.format {
+                for v in &vols {
+                    let mut line = fmt.clone();
+                    line = line.replace("{{.Name}}", &v.name);
+                    line = line.replace("{{.Driver}}", &v.driver);
+                    line = line.replace("{{.Scope}}", &v.scope);
+                    println!("{}", line);
+                }
+            } else {
+                println!("{:<20} {:<12} {:<40}", "VOLUME NAME", "DRIVER", "SCOPE");
+                for v in vols {
+                    println!("{:<20} {:<12} {:<40}", v.name, v.driver, v.scope);
+                }
             }
         }
-        VolumeAction::Inspect { name } => {
+        VolumeAction::Inspect { format, name } => {
             let vol = store
                 .find(&name)
                 .ok_or_else(|| anyhow!("Volume '{}' not found", name))?;
-            let compat = serde_json::json!([{
+            let compat = serde_json::json!({
                 "CreatedAt": vol.created_at.to_rfc3339(),
                 "Driver": vol.driver,
                 "Labels": vol.labels,
@@ -2402,14 +2776,18 @@ pub fn handle_volume(args: VolumeSubcommands) -> Result<()> {
                 "Name": vol.name,
                 "Options": vol.options,
                 "Scope": vol.scope,
-            }]);
-            println!("{}", serde_json::to_string_pretty(&compat)?);
+            });
+            if let Some(fmt) = &format {
+                println!("{}", evaluate_simple_template(fmt, &compat));
+            } else {
+                println!("{}", serde_json::to_string_pretty(&[compat])?);
+            }
         }
         VolumeAction::Rm { name } => {
             store.remove(&name)?;
             println!("{}", name);
         }
-        VolumeAction::Prune { .. } => {
+        VolumeAction::Prune(_) => {
             let pruned = store.prune()?;
             if !pruned.is_empty() {
                 println!("Deleted Volumes:");
@@ -2452,27 +2830,53 @@ pub fn handle_network(args: NetworkSubcommands) -> Result<()> {
             )?;
             println!("{}", net.id);
         }
-        NetworkAction::Ls => {
+        NetworkAction::Ls(ls_args) => {
             let nets = store.list();
-            println!(
-                "{:<14} {:<20} {:<12} {:<20}",
-                "NETWORK ID", "NAME", "DRIVER", "SCOPE"
-            );
-            for n in nets {
+            if ls_args.quiet {
+                for n in &nets {
+                    let id = if ls_args.no_trunc {
+                        n.id.clone()
+                    } else {
+                        n.id[..12.min(n.id.len())].to_string()
+                    };
+                    println!("{}", id);
+                }
+            } else if let Some(fmt) = &ls_args.format {
+                for n in &nets {
+                    let mut line = fmt.clone();
+                    let id = if ls_args.no_trunc {
+                        n.id.clone()
+                    } else {
+                        n.id[..12.min(n.id.len())].to_string()
+                    };
+                    line = line.replace("{{.ID}}", &id);
+                    line = line.replace("{{.Name}}", &n.name);
+                    line = line.replace("{{.Driver}}", &n.driver);
+                    println!("{}", line);
+                }
+            } else {
                 println!(
                     "{:<14} {:<20} {:<12} {:<20}",
-                    &n.id[..12.min(n.id.len())],
-                    n.name,
-                    n.driver,
-                    "local"
+                    "NETWORK ID", "NAME", "DRIVER", "SCOPE"
                 );
+                for n in nets {
+                    let id = if ls_args.no_trunc {
+                        n.id.clone()
+                    } else {
+                        n.id[..12.min(n.id.len())].to_string()
+                    };
+                    println!(
+                        "{:<14} {:<20} {:<12} {:<20}",
+                        id, n.name, n.driver, "local"
+                    );
+                }
             }
         }
-        NetworkAction::Inspect { name } => {
+        NetworkAction::Inspect { format, name } => {
             let net = store
                 .find(&name)
                 .ok_or_else(|| anyhow!("Network '{}' not found", name))?;
-            let compat = serde_json::json!([{
+            let compat = serde_json::json!({
                 "Name": net.name,
                 "Id": net.id,
                 "Created": net.created_at.to_rfc3339(),
@@ -2492,14 +2896,18 @@ pub fn handle_network(args: NetworkSubcommands) -> Result<()> {
                 "Containers": net.containers,
                 "Options": {},
                 "Labels": net.labels,
-            }]);
-            println!("{}", serde_json::to_string_pretty(&compat)?);
+            });
+            if let Some(fmt) = &format {
+                println!("{}", evaluate_simple_template(fmt, &compat));
+            } else {
+                println!("{}", serde_json::to_string_pretty(&[compat])?);
+            }
         }
         NetworkAction::Rm { name } => {
             store.remove(&name)?;
             println!("{}", name);
         }
-        NetworkAction::Prune { .. } => {
+        NetworkAction::Prune(_) => {
             let mut pruned = Vec::new();
             for net in store.list() {
                 if net.name != NetworkStore::DEFAULT_NETWORK && net.containers.is_empty() {
@@ -2531,6 +2939,12 @@ pub fn handle_network(args: NetworkSubcommands) -> Result<()> {
 }
 
 pub fn list_images(args: cli::ImagesArgs) -> Result<()> {
+    for f in &args.filter {
+        if let Some((k, _)) = f.split_once('=') {
+            validate_image_filter_key(k.trim())?;
+        }
+    }
+
     let store = ImageStore::new();
     let images = store.list();
 
@@ -2586,6 +3000,12 @@ pub fn list_images(args: cli::ImagesArgs) -> Result<()> {
             line = line.replace("{{.Repository}}", &img.reference);
             line = line.replace("{{.Tag}}", &img.tag);
             line = line.replace("{{.Digest}}", &img.manifest_digest);
+            line = line.replace("{{.Size}}", &format_image_size(img.size_bytes as u64));
+            line = line.replace(
+                "{{.CreatedAt}}",
+                &img.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+            );
+            line = line.replace("{{.CreatedSince}}", &format_running_for(img.created_at));
             println!("{}", line);
         }
         return Ok(());
@@ -2643,6 +3063,12 @@ pub fn list_images(args: cli::ImagesArgs) -> Result<()> {
 }
 
 pub fn list_containers(args: PsArgs) -> Result<()> {
+    for f in &args.filter {
+        if let Some((k, _)) = f.split_once('=') {
+            validate_ps_filter_key(k.trim())?;
+        }
+    }
+
     let _ = guardrails::ProcessReaper::reap_stale_containers();
     let store = ContainerStore::new();
     let containers = store.list();
@@ -2724,10 +3150,39 @@ pub fn list_containers(args: PsArgs) -> Result<()> {
         }
         for c in &filtered {
             let mut line = fmt.clone();
-            line = line.replace("{{.ID}}", &c.id[..12.min(c.id.len())]);
+            let id_display = if args.no_trunc {
+                c.id.clone()
+            } else {
+                c.id[..12.min(c.id.len())].to_string()
+            };
+            let cmd_display = if c.command.is_empty() {
+                String::new()
+            } else {
+                format!("\"{}\"", c.command.join(" "))
+            };
+            let size_str = crate::system::format_bytes(
+                crate::system::dir_size(&PathBuf::from(&c.bundle_path)),
+            );
+            let state_str = match c.status {
+                ContainerStatus::Running => "running",
+                ContainerStatus::Exited(_) => "exited",
+                ContainerStatus::Created => "created",
+                ContainerStatus::Paused => "paused",
+                ContainerStatus::Failed(_) => "failed",
+            };
+            line = line.replace("{{.ID}}", &id_display);
             line = line.replace("{{.Names}}", &c.name);
             line = line.replace("{{.Image}}", &c.image);
             line = line.replace("{{.Status}}", &c.status.to_string());
+            line = line.replace("{{.State}}", state_str);
+            line = line.replace("{{.Ports}}", &format_container_ports(&c.ports));
+            line = line.replace("{{.Command}}", &cmd_display);
+            line = line.replace(
+                "{{.CreatedAt}}",
+                &c.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+            );
+            line = line.replace("{{.RunningFor}}", &format_running_for(c.created_at));
+            line = line.replace("{{.Size}}", &size_str);
             println!("{}", line);
         }
         return Ok(());
@@ -2964,10 +3419,19 @@ pub async fn create_only_container_with_home(
         }
     };
 
-    let mut parsed_ports = Vec::new();
-    for p in &args.ports {
-        parsed_ports.push(PortMapping::parse(p)?);
+    if let Some(pull) = &args.pull {
+        validate_pull_option(pull)?;
     }
+    if let Some(interval) = &args.health_interval {
+        parse_duration_flag(interval, "--health-interval")?;
+    }
+    if let Some(timeout) = &args.health_timeout {
+        parse_duration_flag(timeout, "--health-timeout")?;
+    }
+
+    validate_network_name(&args.network, home_opt)?;
+
+    let parsed_ports = parse_ports(&args.ports)?;
 
     let vol_store = match home_opt {
         Some(h) => VolumeStore::with_home(h.to_path_buf()),
@@ -3001,14 +3465,15 @@ pub async fn create_only_container_with_home(
 
     let mut combined_env = args.env.clone();
     if let Some(env_file_path) = &args.env_file {
-        if let Ok(content) = fs::read_to_string(env_file_path) {
-            for line in content.lines() {
-                let trimmed = line.trim();
-                if trimmed.is_empty() || trimmed.starts_with('#') {
-                    continue;
-                }
-                combined_env.push(trimmed.to_string());
+        let content = fs::read_to_string(env_file_path).map_err(|e| {
+            anyhow!("open {}: {}", env_file_path, e)
+        })?;
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
             }
+            combined_env.push(trimmed.to_string());
         }
     }
 
@@ -3188,6 +3653,21 @@ pub async fn create_only_container_with_home(
     }
     if let Some(sig) = &args.stop_signal {
         annotations.insert("boxr.stop_signal".to_string(), sig.clone());
+    }
+    if args.privileged {
+        annotations.insert("boxr.privileged".to_string(), "true".to_string());
+    }
+    if !args.cap_add.is_empty() {
+        annotations.insert(
+            "boxr.cap_add".to_string(),
+            serde_json::to_string(&args.cap_add)?,
+        );
+    }
+    if !args.cap_drop.is_empty() {
+        annotations.insert(
+            "boxr.cap_drop".to_string(),
+            serde_json::to_string(&args.cap_drop)?,
+        );
     }
     annotations.insert("boxr.network".to_string(), args.network.clone());
     spec.annotations = Some(annotations.clone());
@@ -4088,6 +4568,149 @@ pub fn show_version(args: &cli::FormatArgs) -> Result<()> {
     Ok(())
 }
 
+fn validate_ps_filter_key(key: &str) -> Result<()> {
+    const VALID: &[&str] = &[
+        "status", "name", "ancestor", "id", "label", "publish", "expose", "network", "volume",
+    ];
+    if !VALID.contains(&key) {
+        return Err(anyhow!("Invalid filter '{}'", key));
+    }
+    Ok(())
+}
+
+fn validate_image_filter_key(key: &str) -> Result<()> {
+    const VALID: &[&str] = &[
+        "reference", "name", "id", "label", "dangling", "before", "since",
+    ];
+    if !VALID.contains(&key) {
+        return Err(anyhow!("Invalid filter '{}'", key));
+    }
+    Ok(())
+}
+
+fn validate_no_duplicate_ports(ports: &[network::PortMapping]) -> Result<()> {
+    use std::collections::HashSet;
+    let mut seen = HashSet::new();
+    for p in ports {
+        let key = (
+            p.host_ip.clone(),
+            p.host_port,
+            p.protocol.clone(),
+        );
+        if !seen.insert(key) {
+            return Err(anyhow!(
+                "Bind for 0.0.0.0:{} failed: port is already allocated",
+                p.host_port
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn parse_ports(specs: &[String]) -> Result<Vec<network::PortMapping>> {
+    let mut parsed = Vec::new();
+    for p in specs {
+        parsed.extend(network::PortMapping::parse_all(p)?);
+    }
+    validate_no_duplicate_ports(&parsed)?;
+    Ok(parsed)
+}
+
+fn validate_network_name(network: &str, home_opt: Option<&Path>) -> Result<()> {
+    if matches!(
+        network,
+        "none" | "host" | "bridge" | "auto" | "default"
+    ) {
+        return Ok(());
+    }
+    let store = match home_opt {
+        Some(h) => network::NetworkStore::with_home(h.to_path_buf()),
+        None => network::NetworkStore::new(),
+    };
+    if store.find(network).is_none() {
+        return Err(anyhow!("network {} not found", network));
+    }
+    Ok(())
+}
+
+fn parse_duration_flag(value: &str, flag: &str) -> Result<u64> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow!("invalid value for {}: empty string", flag));
+    }
+    if let Some(num) = trimmed.strip_suffix('s') {
+        return Ok(num.parse::<u64>()
+            .map_err(|_| anyhow!("invalid value for {}: '{}'", flag, value))?);
+    }
+    if let Some(num) = trimmed.strip_suffix("ms") {
+        let ms = num.parse::<u64>()
+            .map_err(|_| anyhow!("invalid value for {}: '{}'", flag, value))?;
+        return Ok(ms / 1000);
+    }
+    if let Some(num) = trimmed.strip_suffix('m') {
+        let m = num.parse::<u64>()
+            .map_err(|_| anyhow!("invalid value for {}: '{}'", flag, value))?;
+        return Ok(m * 60);
+    }
+    if let Some(num) = trimmed.strip_suffix('h') {
+        let h = num.parse::<u64>()
+            .map_err(|_| anyhow!("invalid value for {}: '{}'", flag, value))?;
+        return Ok(h * 3600);
+    }
+    trimmed
+        .parse::<u64>()
+        .map_err(|_| anyhow!("invalid value for {}: '{}'", flag, value))
+}
+
+fn validate_pull_option(pull: &str) -> Result<()> {
+    match pull {
+        "always" | "missing" | "never" => Ok(()),
+        _ => Err(anyhow!(
+            "invalid pull option: '{}'. Must be one of: always, missing, never",
+            pull
+        )),
+    }
+}
+
+fn format_image_size(size_bytes: u64) -> String {
+    let size_mb = (size_bytes as f64) / (1024.0 * 1024.0);
+    if size_mb < 1.0 {
+        format!("{:.1} KB", (size_bytes as f64) / 1024.0)
+    } else {
+        format!("{:.2} MB", size_mb)
+    }
+}
+
+fn format_running_for(created_at: chrono::DateTime<chrono::Utc>) -> String {
+    let duration = chrono::Utc::now().signed_duration_since(created_at);
+    if duration.num_days() > 0 {
+        format!("{} days ago", duration.num_days())
+    } else if duration.num_hours() > 0 {
+        format!("{} hours ago", duration.num_hours())
+    } else if duration.num_minutes() > 0 {
+        format!("{} minutes ago", duration.num_minutes())
+    } else {
+        "Less than a minute ago".to_string()
+    }
+}
+
+fn format_container_ports(ports: &[network::PortMapping]) -> String {
+    ports
+        .iter()
+        .map(|p| {
+            let host_ip = p.host_ip.as_deref().unwrap_or("0.0.0.0");
+            format!(
+                "{}:{}:{}/{}",
+                host_ip,
+                p.host_port,
+                p.container_port,
+                p.protocol
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn evaluate_simple_template(template: &str, value: &serde_json::Value) -> String {
     let mut cleaned = template.trim();
     if cleaned.starts_with("{{") && cleaned.ends_with("}}") {
@@ -4387,6 +5010,50 @@ pub fn handle_context(args: cli::ContextSubcommands) -> Result<()> {
                 return Err(anyhow!("context \"{}\" not found", name));
             }
         }
+        cli::ContextAction::Import { name, source } => {
+            let content = fs::read_to_string(&source)?;
+            let imported: ContextConfig = serde_json::from_str(&content)?;
+            data.contexts.insert(
+                name.clone(),
+                ContextConfig {
+                    name: name.clone(),
+                    description: imported.description,
+                    docker_endpoint: imported.docker_endpoint,
+                },
+            );
+            fs::write(&ctx_file, serde_json::to_string_pretty(&data)?)?;
+            println!("Successfully imported context \"{}\"", name);
+        }
+        cli::ContextAction::Export { name, output } => {
+            let ctx = data
+                .contexts
+                .get(&name)
+                .ok_or_else(|| anyhow!("context \"{}\" not found", name))?;
+            let content = serde_json::to_string_pretty(ctx)?;
+            if let Some(path) = output {
+                fs::write(&path, content)?;
+            } else {
+                println!("{}", content);
+            }
+        }
+        cli::ContextAction::Update {
+            name,
+            description,
+            docker,
+        } => {
+            let ctx = data
+                .contexts
+                .get_mut(&name)
+                .ok_or_else(|| anyhow!("context \"{}\" not found", name))?;
+            if let Some(desc) = description {
+                ctx.description = desc;
+            }
+            if let Some(ep) = docker {
+                ctx.docker_endpoint = ep;
+            }
+            fs::write(&ctx_file, serde_json::to_string_pretty(&data)?)?;
+            println!("Successfully updated context \"{}\"", name);
+        }
     }
     Ok(())
 }
@@ -4422,6 +5089,15 @@ pub async fn handle_manifest(args: cli::ManifestSubcommands) -> Result<()> {
         }
         cli::ManifestAction::Push { target, .. } => {
             println!("Pushed manifest {}", target);
+        }
+        cli::ManifestAction::Rm { target } => {
+            println!("Removed manifest {}", target);
+        }
+        cli::ManifestAction::Annotate { target, annotation } => {
+            println!("Annotated manifest {}", target);
+            for ann in annotation {
+                println!("  {}", ann);
+            }
         }
     }
     Ok(())

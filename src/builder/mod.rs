@@ -91,6 +91,7 @@ CMD ["/app/server"]
             add_host: Vec::new(),
             memory: None,
             shm_size: None,
+            quiet: false,
         };
 
         let res = builder.build(opts).await;
@@ -117,6 +118,7 @@ CMD ["/app/server"]
             add_host: Vec::new(),
             memory: None,
             shm_size: None,
+            quiet: false,
         };
 
         let res2 = builder.build(opts2).await;

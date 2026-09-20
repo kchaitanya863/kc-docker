@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, serde::Serialize)]
 pub struct DiskUsageRow {
     pub item_type: String,
     pub total: usize,
@@ -130,7 +130,27 @@ impl SystemManager {
     }
 
     pub fn print_df() -> Result<()> {
+        Self::print_df_with_opts(&crate::cli::SystemDfArgs::default())
+    }
+
+    pub fn print_df_with_opts(args: &crate::cli::SystemDfArgs) -> Result<()> {
         let rows = Self::df()?;
+        if let Some(fmt) = &args.format {
+            if fmt == "json" {
+                println!("{}", serde_json::to_string_pretty(&rows)?);
+                return Ok(());
+            }
+            for r in &rows {
+                let mut line = fmt.clone();
+                line = line.replace("{{.Type}}", &r.item_type);
+                line = line.replace("{{.TotalCount}}", &r.total.to_string());
+                line = line.replace("{{.Active}}", &r.active.to_string());
+                line = line.replace("{{.Size}}", &format_bytes(r.size_bytes));
+                println!("{}", line);
+            }
+            return Ok(());
+        }
+
         println!(
             "{:<16} {:<10} {:<10} {:<16} {:<20}",
             "TYPE", "TOTAL", "ACTIVE", "SIZE", "RECLAIMABLE"
@@ -145,10 +165,17 @@ impl SystemManager {
                 format_bytes(r.reclaimable_bytes)
             };
 
-            println!(
-                "{:<16} {:<10} {:<10} {:<16} {:<20}",
-                r.item_type, r.total, r.active, size_str, reclaim_str
-            );
+            if args.verbose {
+                println!(
+                    "{:<16} {:<10} {:<10} {:<16} {:<20} (raw: {} bytes)",
+                    r.item_type, r.total, r.active, size_str, reclaim_str, r.size_bytes
+                );
+            } else {
+                println!(
+                    "{:<16} {:<10} {:<10} {:<16} {:<20}",
+                    r.item_type, r.total, r.active, size_str, reclaim_str
+                );
+            }
         }
 
         Ok(())

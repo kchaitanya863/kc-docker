@@ -147,6 +147,7 @@ pub async fn create_container(
         health_cmd: None,
         platform: None,
         network: "auto".to_string(),
+        disable_content_trust: false,
         privileged: false,
         gpus: None,
         entrypoint: None,

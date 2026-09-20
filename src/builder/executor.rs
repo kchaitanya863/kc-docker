@@ -20,6 +20,7 @@ struct BuildStage {
     config: ExecutionConfig,
 }
 
+#[derive(Default)]
 pub struct BuildOptions {
     pub context_dir: PathBuf,
     pub dockerfile_path: PathBuf,
@@ -30,6 +31,7 @@ pub struct BuildOptions {
     pub add_host: Vec<String>,
     pub memory: Option<String>,
     pub shm_size: Option<String>,
+    pub quiet: bool,
 }
 
 
@@ -72,7 +74,9 @@ impl ImageBuilder {
         }
 
         let dockerignore = DockerIgnore::load_from_context(&opts.context_dir);
-        println!("Building image from {:?}", opts.dockerfile_path);
+        if !opts.quiet {
+            println!("Building image from {:?}", opts.dockerfile_path);
+        }
 
         let temp_dir = tempfile::tempdir()?;
         let mut stages: Vec<BuildStage> = Vec::new();
@@ -81,13 +85,16 @@ impl ImageBuilder {
         fs::create_dir_all(&current_rootfs)?;
         let mut current_config = ExecutionConfig::default();
         let mut current_stage_name: Option<String> = None;
+        let mut build_shell = vec!["/bin/sh".to_string(), "-c".to_string()];
 
         let mut step_count = 1;
         let total_steps = instructions.len();
         let mut cache_key = String::from("initial");
 
         for inst in &instructions {
-            println!("Step {}/{}: {:?}", step_count, total_steps, inst);
+            if !opts.quiet {
+                println!("Step {}/{}: {:?}", step_count, total_steps, inst);
+            }
             step_count += 1;
 
             match inst {
@@ -498,7 +505,8 @@ impl ImageBuilder {
                     let bundle_rootfs = step_bundle.join("rootfs");
                     copy_dir_all(&current_rootfs, &bundle_rootfs)?;
 
-                    let run_args = vec!["/bin/sh".to_string(), "-c".to_string(), cmd.clone()];
+                    let mut run_args = build_shell.clone();
+                    run_args.push(cmd.clone());
                     let spec = Spec::new_default(Some(&current_config), Some(&run_args), None);
                     spec.save_to_bundle(&step_bundle)?;
 
@@ -565,6 +573,23 @@ impl ImageBuilder {
                     }
                     current_config.volumes = Some(vol_map);
                     cache_key = format!("{}_vol_{:?}", cache_key, vols);
+                }
+                Instruction::StopSignal(sig) => {
+                    current_config.stop_signal = Some(sig.clone());
+                    cache_key = format!("{}_stopsignal_{}", cache_key, sig);
+                }
+                Instruction::Shell(shell) => {
+                    build_shell = shell.clone();
+                    cache_key = format!("{}_shell_{:?}", cache_key, shell);
+                }
+                Instruction::OnBuild(inner) => {
+                    let mut labels = current_config.labels.take().unwrap_or_default();
+                    labels.insert(
+                        format!("boxr.onbuild.{}", cache_key.len()),
+                        format!("{:?}", inner),
+                    );
+                    current_config.labels = Some(labels);
+                    cache_key = format!("{}_onbuild", cache_key);
                 }
             }
         }

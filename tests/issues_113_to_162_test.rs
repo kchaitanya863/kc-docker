@@ -106,6 +106,7 @@ fn default_run_args(image: &str) -> RunArgs {
         health_cmd: None,
         platform: None,
         network: "none".to_string(),
+        disable_content_trust: false,
         privileged: false,
         gpus: None,
         entrypoint: None,
@@ -454,6 +455,7 @@ async fn test_issue_125_build_target_nonexistent_fails() {
         add_host: Vec::new(),
         memory: None,
         shm_size: None,
+        quiet: false,
     };
 
     let res = builder.build(opts).await;
@@ -497,6 +499,7 @@ async fn test_issue_127_dockerfile_copy_multiple_sources_to_non_dir_fails() {
         add_host: Vec::new(),
         memory: None,
         shm_size: None,
+        quiet: false,
     };
 
     let res = builder.build(opts).await;
@@ -527,6 +530,7 @@ async fn test_issue_128_dockerfile_without_from_fails() {
         add_host: Vec::new(),
         memory: None,
         shm_size: None,
+        quiet: false,
     };
 
     let res = builder.build(opts).await;
@@ -732,6 +736,9 @@ async fn test_issue_141_search_respects_limit() {
     let args = cli::SearchArgs {
         term: "alpine".to_string(),
         limit: 2,
+        filter: Vec::new(),
+        format: None,
+        no_trunc: false,
     };
     let res = boxr::search_hub(&args).await;
     assert!(res.is_ok());
@@ -765,6 +772,7 @@ fn test_issue_143_info_ostype_linux() {
 fn test_issue_144_network_inspect_docker_array() {
     let sub = NetworkSubcommands {
         command: NetworkAction::Inspect {
+            format: None,
             name: "boxr0".to_string(),
         },
     };

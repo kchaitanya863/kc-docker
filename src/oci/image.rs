@@ -84,6 +84,8 @@ pub struct ExecutionConfig {
     pub exposed_ports: Option<HashMap<String, serde_json::Value>>,
     #[serde(rename = "Healthcheck", skip_serializing_if = "Option::is_none")]
     pub healthcheck: Option<crate::health::HealthConfig>,
+    #[serde(rename = "StopSignal", skip_serializing_if = "Option::is_none")]
+    pub stop_signal: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

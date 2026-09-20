@@ -20,8 +20,22 @@ pub struct PortMapping {
 }
 
 impl PortMapping {
-    /// Parse port string: e.g. "8080:80", "127.0.0.1:3000:3000/tcp"
-    pub fn parse(spec: &str) -> Result<Self> {
+    fn parse_port_or_range(s: &str) -> Result<Vec<u16>> {
+        if let Some((start, end)) = s.split_once('-') {
+            let start = start.parse::<u16>()?;
+            let end = end.parse::<u16>()?;
+            if start > end {
+                return Err(anyhow!("invalid port range: {}", s));
+            }
+            Ok((start..=end).collect())
+        } else {
+            Ok(vec![s.parse()?])
+        }
+    }
+
+    /// Parse port string, expanding ranges into multiple mappings.
+    /// e.g. "8080:80", "127.0.0.1:3000:3000/tcp", "8000-8002:8000-8002"
+    pub fn parse_all(spec: &str) -> Result<Vec<Self>> {
         let (proto, port_spec) = if let Some((p, pr)) = spec.split_once('/') {
             (pr.to_lowercase(), p)
         } else {
@@ -31,40 +45,73 @@ impl PortMapping {
         let parts: Vec<&str> = port_spec.split(':').collect();
         match parts.len() {
             1 => {
-                // container port only (dynamic host port)
-                let c_port: u16 = parts[0].parse()?;
-                Ok(Self {
-                    host_ip: None,
-                    host_port: c_port,
-                    container_port: c_port,
-                    protocol: proto,
-                })
+                let ports = Self::parse_port_or_range(parts[0])?;
+                Ok(ports
+                    .into_iter()
+                    .map(|c_port| Self {
+                        host_ip: None,
+                        host_port: c_port,
+                        container_port: c_port,
+                        protocol: proto.clone(),
+                    })
+                    .collect())
             }
             2 => {
-                // host_port:container_port
-                let h_port: u16 = parts[0].parse()?;
-                let c_port: u16 = parts[1].parse()?;
-                Ok(Self {
-                    host_ip: None,
-                    host_port: h_port,
-                    container_port: c_port,
-                    protocol: proto,
-                })
+                let host_ports = Self::parse_port_or_range(parts[0])?;
+                let container_ports = Self::parse_port_or_range(parts[1])?;
+                if host_ports.len() != container_ports.len() {
+                    return Err(anyhow!(
+                        "host and container port ranges must have equal length: {}",
+                        spec
+                    ));
+                }
+                Ok(host_ports
+                    .into_iter()
+                    .zip(container_ports)
+                    .map(|(h_port, c_port)| Self {
+                        host_ip: None,
+                        host_port: h_port,
+                        container_port: c_port,
+                        protocol: proto.clone(),
+                    })
+                    .collect())
             }
             3 => {
-                // host_ip:host_port:container_port
                 let ip = parts[0].to_string();
-                let h_port: u16 = parts[1].parse()?;
-                let c_port: u16 = parts[2].parse()?;
-                Ok(Self {
-                    host_ip: Some(ip),
-                    host_port: h_port,
-                    container_port: c_port,
-                    protocol: proto,
-                })
+                let host_ports = Self::parse_port_or_range(parts[1])?;
+                let container_ports = Self::parse_port_or_range(parts[2])?;
+                if host_ports.len() != container_ports.len() {
+                    return Err(anyhow!(
+                        "host and container port ranges must have equal length: {}",
+                        spec
+                    ));
+                }
+                Ok(host_ports
+                    .into_iter()
+                    .zip(container_ports)
+                    .map(|(h_port, c_port)| Self {
+                        host_ip: Some(ip.clone()),
+                        host_port: h_port,
+                        container_port: c_port,
+                        protocol: proto.clone(),
+                    })
+                    .collect())
             }
             _ => Err(anyhow!("Invalid port specification: {}", spec)),
         }
+    }
+
+    /// Parse a single port mapping (no ranges).
+    pub fn parse(spec: &str) -> Result<Self> {
+        let all = Self::parse_all(spec)?;
+        if all.len() != 1 {
+            return Err(anyhow!(
+                "port range '{}' expands to {} mappings; use parse_all",
+                spec,
+                all.len()
+            ));
+        }
+        Ok(all[0].clone())
     }
 }
 

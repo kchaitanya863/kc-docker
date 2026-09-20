@@ -19,6 +19,15 @@ pub struct StatsArgs {
     #[arg(long = "no-stream")]
     pub no_stream: bool,
 
+    #[arg(short = 'a', long = "all")]
+    pub all: bool,
+
+    #[arg(long = "format")]
+    pub format: Option<String>,
+
+    #[arg(long = "no-trunc")]
+    pub no_trunc: bool,
+
     /// Target container IDs or names
     pub containers: Vec<String>,
 }
@@ -29,9 +38,14 @@ pub struct EventsArgs {
     #[arg(long = "since")]
     pub since: Option<String>,
 
-    /// Filter output based on conditions provided
+    #[arg(long = "until")]
+    pub until: Option<String>,
+
     #[arg(short = 'f', long = "filter")]
     pub filter: Option<String>,
+
+    #[arg(long = "format")]
+    pub format: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -86,6 +100,25 @@ pub enum ContextAction {
     },
     /// Remove one or more contexts
     Rm { name: String },
+    /// Import a context
+    Import {
+        name: String,
+        source: String,
+    },
+    /// Export a context
+    Export {
+        name: String,
+        #[arg(short = 'o', long = "output")]
+        output: Option<String>,
+    },
+    /// Update a context
+    Update {
+        name: String,
+        #[arg(long = "description")]
+        description: Option<String>,
+        #[arg(long = "docker")]
+        docker: Option<String>,
+    },
 }
 
 #[derive(Args, Debug)]
@@ -94,10 +127,22 @@ pub struct SystemSubcommands {
     pub command: SystemAction,
 }
 
+#[derive(Args, Debug, Clone, Default)]
+pub struct SystemDfArgs {
+    #[arg(short = 'f', long = "format")]
+    pub format: Option<String>,
+    #[arg(short = 'v', long = "verbose")]
+    pub verbose: bool,
+}
+
 #[derive(Subcommand, Debug)]
 pub enum SystemAction {
     /// Show boxr disk usage
-    Df,
+    Df(SystemDfArgs),
+    /// Display system-wide information
+    Info(FormatArgs),
+    /// Get real time events from the server
+    Events(EventsArgs),
     /// Remove unused data
     Prune {
         #[arg(short = 'a', long = "all")]
@@ -106,6 +151,8 @@ pub enum SystemAction {
         force: bool,
         #[arg(long = "volumes")]
         volumes: bool,
+        #[arg(long = "filter")]
+        filter: Vec<String>,
     },
 }
 

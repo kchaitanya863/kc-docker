@@ -9,6 +9,8 @@ pub struct VolumeSubcommands {
 #[derive(clap::Subcommand, Debug)]
 pub enum VolumeAction {
     Create {
+        /// Volume name (positional or --name)
+        #[arg(long = "name")]
         name: Option<String>,
         /// Specify volume driver name (default "local")
         #[arg(short = 'd', long = "driver", default_value = "local")]
@@ -50,17 +52,36 @@ pub enum VolumeAction {
         #[arg(long = "type")]
         vol_type: Option<String>,
     },
-    Ls,
+    Ls(VolumeLsArgs),
     Inspect {
+        #[arg(short = 'f', long = "format")]
+        format: Option<String>,
         name: String,
     },
     Rm {
         name: String,
     },
-    Prune {
-        #[arg(short = 'f', long = "force")]
-        force: bool,
-    },
+    Prune(VolumePruneArgs),
+}
+
+#[derive(Args, Debug, Clone, Default)]
+pub struct VolumeLsArgs {
+    #[arg(short = 'q', long = "quiet")]
+    pub quiet: bool,
+    #[arg(short = 'f', long = "filter")]
+    pub filter: Vec<String>,
+    #[arg(long = "format")]
+    pub format: Option<String>,
+}
+
+#[derive(Args, Debug, Clone, Default)]
+pub struct VolumePruneArgs {
+    #[arg(short = 'f', long = "force")]
+    pub force: bool,
+    #[arg(short = 'a', long = "all")]
+    pub all: bool,
+    #[arg(long = "filter")]
+    pub filter: Vec<String>,
 }
 
 #[derive(Args, Debug)]
@@ -125,17 +146,16 @@ pub enum NetworkAction {
         #[arg(long = "scope")]
         scope: Option<String>,
     },
-    Ls,
+    Ls(NetworkLsArgs),
     Inspect {
+        #[arg(short = 'f', long = "format")]
+        format: Option<String>,
         name: String,
     },
     Rm {
         name: String,
     },
-    Prune {
-        #[arg(short = 'f', long = "force")]
-        force: bool,
-    },
+    Prune(NetworkPruneArgs),
     Connect {
         network: String,
         container: String,
@@ -144,4 +164,24 @@ pub enum NetworkAction {
         network: String,
         container: String,
     },
+}
+
+#[derive(Args, Debug, Clone, Default)]
+pub struct NetworkLsArgs {
+    #[arg(short = 'q', long = "quiet")]
+    pub quiet: bool,
+    #[arg(short = 'f', long = "filter")]
+    pub filter: Vec<String>,
+    #[arg(long = "format")]
+    pub format: Option<String>,
+    #[arg(long = "no-trunc")]
+    pub no_trunc: bool,
+}
+
+#[derive(Args, Debug, Clone, Default)]
+pub struct NetworkPruneArgs {
+    #[arg(short = 'f', long = "force")]
+    pub force: bool,
+    #[arg(long = "filter")]
+    pub filter: Vec<String>,
 }
