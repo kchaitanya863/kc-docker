@@ -82,6 +82,7 @@ pub enum VolumeAction {
         name: String,
     },
     /// Unmount a volume filesystem
+    #[command(alias = "umount")]
     Unmount {
         name: String,
     },

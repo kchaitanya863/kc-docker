@@ -2,8 +2,8 @@ Name:           boxr
 Version:        %{version}
 Release:        1%{?dist}
 Summary:        Fast, lightweight OCI container engine and runtime in Rust
-License:        Apache-2.0
-URL:            https://github.com/kchaitanya863/kc-docker
+License:        MIT
+URL:            https://github.com/kchaitanya863/boxr
 
 %description
 Boxr is a zero-dependency, rootless-by-default container engine, image
@@ -48,5 +48,5 @@ fi
 %{_datadir}/fish/vendor_completions.d/boxr.fish
 
 %changelog
-* Tue Sep 15 2026 Boxr Contributors <https://github.com/kchaitanya863/kc-docker> - %{version}-1
+* Tue Sep 15 2026 Boxr Contributors <https://github.com/kchaitanya863/boxr> - %{version}-1
 - Automated RPM package release

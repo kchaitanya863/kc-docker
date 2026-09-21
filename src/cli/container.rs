@@ -600,6 +600,7 @@ pub enum ContainerAction {
         container: String,
     },
     /// Unmount a container filesystem
+    #[command(alias = "umount")]
     Unmount {
         container: String,
     },

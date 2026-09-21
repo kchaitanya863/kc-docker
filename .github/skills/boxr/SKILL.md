@@ -80,7 +80,7 @@ Use this skill when developing, debugging, benchmarking, or packaging `boxr` (th
 ## 5. Release & Packaging Pipeline
 
 - **Dual-Repository Architecture**:
-  - **Source Repo**: `kchaitanya863/kc-docker` (Private — source code, CI workflow, internal tests).
+  - **Source Repo**: `kchaitanya863/boxr` (source code, CI workflow, internal tests).
   - **Distribution Tap**: `kchaitanya863/homebrew-tap` (Public — formulae, precompiled release archives, SHA-256 hashes).
 - **Automated CI/CD Workflow (`.github/workflows/ci.yml`)**:
   - Builds static `musl` binaries for Linux (`x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`) with `rustls-tls` to avoid glibc version mismatches across Ubuntu/Debian/Alpine/Fedora.

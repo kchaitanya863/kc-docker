@@ -394,6 +394,7 @@ pub enum ImageAction {
         image: String,
     },
     /// Unmount an image filesystem
+    #[command(alias = "umount")]
     Unmount {
         image: String,
     },

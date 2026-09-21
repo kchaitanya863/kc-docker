@@ -3,16 +3,16 @@
   <metadata>
     <id>boxr</id>
     <version>__VERSION__</version>
-    <packageSourceUrl>https://github.com/kchaitanya863/kc-docker</packageSourceUrl>
+    <packageSourceUrl>https://github.com/kchaitanya863/boxr</packageSourceUrl>
     <owners>kchaitanya863</owners>
     <title>Boxr (Install)</title>
     <authors>Boxr Contributors</authors>
-    <projectUrl>https://github.com/kchaitanya863/kc-docker</projectUrl>
-    <licenseUrl>https://github.com/kchaitanya863/kc-docker/blob/main/LICENSE</licenseUrl>
+    <projectUrl>https://github.com/kchaitanya863/boxr</projectUrl>
+    <licenseUrl>https://github.com/kchaitanya863/boxr/blob/main/LICENSE</licenseUrl>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
-    <projectSourceUrl>https://github.com/kchaitanya863/kc-docker</projectSourceUrl>
-    <docsUrl>https://github.com/kchaitanya863/kc-docker/blob/main/README.md</docsUrl>
-    <bugTrackerUrl>https://github.com/kchaitanya863/kc-docker/issues</bugTrackerUrl>
+    <projectSourceUrl>https://github.com/kchaitanya863/boxr</projectSourceUrl>
+    <docsUrl>https://github.com/kchaitanya863/boxr/blob/main/README.md</docsUrl>
+    <bugTrackerUrl>https://github.com/kchaitanya863/boxr/issues</bugTrackerUrl>
     <tags>boxr docker container oci podman rust runtime</tags>
     <summary>Fast, lightweight OCI container engine and runtime in Rust</summary>
     <description>

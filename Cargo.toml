@@ -4,6 +4,7 @@ version = "0.1.43"
 edition = "2024"
 description = "A fast, lightweight OCI container engine and runtime written in Rust"
 authors = ["Boxr Contributors"]
+license = "MIT"
 readme = "README.md"
 
 [dependencies]

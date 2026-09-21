@@ -2,7 +2,7 @@
 set -e
 
 # boxr installer & environment setup script
-# Usage: curl -fsSL https://raw.githubusercontent.com/kchaitanya863/kc-docker/main/install.sh | sh
+# Usage: curl -fsSL https://raw.githubusercontent.com/kchaitanya863/boxr/main/install.sh | sh
 #    or: ./install.sh
 
 echo "=========================================="
@@ -43,7 +43,7 @@ if [ -f "${SCRIPT_DIR}/Cargo.toml" ]; then
     cp "${SCRIPT_DIR}/target/release/boxr" "${BIN_DIR}/boxr"
 elif command -v cargo >/dev/null 2>&1; then
     echo "Cargo detected. Building boxr..."
-    cargo install --git https://github.com/kchaitanya863/kc-docker.git --bin boxr --root "${BOXR_HOME}"
+    cargo install --git https://github.com/kchaitanya863/boxr.git --bin boxr --root "${BOXR_HOME}"
 else
     echo "Error: cargo (Rust toolchain) is required to build boxr."
     echo "Install Rust via https://rustup.rs or 'brew install rust', then re-run this script."

@@ -80,15 +80,22 @@ DOCKER_CORE_COMMANDS: Dict[str, Dict[str, str]] = {
 }
 
 PODMAN_SPECIALIZED_COMMANDS: Dict[str, str] = {
-    "pod": "Manage pods (create, rm, start, stop, pause, ps, inspect)",
-    "generate": "Generate structured artifacts (generate kube, generate systemd)",
+    "pod": "Manage pods (create, rm, start, stop, pause, ps, inspect, top, stats, prune, clone, logs)",
+    "generate": "Generate structured artifacts (generate kube, generate systemd, generate spec)",
     "play": "Play Kubernetes YAML pods and deployments (play kube)",
+    "kube": "Deploy, inspect, or manage Kubernetes workloads (play, down, generate, apply)",
     "unshare": "Run a command inside a user namespace",
     "auto-update": "Auto-update containers according to registry labels",
-    "healthcheck": "Manage container health checks via dedicated CLI",
-    "machine": "Manage Podman virtual machines",
-    "kube": "Deploy, inspect, or manage Kubernetes workloads",
-    "farm": "Build multi-architecture images across farm nodes",
+    "healthcheck": "Manage container health checks via dedicated CLI (healthcheck run)",
+    "machine": "Manage Podman virtual machines (init, start, stop, ls, rm, ssh, cp, inspect, set, os)",
+    "farm": "Build multi-architecture images across farm nodes (build, create, list, rm, update)",
+    "artifact": "Manage OCI artifacts (add, extract, inspect, ls, pull, push, rm)",
+    "quadlet": "Manage Quadlet systemd unit files (ls, install, print, rm)",
+    "mount": "Mount a container or image root filesystem",
+    "unmount": "Unmount a container or image root filesystem (umount alias)",
+    "init": "Initialize one or more containers",
+    "untag": "Remove one or more tags from a locally-stored image",
+    "spec": "Generate a standard OCI runtime specification (config.json)",
 }
 
 def find_boxr_binary() -> str:
@@ -161,6 +168,7 @@ def main():
     podman_missing = {c for c in PODMAN_SPECIALIZED_COMMANDS if c not in boxr_cmds}
 
     core_parity_pct = (len(core_implemented) / len(core_docker_total)) * 100
+    podman_parity_pct = (len(podman_implemented) / len(PODMAN_SPECIALIZED_COMMANDS)) * 100
 
     if args.json:
         import json
@@ -171,6 +179,8 @@ def main():
             "docker_core_implemented": sorted(list(core_implemented)),
             "docker_core_missing": sorted(list(core_missing)),
             "docker_enterprise_missing": sorted(list(enterprise_missing)),
+            "podman_specialized_parity_percentage": round(podman_parity_pct, 1),
+            "podman_specialized_implemented": sorted(list(podman_implemented)),
             "podman_specialized_missing": sorted(list(podman_missing)),
         }
         print(json.dumps(payload, indent=2))
@@ -182,6 +192,7 @@ def main():
     print(f"Target Binary: {binary_path or 'Not built yet (using static inspection)'}")
     print(f"Total Boxr Implemented Commands: {len(boxr_cmds)}")
     print(f"Docker Core CLI Parity:          {core_parity_pct:.1f}% ({len(core_implemented)}/{len(core_docker_total)} commands)")
+    print(f"Podman Specialized Parity:       {podman_parity_pct:.1f}% ({len(podman_implemented)}/{len(PODMAN_SPECIALIZED_COMMANDS)} commands)")
     print("-" * 72)
 
     # Category breakdown
@@ -215,9 +226,12 @@ def main():
         ("play", "Podman", "Run Kubernetes pod YAML specifications (boxr play kube)"),
     ]
 
-    for cmd, kind, detail in priority_order:
-        if cmd in core_missing or cmd in podman_missing:
+    missing_items = [item for item in priority_order if item[0] in core_missing or item[0] in podman_missing]
+    if missing_items:
+        for cmd, kind, detail in missing_items:
             print(f"  👉 {cmd:<12} [{kind:<9}] : {detail}")
+    else:
+        print("  🎉 Full 100% Core Docker & Podman Specialized CLI Parity Achieved!")
     print("=" * 72)
 
 if __name__ == "__main__":

@@ -176,7 +176,7 @@ impl ServiceManager {
             let service_content = format!(
                 r#"[Unit]
 Description=Boxr Container Engine Daemon
-Documentation=https://github.com/kchaitanya863/kc-docker
+Documentation=https://github.com/kchaitanya863/boxr
 After=network.target
 
 [Service]

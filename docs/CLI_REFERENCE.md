@@ -17,6 +17,7 @@ Complete reference manual for all commands, flags, and options supported by `box
 | **Quadlets** | `quadlet ls`, `quadlet install`, `quadlet print`, `quadlet rm` |
 | **Artifacts** | `artifact add`, `artifact extract`, `artifact inspect`, `artifact ls`, `artifact pull`, `artifact push`, `artifact rm` |
 | **Virtual Machines** | `machine init`, `machine start`, `machine stop`, `machine ls`, `machine rm`, `machine info`, `machine inspect`, `machine set`, `machine os`, `machine reset`, `machine restart`, `machine ssh`, `machine cp` |
+| **Build Farm** | `farm create`, `farm ls`, `farm update`, `farm rm`, `farm build` |
 | **Compose** | `compose up`, `compose down`, `compose ps`, `compose logs`, `compose build`, `compose restart`, `compose stop`, `compose start`, `compose rm`, `compose config` |
 | **Daemon & Service** | `daemon`, `service install`, `service start`, `service stop`, `service status`, `service uninstall`, `system service` |
 | **Secrets** | `secret create`, `secret ls`, `secret inspect`, `secret rm`, `secret exists` |
@@ -743,6 +744,28 @@ boxr system service [--time <SECONDS>]
 
 # Prepare Hyper-V virtualization prerequisites
 boxr system hyperv-prep
+```
+
+### `boxr farm`
+Farm out multi-architecture container image builds across remote nodes (Podman parity):
+
+```bash
+# Create a build farm
+boxr farm create <FARM> [<CONNECTIONS>...]
+
+# List configured build farms
+boxr farm ls
+boxr farm list
+
+# Update an existing build farm
+boxr farm update [--add <CONN>] [--remove <CONN>] [--default] <FARM>
+
+# Remove one or all build farms
+boxr farm rm <FARM>
+boxr farm rm --all
+
+# Build multi-architecture images and create manifest list
+boxr farm build [--farm <FARM>] -t <IMAGE:TAG> [--platforms <P1,P2...>] [-f <FILE>] [<CONTEXT>]
 ```
 
 ### `boxr builder`

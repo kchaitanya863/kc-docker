@@ -1,5 +1,6 @@
 pub mod artifact;
 pub mod container;
+pub mod farm;
 pub mod image;
 pub mod kube;
 pub mod machine;
@@ -10,6 +11,7 @@ pub mod volumes_networks;
 
 pub use artifact::*;
 pub use container::*;
+pub use farm::*;
 pub use image::*;
 pub use kube::*;
 pub use machine::*;
@@ -236,12 +238,16 @@ pub enum Commands {
     },
 
     /// Unmount a container's root filesystem
+    #[command(alias = "umount")]
     Unmount {
         container: String,
     },
 
     /// Manage OCI artifacts
     Artifact(ArtifactSubcommands),
+
+    /// Farm out builds to machines running podman for different architectures
+    Farm(FarmSubcommands),
 
     /// Auto-update containers based on updated images
     #[command(name = "auto-update")]

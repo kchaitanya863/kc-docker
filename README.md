@@ -1,6 +1,12 @@
 # boxr 📦
 
+[![Status](https://img.shields.io/badge/status-beta-orange.svg)](https://github.com/kchaitanya863/boxr)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![CI](https://github.com/kchaitanya863/boxr/actions/workflows/ci.yml/badge.svg)](https://github.com/kchaitanya863/boxr/actions/workflows/ci.yml)
+
 A fast, lightweight, production-grade **Open Container Initiative (OCI)** compliant container engine, image builder, compose orchestrator, and runtime written in **Rust**.
+
+> **Note**: `boxr` is currently in **Beta**. We are actively hardening features, testing parity workloads, and welcoming community contributions and feedback!
 
 `boxr` is designed to be **rootless by default** and built from scratch with custom implementations:
 1. **Rootless by Default**: User namespaces (`CLONE_NEWUSER`) with `uid_map` and `gid_map` mapping the unprivileged user to container root (UID 0), capability dropping (dropping `CAP_SYS_ADMIN`, `CAP_SYS_RAWIO`, etc.), and default seccomp profiles without requiring `sudo`/root.
@@ -200,7 +206,7 @@ Expand-Archive boxr.zip -DestinationPath C:\ProgramData\boxr
 ./install.sh
 
 # Or install from GitHub:
-curl -fsSL https://raw.githubusercontent.com/kchaitanya863/kc-docker/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/kchaitanya863/boxr/main/install.sh | sh
 ```
 
 #### (Optional) Docker Drop-in Alias
@@ -507,6 +513,10 @@ cargo test
 - **Security & Cgroups**: Custom Base64 roundtrip fuzzing across all byte lengths, default seccomp critical syscall blocking, cgroups memory unit multipliers, and Unix signal matrix.
 - **E2E & Real Workloads**: Non-existent container error handling, invalid CLI flags, live Redis server with `exec` ping/set/get, and full-stack compose apps.
 
+## Contributing
+
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for architectural invariants, coding conventions, development setup, and pull request guidelines.
+
 ## License
 
-MIT OR Apache-2.0
+This project is licensed under the [MIT License](LICENSE).

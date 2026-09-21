@@ -46,7 +46,7 @@ Version: ${VERSION}
 Section: utils
 Priority: optional
 Architecture: ${ARCH}
-Maintainer: Boxr Contributors <https://github.com/kchaitanya863/kc-docker>
+Maintainer: Boxr Contributors <https://github.com/kchaitanya863/boxr>
 Description: Fast, lightweight OCI container engine and runtime in Rust
  Boxr is a zero-dependency, rootless-by-default container engine, image
  builder, compose orchestrator, and runtime written in pure Rust.
