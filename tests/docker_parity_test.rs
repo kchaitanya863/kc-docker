@@ -1,7 +1,18 @@
 use std::fs;
-use std::path::PathBuf;
-use std::process::Command;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
 use tempfile::tempdir;
+
+#[path = "common/blackbox.rs"]
+mod blackbox;
+
+fn run_isolated(home: &Path, args: &[&str]) -> Output {
+    blackbox::run_boxr(home, args)
+}
+
+fn ensure_alpine(home: &Path) {
+    blackbox::pull_if_needed(home, "alpine:latest");
+}
 
 fn boxr_bin() -> PathBuf {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -54,11 +65,9 @@ fn create_isolated_home() -> tempfile::TempDir {
             let _ = std::os::windows::fs::symlink_dir(&src, &dst);
         }
     }
-    // Copy existing image catalog so isolated tests instantly resolve cached images without network re-pulls
     let src_images_json = base_home.join("images.json");
     if src_images_json.exists() {
-        let dst_images_json = temp.path().join("images.json");
-        let _ = fs::copy(&src_images_json, &dst_images_json);
+        let _ = fs::copy(&src_images_json, temp.path().join("images.json"));
     }
     temp
 }
@@ -289,6 +298,10 @@ fn test_docker_parity_compose_up_down() {
         return;
     }
 
+    let (_guard, home) = blackbox::isolated_home();
+    blackbox::pull_if_needed(&home, "nginx:alpine");
+    blackbox::pull_if_needed(&home, "redis:alpine");
+
     let temp = tempdir().unwrap();
     let compose_file = r#"
 version: '3.8'
@@ -304,16 +317,16 @@ services:
     let file_path = temp.path().join("docker-compose.yml");
     fs::write(&file_path, compose_file).unwrap();
 
-    let out = boxr_cmd(&bin)
-        .args(["compose", "-f", file_path.to_str().unwrap(), "up", "-d"])
-        .output()
-        .unwrap();
+    let out = run_isolated(
+        &home,
+        &["compose", "-f", file_path.to_str().unwrap(), "up", "-d"],
+    );
     assert!(out.status.success());
 
-    let out = boxr_cmd(&bin)
-        .args(["compose", "-f", file_path.to_str().unwrap(), "down"])
-        .output()
-        .unwrap();
+    let out = run_isolated(
+        &home,
+        &["compose", "-f", file_path.to_str().unwrap(), "down"],
+    );
     assert!(out.status.success());
 }
 
@@ -491,45 +504,34 @@ fn test_docker_parity_exec_flags() {
         return;
     }
 
+    let (_guard, home) = blackbox::isolated_home();
+    ensure_alpine(&home);
     let name = format!("dockertest-exec-{}", unique_id());
 
     // 1. Run a background container
-    let out = boxr_cmd(&bin)
-        .args(["run", "-d", "--name", &name, "alpine", "sleep", "60"])
-        .output()
-        .unwrap();
+    let out = run_isolated(&home, &["run", "-d", "--name", &name, "alpine", "sleep", "60"]);
     assert!(out.status.success());
 
     // 2. Exec with workdir (-w)
-    let out = boxr_cmd(&bin)
-        .args(["exec", "-w", "/tmp", &name, "pwd"])
-        .output()
-        .unwrap();
+    let out = run_isolated(&home, &["exec", "-w", "/tmp", &name, "pwd"]);
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("/tmp"));
 
     // 3. Exec with user (-u)
-    let out = boxr_cmd(&bin)
-        .args(["exec", "-u", "1000", &name, "id", "-u"])
-        .output()
-        .unwrap();
+    let out = run_isolated(&home, &["exec", "-u", "1000", &name, "id", "-u"]);
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("1000"));
 
     // 4. Exec with tty (-t)
-    let out = boxr_cmd(&bin)
-        .args(["exec", "-t", &name, "echo", "tty-ok"])
-        .output()
-        .unwrap();
+    let out = run_isolated(&home, &["exec", "-t", &name, "echo", "tty-ok"]);
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("tty-ok"));
 
     // 5. Cleanup
-    let _ = boxr_cmd(&bin).args(["stop", &name]).output();
-    let _ = boxr_cmd(&bin).args(["rm", &name]).output();
+    let _ = run_isolated(&home, &["rm", "-f", &name]);
 }
 
 /// Docker Parity Test: Run flags (-m, -l, --dns, --cidfile)
@@ -593,56 +595,39 @@ fn test_docker_parity_ps_flags() {
         return;
     }
 
-    let home = create_isolated_home();
+    let (_home_guard, home) = blackbox::isolated_home();
+    ensure_alpine(&home);
     let name = format!("dockertest-ps-{}", unique_id());
 
-    let out = boxr_cmd_in(&bin, home.path())
-        .args(["run", "-d", "--name", &name, "alpine", "sleep", "60"])
-        .output()
-        .unwrap();
+    let out = run_isolated(&home, &["run", "-d", "--name", &name, "alpine", "sleep", "60"]);
     assert!(out.status.success());
 
     // ps -q
-    let out = boxr_cmd_in(&bin, home.path())
-        .args(["ps", "-q"])
-        .output()
-        .unwrap();
+    let out = run_isolated(&home, &["ps", "-q"]);
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(!stdout.trim().is_empty());
 
     // ps -n 1
-    let out = boxr_cmd_in(&bin, home.path())
-        .args(["ps", "-n", "1"])
-        .output()
-        .unwrap();
+    let out = run_isolated(&home, &["ps", "-n", "1"]);
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains(&name));
 
     // ps -l (latest)
-    let out = boxr_cmd_in(&bin, home.path())
-        .args(["ps", "-l"])
-        .output()
-        .unwrap();
+    let out = run_isolated(&home, &["ps", "-l"]);
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains(&name));
 
     // ps -f name=...
-    let out = boxr_cmd_in(&bin, home.path())
-        .args(["ps", "-f", &format!("name={}", name)])
-        .output()
-        .unwrap();
+    let out = run_isolated(&home, &["ps", "-f", &format!("name={}", name)]);
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains(&name));
 
     // Cleanup
-    let _ = boxr_cmd_in(&bin, home.path())
-        .args(["stop", &name])
-        .output();
-    let _ = boxr_cmd_in(&bin, home.path()).args(["rm", &name]).output();
+    let _ = run_isolated(&home, &["rm", "-f", &name]);
 }
 
 /// Docker Parity Test: Images flags (-q, -a, -f)
@@ -896,15 +881,14 @@ fn test_docker_parity_run_init() {
         return;
     }
 
+    let (_guard, home) = blackbox::isolated_home();
+    ensure_alpine(&home);
     let name = format!("dockertest-init-{}", unique_id());
 
-    // Run container with --init
-    let out = boxr_cmd(&bin)
-        .args([
-            "run", "--rm", "--init", "--name", &name, "alpine", "echo", "init-ok",
-        ])
-        .output()
-        .unwrap();
+    let out = run_isolated(
+        &home,
+        &["run", "--rm", "--init", "--name", &name, "alpine", "echo", "init-ok"],
+    );
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("init-ok"));
@@ -1029,11 +1013,13 @@ fn test_docker_parity_runtime_flags() {
         return;
     }
 
+    let (_guard, home) = blackbox::isolated_home();
+    ensure_alpine(&home);
     let name = format!("dockertest-rt-{}", unique_id());
 
-    // Run container with --tmpfs and --security-opt
-    let out = boxr_cmd(&bin)
-        .args([
+    let out = run_isolated(
+        &home,
+        &[
             "run",
             "--rm",
             "--name",
@@ -1045,9 +1031,8 @@ fn test_docker_parity_runtime_flags() {
             "alpine",
             "echo",
             "rt-flags-ok",
-        ])
-        .output()
-        .unwrap();
+        ],
+    );
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("rt-flags-ok"));
@@ -1112,30 +1097,29 @@ fn test_docker_parity_exec_env_file() {
     let env_file = temp.path().join("exec.env");
     fs::write(&env_file, "EXEC_VAR=custom_exec_val\n").unwrap();
 
+    let (_guard, home) = blackbox::isolated_home();
+    ensure_alpine(&home);
     let name = format!("dockertest-execenv-{}", unique_id());
 
-    let out = boxr_cmd(&bin)
-        .args(["run", "-d", "--name", &name, "alpine", "sleep", "60"])
-        .output()
-        .unwrap();
+    let out = run_isolated(&home, &["run", "-d", "--name", &name, "alpine", "sleep", "60"]);
     assert!(out.status.success());
 
-    let out = boxr_cmd(&bin)
-        .args([
+    let out = run_isolated(
+        &home,
+        &[
             "exec",
             "--env-file",
             env_file.to_str().unwrap(),
             &name,
             "printenv",
             "EXEC_VAR",
-        ])
-        .output()
-        .unwrap();
+        ],
+    );
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("custom_exec_val"));
 
-    let _ = boxr_cmd(&bin).args(["rm", "-f", &name]).output();
+    let _ = run_isolated(&home, &["rm", "-f", &name]);
 }
 
 /// Docker Parity Test: Ps with --format (json and template) and --size
@@ -1193,10 +1177,13 @@ fn test_docker_parity_advanced_run_options() {
         return;
     }
 
+    let (_guard, home) = blackbox::isolated_home();
+    ensure_alpine(&home);
     let name = format!("dockertest-advrun-{}", unique_id());
 
-    let out = boxr_cmd(&bin)
-        .args([
+    let out = run_isolated(
+        &home,
+        &[
             "run",
             "--rm",
             "--name",
@@ -1212,9 +1199,8 @@ fn test_docker_parity_advanced_run_options() {
             "alpine",
             "echo",
             "adv-run-ok",
-        ])
-        .output()
-        .unwrap();
+        ],
+    );
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("adv-run-ok"));
@@ -1228,6 +1214,8 @@ fn test_docker_parity_mount_and_namespace_flags() {
         return;
     }
 
+    let (_guard, home) = blackbox::isolated_home();
+    ensure_alpine(&home);
     let name = format!("dockertest-mount-{}", unique_id());
     let temp = tempdir().unwrap();
     let host_dir = temp.path().join("host-data");
@@ -1237,8 +1225,9 @@ fn test_docker_parity_mount_and_namespace_flags() {
     let canonical_host = host_dir.canonicalize().unwrap();
     let mount_spec = format!("type=bind,source={},target=/data", canonical_host.display());
 
-    let out = boxr_cmd(&bin)
-        .args([
+    let out = run_isolated(
+        &home,
+        &[
             "run",
             "--rm",
             "--name",
@@ -1253,9 +1242,8 @@ fn test_docker_parity_mount_and_namespace_flags() {
             "alpine",
             "cat",
             "/data/test.txt",
-        ])
-        .output()
-        .unwrap();
+        ],
+    );
     if !out.status.success() {
         eprintln!("STDOUT: {}", String::from_utf8_lossy(&out.stdout));
         eprintln!("STDERR: {}", String::from_utf8_lossy(&out.stderr));
@@ -1383,11 +1371,14 @@ fn test_docker_parity_100_percent_upstream_coverage() {
         return;
     }
 
+    let (_guard, home) = blackbox::isolated_home();
+    ensure_alpine(&home);
     let name = format!("dockertest-full-{}", unique_id());
 
     // 1. run with storage-opt, volume-driver, runtime, sig-proxy
-    let out = boxr_cmd(&bin)
-        .args([
+    let out = run_isolated(
+        &home,
+        &[
             "run",
             "--rm",
             "--name",
@@ -1400,22 +1391,19 @@ fn test_docker_parity_100_percent_upstream_coverage() {
             "alpine",
             "echo",
             "full-spec-ok",
-        ])
-        .output()
-        .unwrap();
+        ],
+    );
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("full-spec-ok"));
 
     // 2. update with blkio-weight, cpu-rt-period, cpuset-mems
-    let out = boxr_cmd(&bin)
-        .args(["create", "--name", &name, "alpine"])
-        .output()
-        .unwrap();
+    let out = run_isolated(&home, &["create", "--name", &name, "alpine"]);
     assert!(out.status.success());
 
-    let out = boxr_cmd(&bin)
-        .args([
+    let out = run_isolated(
+        &home,
+        &[
             "update",
             "--blkio-weight",
             "500",
@@ -1424,9 +1412,8 @@ fn test_docker_parity_100_percent_upstream_coverage() {
             "--cpuset-mems",
             "0",
             &name,
-        ])
-        .output()
-        .unwrap();
+        ],
+    );
     assert!(out.status.success());
 
     let _ = boxr_cmd(&bin).args(["rm", &name]).output();

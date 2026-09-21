@@ -255,6 +255,92 @@ impl VolumeStore {
         })
     }
 
+    pub fn list_filtered(&self, filters: &[String]) -> Vec<VolumeRecord> {
+        self.list()
+            .into_iter()
+            .filter(|v| Self::matches_filters(v, filters))
+            .collect()
+    }
+
+    pub fn matches_filters(vol: &VolumeRecord, filters: &[String]) -> bool {
+        if filters.is_empty() {
+            return true;
+        }
+        filters.iter().all(|f| Self::matches_filter(vol, f))
+    }
+
+    pub fn matches_filter(vol: &VolumeRecord, filter: &str) -> bool {
+        if let Some((key, value)) = filter.split_once('=') {
+            match key {
+                "name" => vol.name == value,
+                "driver" => vol.driver == value,
+                "label" => {
+                    if let Some((lk, lv)) = value.split_once('=') {
+                        vol.labels.get(lk).map(|v| v == lv).unwrap_or(false)
+                    } else {
+                        vol.labels.contains_key(value)
+                    }
+                }
+                "dangling" => value == "true" && vol.labels.is_empty(),
+                _ => true,
+            }
+        } else {
+            true
+        }
+    }
+
+    pub fn prune_with_options(&self, all: bool, filters: &[String]) -> Result<Vec<String>> {
+        let home = self
+            .index_file
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let c_store = crate::storage::ContainerStore::with_home(home);
+        let containers = c_store.list();
+        let mut used_volume_names = std::collections::HashSet::new();
+
+        for c in containers {
+            let bundle_path = PathBuf::from(&c.bundle_path);
+            let config_file = bundle_path.join("config.json");
+            if let Ok(content) = fs::read_to_string(&config_file) {
+                if let Ok(spec) = serde_json::from_str::<crate::oci::runtime::Spec>(&content) {
+                    for m in spec.mounts {
+                        let m_src = m.source;
+                        for v in self.list() {
+                            if m_src.contains(&format!("volumes/{}/_data", v.name))
+                                || m_src.contains(&format!("volumes/{}", v.name))
+                                || m_src.ends_with(&v.name)
+                            {
+                                used_volume_names.insert(v.name);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+            let mut data = self.load_unlocked();
+            let mut pruned = Vec::new();
+            data.volumes.retain(|v| {
+                let unused = !used_volume_names.contains(&v.name);
+                let matches = Self::matches_filters(v, filters);
+                if unused && matches && (all || v.labels.is_empty()) {
+                    let vol_dir = self.volumes_dir.join(&v.name);
+                    if vol_dir.exists() {
+                        let _ = fs::remove_dir_all(vol_dir);
+                    }
+                    pruned.push(v.name.clone());
+                    false
+                } else {
+                    true
+                }
+            });
+            self.save_unlocked(&data)?;
+            Ok(pruned)
+        })
+    }
+
     pub fn prune(&self) -> Result<Vec<String>> {
         let home = self
             .index_file

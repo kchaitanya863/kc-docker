@@ -189,6 +189,20 @@ pub struct PodSubcommands {
     pub command: PodAction,
 }
 
+#[derive(Args, Debug, Clone, Default)]
+pub struct PodLsArgs {
+    #[arg(short = 'q', long = "quiet")]
+    pub quiet: bool,
+    #[arg(short = 'f', long = "filter")]
+    pub filter: Vec<String>,
+    #[arg(long = "format")]
+    pub format: Option<String>,
+    #[arg(long = "no-trunc")]
+    pub no_trunc: bool,
+    #[arg(short = 'l', long = "latest")]
+    pub latest: bool,
+}
+
 #[derive(Subcommand, Debug)]
 pub enum PodAction {
     /// Create a pod
@@ -199,19 +213,98 @@ pub enum PodAction {
         /// Publish port (e.g. 8080:80)
         #[arg(short = 'p', long = "publish")]
         ports: Vec<String>,
+        /// Set pod hostname
+        #[arg(long = "hostname")]
+        hostname: Option<String>,
+        /// Set metadata labels (key=value)
+        #[arg(short = 'l', long = "label")]
+        labels: Vec<String>,
+        /// Custom DNS servers
+        #[arg(long = "dns")]
+        dns: Vec<String>,
+        /// Memory limit for all containers in the pod
+        #[arg(short = 'm', long = "memory")]
+        memory: Option<String>,
+        /// CPU limit for all containers in the pod
+        #[arg(long = "cpus")]
+        cpus: Option<String>,
+        /// Network mode for the pod
+        #[arg(long = "network")]
+        network: Option<String>,
+        /// Share namespaces: ipc, net, uts, pid (comma-separated)
+        #[arg(long = "share", default_value = "ipc,net,uts")]
+        share: String,
+        /// Create an infra container
+        #[arg(long = "infra", default_value_t = true)]
+        infra: bool,
+        /// Do not create an infra container
+        #[arg(long = "no-infra", default_value_t = false)]
+        no_infra: bool,
     },
     /// List pods
-    Ps,
+    #[command(alias = "list")]
+    Ps(PodLsArgs),
     /// List pods
-    Ls,
-    /// Remove a pod
-    Rm { pod: String },
-    /// Inspect a pod
-    Inspect { pod: String },
-    /// Stop a pod
-    Stop { pod: String },
-    /// Start a pod
-    Start { pod: String },
+    Ls(PodLsArgs),
+    /// Remove one or more pods
+    Rm {
+        #[arg(short = 'f', long = "force")]
+        force: bool,
+        pods: Vec<String>,
+    },
+    /// Display detailed information on one or more pods
+    Inspect {
+        #[arg(short = 'f', long = "format")]
+        format: Option<String>,
+        pods: Vec<String>,
+    },
+    /// Stop one or more pods
+    Stop {
+        pods: Vec<String>,
+    },
+    /// Start one or more pods
+    Start {
+        pods: Vec<String>,
+    },
+    /// Restart one or more pods
+    Restart {
+        pods: Vec<String>,
+    },
+    /// Kill pods with a signal
+    Kill {
+        #[arg(short = 's', long = "signal", default_value = "SIGKILL")]
+        signal: String,
+        pods: Vec<String>,
+    },
+    /// Pause pods
+    Pause {
+        pods: Vec<String>,
+    },
+    /// Unpause pods
+    Unpause {
+        pods: Vec<String>,
+    },
+    /// Display the running processes of containers in pods
+    Top {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        ps_args: Vec<String>,
+        pods: Vec<String>,
+    },
+    /// Display a live stream of pod resource usage statistics
+    Stats {
+        #[arg(long = "no-stream")]
+        no_stream: bool,
+        pods: Vec<String>,
+    },
+    /// Remove all stopped pods
+    Prune {
+        #[arg(short = 'f', long = "force")]
+        force: bool,
+    },
+    /// Check if a pod exists
+    Exists {
+        pod: String,
+    },
 }
 
 #[derive(Args, Debug)]
@@ -226,6 +319,9 @@ pub enum PlayAction {
     Kube {
         /// Path to Kubernetes YAML file
         file: String,
+        /// Tear down resources from the YAML file
+        #[arg(long = "down")]
+        down: bool,
     },
 }
 
@@ -241,6 +337,17 @@ pub enum GenerateAction {
     Kube {
         /// Container or pod to generate YAML for
         target: String,
+    },
+    /// Generate systemd unit files for a container (Quadlet-compatible)
+    Systemd {
+        /// Container name(s) to generate units for
+        containers: Vec<String>,
+        /// Output directory (default: stdout)
+        #[arg(short = 'o', long = "output")]
+        output: Option<String>,
+        /// Restart policy for generated unit
+        #[arg(long = "restart", default_value = "always")]
+        restart: String,
     },
 }
 

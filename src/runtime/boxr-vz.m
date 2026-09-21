@@ -116,9 +116,9 @@ static void *port_forward_listener_thread(void *arg) {
         int client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &client_len);
         if (client_fd < 0) break;
 
-        // Connect to container target inside micro-VM (retry up to 3 seconds if container is booting)
+        // Connect to container target inside micro-VM (retry while guest is booting)
         int target_fd = -1;
-        for (int attempt = 0; attempt < 30; attempt++) {
+        for (int attempt = 0; attempt < 100; attempt++) {
             target_fd = socket(AF_INET, SOCK_STREAM, 0);
             if (target_fd < 0) break;
 
@@ -193,7 +193,7 @@ int main(int argc, const char *argv[]) {
         NSString *initrdPath = nil;
         BOOL isDetach = NO;
         NSUInteger cpuCount = 2;
-        unsigned long long memoryBytes = 512 * 1024 * 1024ULL;
+        unsigned long long memoryBytes = 2048 * 1024 * 1024ULL;
 
         NSMutableArray<NSString *> *mountSpecs = [NSMutableArray array];
         NSMutableArray<NSString *> *portSpecs = [NSMutableArray array];
@@ -289,7 +289,7 @@ int main(int argc, const char *argv[]) {
 
         VZLinuxBootLoader *bootloader = [[VZLinuxBootLoader alloc] initWithKernelURL:kernelURL];
         bootloader.initialRamdiskURL = initrdURL;
-        bootloader.commandLine = @"console=hvc0 quiet loglevel=3 random.trust_cpu=on random.trust_bootloader=on panic=1";
+        bootloader.commandLine = @"console=hvc0 quiet loglevel=3 random.trust_cpu=on random.trust_bootloader=on panic=1 root=boxr_rootfs rootfstype=virtiofs rootflags=rw init=/boxr-run.sh";
 
         VZVirtualMachineConfiguration *config = [[VZVirtualMachineConfiguration alloc] init];
         config.bootLoader = bootloader;

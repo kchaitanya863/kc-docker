@@ -127,7 +127,7 @@ fn default_run_args(image: &str) -> RunArgs {
         device_cgroup_rule: Vec::new(), device_read_bps: Vec::new(), device_read_iops: Vec::new(),
         device_write_bps: Vec::new(), device_write_iops: Vec::new(), link_local_ip: Vec::new(),
         memory_swappiness: None, runtime: None, sig_proxy: true, storage_opt: Vec::new(),
-        use_api_socket: false, volume_driver: None, volumes_from: Vec::new(), image: image.to_string(),
+        use_api_socket: false, volume_driver: None, volumes_from: Vec::new(), pod: None, image: image.to_string(),
         command: vec!["true".to_string()],
     }
 }
@@ -1373,10 +1373,10 @@ fn test_issue_283_missing_top_level_command_boxr_config() {
 
 // Issue #284: [Docker Drift] Missing top-level command 'boxr secret'
 #[test]
-fn test_issue_284_missing_top_level_command_boxr_secret() {
+fn test_issue_284_top_level_command_boxr_secret() {
     use clap::Parser;
     use boxr::cli::Cli;
-    let cli = Cli::try_parse_from(["boxr", "secret"]).unwrap();
+    let cli = Cli::try_parse_from(["boxr", "secret", "ls"]).unwrap();
     let _ = cli;
 }
 

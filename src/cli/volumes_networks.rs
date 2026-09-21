@@ -9,8 +9,10 @@ pub struct VolumeSubcommands {
 #[derive(clap::Subcommand, Debug)]
 pub enum VolumeAction {
     Create {
-        /// Volume name (positional or --name)
+        /// Volume name via --name
         #[arg(long = "name")]
+        name_flag: Option<String>,
+        /// Volume name (positional)
         name: Option<String>,
         /// Specify volume driver name (default "local")
         #[arg(short = 'd', long = "driver", default_value = "local")]
@@ -62,6 +64,10 @@ pub enum VolumeAction {
         name: String,
     },
     Prune(VolumePruneArgs),
+    /// Return 0 if the volume exists, 1 otherwise
+    Exists {
+        name: String,
+    },
 }
 
 #[derive(Args, Debug, Clone, Default)]
@@ -163,6 +169,14 @@ pub enum NetworkAction {
     Disconnect {
         network: String,
         container: String,
+    },
+    /// Reload firewall rules and port forwarding for a container (Podman parity)
+    Reload {
+        containers: Vec<String>,
+    },
+    /// Return 0 if the network exists, 1 otherwise
+    Exists {
+        name: String,
     },
 }
 

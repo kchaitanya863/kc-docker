@@ -1,7 +1,18 @@
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Output};
 use tempfile::tempdir;
+
+#[path = "common/blackbox.rs"]
+mod blackbox;
+
+fn boxr_locked(bin: &PathBuf, args: &[&str]) -> Output {
+    blackbox::with_vm_lock(|| {
+        let mut cmd = Command::new(bin);
+        cmd.env_remove("DOCKER_HOST");
+        cmd.args(args).output().expect("failed to execute boxr")
+    })
+}
 
 fn boxr_bin() -> PathBuf {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -196,14 +207,11 @@ CMD ["/bin/cat", "/app/app.bin"]
 
     let tag = "e2e-multistage:v1";
 
-    let output = boxr_cmd(&bin)
-        .args(["build", "-t", tag, temp.path().to_str().unwrap()])
-        .output()
-        .unwrap();
+    let output = boxr_locked(&bin, &["build", "-t", tag, temp.path().to_str().unwrap()]);
 
     assert!(output.status.success());
 
-    let output = boxr_cmd(&bin).args(["images"]).output().unwrap();
+    let output = boxr_locked(&bin, &["images"]);
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("e2e-multistage"));
@@ -223,8 +231,9 @@ fn test_e2e_container_lifecycle_pause_unpause_rename_commit_wait() {
     let renamed = format!("e2e-renamed-{}", &run_id[..6]);
     let snap_img = format!("e2e-snap-{}:v1", &run_id[..6]);
 
-    let output = boxr_cmd(&bin)
-        .args([
+    let output = boxr_locked(
+        &bin,
+        &[
             "run",
             "-d",
             "--name",
@@ -232,44 +241,34 @@ fn test_e2e_container_lifecycle_pause_unpause_rename_commit_wait() {
             "alpine",
             "/bin/sh",
             "-c",
-            "echo 'committed file' > /committed.txt; sleep 1",
-        ])
-        .output()
-        .unwrap();
+            "echo 'committed file' > /committed.txt; sleep 300",
+        ],
+    );
     assert!(output.status.success());
-    std::thread::sleep(std::time::Duration::from_millis(600));
+    std::thread::sleep(std::time::Duration::from_secs(5));
 
-    let output = boxr_cmd(&bin).args(["pause", &name]).output().unwrap();
+    let output = boxr_locked(&bin, &["pause", &name]);
     assert!(output.status.success());
 
-    let output = boxr_cmd(&bin).args(["ps", "-a"]).output().unwrap();
+    let output = boxr_locked(&bin, &["ps", "-a"]);
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Paused"));
 
-    let output = boxr_cmd(&bin).args(["unpause", &name]).output().unwrap();
+    let output = boxr_locked(&bin, &["unpause", &name]);
     assert!(output.status.success());
 
-    let output = boxr_cmd(&bin)
-        .args(["rename", &name, &renamed])
-        .output()
-        .unwrap();
+    let output = boxr_locked(&bin, &["rename", &name, &renamed]);
     assert!(output.status.success());
 
-    let output = boxr_cmd(&bin)
-        .args(["commit", &renamed, &snap_img])
-        .output()
-        .unwrap();
+    let output = boxr_locked(&bin, &["commit", &renamed, &snap_img]);
     assert!(output.status.success());
 
-    let output = boxr_cmd(&bin)
-        .args(["run", "--rm", &snap_img, "/bin/cat", "/committed.txt"])
-        .output()
-        .unwrap();
+    let output = boxr_locked(&bin, &["run", "--rm", &snap_img, "/bin/cat", "/committed.txt"]);
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("committed file"));
 
-    let output = boxr_cmd(&bin).args(["wait", &renamed]).output().unwrap();
+    let output = boxr_locked(&bin, &["wait", &renamed]);
     assert!(output.status.success());
 
     let _ = boxr_cmd(&bin).args(["rm", &renamed]).output();
@@ -411,31 +410,38 @@ fn test_e2e_concurrent_load_test() {
     let workers = [w1, w2, w3];
 
     for w in &workers {
-        let output = boxr_cmd(&bin)
-            .args([
+        let output = boxr_locked(
+            &bin,
+            &[
                 "run",
                 "-d",
                 "--name",
                 w,
                 "alpine",
-                "/bin/echo",
-                "result=465",
-            ])
-            .output()
-            .unwrap();
+                "/bin/sh",
+                "-c",
+                "echo result=465; sleep 300",
+            ],
+        );
         assert!(output.status.success());
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::thread::sleep(std::time::Duration::from_millis(200));
     }
 
     for w in &workers {
-        let output = boxr_cmd(&bin).args(["wait", w]).output().unwrap();
-        assert!(output.status.success());
+        let start = std::time::Instant::now();
+        let mut saw_log = false;
+        while start.elapsed() < std::time::Duration::from_secs(30) {
+            let output = boxr_locked(&bin, &["logs", w]);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if stdout.contains("result=465") {
+                saw_log = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+        assert!(saw_log, "logs for {} never contained result=465", w);
 
-        let output = boxr_cmd(&bin).args(["logs", w]).output().unwrap();
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(stdout.contains("result=465"));
-
-        let _ = boxr_cmd(&bin).args(["rm", w]).output();
+        let _ = boxr_locked(&bin, &["rm", "-f", w]);
     }
 }
 
@@ -553,45 +559,26 @@ fn test_e2e_platform_and_gpu_sharing() {
     }
 
     // 1. Test arm64 container
-    let arm_out = boxr_cmd(&bin)
-        .args([
-            "run",
-            "--rm",
-            "--platform",
-            "linux/arm64",
-            "alpine",
-            "uname",
-            "-m",
-        ])
-        .output()
-        .unwrap();
+    let arm_out = boxr_locked(
+        &bin,
+        &["run", "--rm", "--platform", "linux/arm64", "alpine", "uname", "-m"],
+    );
     if arm_out.status.success() {
         let stdout = String::from_utf8_lossy(&arm_out.stdout);
         assert!(stdout.contains("aarch64"));
     }
 
     // 2. Test amd64 container (via Rosetta on macOS or emulation)
-    let amd_out = boxr_cmd(&bin)
-        .args([
-            "run",
-            "--rm",
-            "--platform",
-            "linux/amd64",
-            "alpine",
-            "uname",
-            "-m",
-        ])
-        .output()
-        .unwrap();
+    let amd_out = boxr_locked(
+        &bin,
+        &["run", "--rm", "--platform", "linux/amd64", "alpine", "uname", "-m"],
+    );
     if amd_out.status.success() {
         let stdout = String::from_utf8_lossy(&amd_out.stdout);
         assert!(stdout.contains("x86_64") || stdout.contains("aarch64"));
     }
 
     // 3. Test GPU device sharing flag
-    let gpu_out = boxr_cmd(&bin)
-        .args(["run", "--rm", "--gpus", "all", "alpine", "uname", "-a"])
-        .output()
-        .unwrap();
+    let gpu_out = boxr_locked(&bin, &["run", "--rm", "--gpus", "all", "alpine", "uname", "-a"]);
     assert!(gpu_out.status.success());
 }

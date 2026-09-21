@@ -106,8 +106,8 @@ impl ImageBuilder {
                         }
                     }
 
-                    // If we already had a running stage, save it before starting new one
-                    if !stages.is_empty() || current_rootfs.exists() {
+                    // Save the previous stage before starting a new one.
+                    if current_stage_name.is_some() || !stages.is_empty() {
                         stages.push(BuildStage {
                             name: current_stage_name.take(),
                             rootfs: current_rootfs.clone(),
@@ -131,7 +131,14 @@ impl ImageBuilder {
                     if let Some(base_cfg) = base_record.config.config {
                         current_config = base_cfg;
                     }
-                    cache_key = format!("from_{}_{}", image, base_record.manifest_digest);
+                    let stage_suffix = as_stage
+                        .as_deref()
+                        .map(|s| format!("_{}", s))
+                        .unwrap_or_default();
+                    cache_key = format!(
+                        "from_{}_{}{}",
+                        image, base_record.manifest_digest, stage_suffix
+                    );
                 }
                 Instruction::Workdir(dir) => {
                     let dest = if dir.starts_with('/') {

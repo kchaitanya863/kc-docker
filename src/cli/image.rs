@@ -377,6 +377,10 @@ pub enum ImageAction {
     Load(LoadArgs),
     Import(ImportArgs),
     Prune(ImagePruneArgs),
+    /// Return 0 if the image exists, 1 otherwise
+    Exists {
+        image: String,
+    },
 }
 
 #[derive(Args, Debug, Clone, Default)]

@@ -45,6 +45,44 @@ pub struct Descriptor {
     pub annotations: Option<HashMap<String, String>>,
 }
 
+/// Returns true when a manifest-list descriptor points at a runnable container image
+/// (not an attestation, provenance, or other artifact manifest).
+pub fn is_runnable_image_descriptor(desc: &Descriptor) -> bool {
+    let mt = desc.media_type.to_ascii_lowercase();
+    if mt.contains("attestation") || mt.contains("provenance") {
+        return false;
+    }
+
+    if let Some(annotations) = &desc.annotations {
+        for (key, value) in annotations {
+            let key_l = key.to_ascii_lowercase();
+            let val_l = value.to_ascii_lowercase();
+            if key_l.contains("reference.type") && val_l.contains("attestation") {
+                return false;
+            }
+            if key_l.contains("artifacttype") && val_l.contains("attestation") {
+                return false;
+            }
+        }
+    }
+
+    if let Some(platform) = &desc.platform {
+        let os = platform.os.to_ascii_lowercase();
+        let arch = platform.architecture.to_ascii_lowercase();
+        if os == "unknown" || arch == "unknown" {
+            return false;
+        }
+        if os != "linux" {
+            return false;
+        }
+    }
+
+    matches!(
+        mt.as_str(),
+        media_types::OCI_MANIFEST_V1 | media_types::DOCKER_MANIFEST_V2
+    ) || mt.contains("image.manifest")
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManifestListOrIndex {
     #[serde(rename = "schemaVersion")]
@@ -558,5 +596,39 @@ mod tests {
             "Benign relative symlink within target must succeed: {:?}",
             res
         );
+    }
+
+    #[test]
+    fn test_is_runnable_image_descriptor_filters_attestations() {
+        let image = Descriptor {
+            media_type: media_types::OCI_MANIFEST_V1.to_string(),
+            digest: "sha256:abc".to_string(),
+            size: 100,
+            platform: Some(Platform {
+                architecture: "arm64".to_string(),
+                os: "linux".to_string(),
+                os_version: None,
+                variant: None,
+            }),
+            annotations: None,
+        };
+        assert!(is_runnable_image_descriptor(&image));
+
+        let attestation = Descriptor {
+            media_type: media_types::OCI_MANIFEST_V1.to_string(),
+            digest: "sha256:def".to_string(),
+            size: 100,
+            platform: Some(Platform {
+                architecture: "unknown".to_string(),
+                os: "unknown".to_string(),
+                os_version: None,
+                variant: None,
+            }),
+            annotations: Some(HashMap::from([(
+                "vnd.docker.reference.type".to_string(),
+                "attestation".to_string(),
+            )])),
+        };
+        assert!(!is_runnable_image_descriptor(&attestation));
     }
 }

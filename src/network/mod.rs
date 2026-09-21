@@ -8,8 +8,10 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::net::Ipv4Addr;
+use std::io::{Read, Write};
+use std::net::{Ipv4Addr, SocketAddr, TcpStream};
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PortMapping {
@@ -585,6 +587,62 @@ fn allocate_ip_in_subnet(
     Err(anyhow!(
         "No available IP addresses in subnet {}",
         subnet_str
+    ))
+}
+
+fn probe_published_port(mapping: &PortMapping) -> bool {
+    let host = mapping.host_ip.as_deref().unwrap_or("127.0.0.1");
+    let addr: SocketAddr = match format!("{}:{}", host, mapping.host_port).parse() {
+        Ok(a) => a,
+        Err(_) => return false,
+    };
+
+    let mut stream = match TcpStream::connect_timeout(&addr, Duration::from_secs(2)) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+
+    if matches!(mapping.container_port, 80 | 443 | 8080 | 8443) {
+        let request = format!(
+            "GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n",
+            host = host
+        );
+        if stream.write_all(request.as_bytes()).is_err() {
+            return false;
+        }
+        let mut buf = [0u8; 16];
+        match stream.read(&mut buf) {
+            Ok(n) => n >= 12 && buf.starts_with(b"HTTP/"),
+            Err(_) => false,
+        }
+    } else {
+        true
+    }
+}
+
+/// Wait until all published TCP ports accept connections on the host.
+pub fn wait_for_published_ports(ports: &[PortMapping], timeout: Duration) -> Result<()> {
+    let targets: Vec<&PortMapping> = ports
+        .iter()
+        .filter(|p| p.protocol == "tcp")
+        .collect();
+    if targets.is_empty() {
+        return Ok(());
+    }
+
+    let start = Instant::now();
+    while start.elapsed() < timeout {
+        let ready = targets.iter().all(|p| probe_published_port(p));
+        if ready {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+
+    Err(anyhow!(
+        "timed out waiting for published TCP ports to become reachable"
     ))
 }
 

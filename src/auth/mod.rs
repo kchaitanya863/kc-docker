@@ -428,10 +428,9 @@ impl RegistryPusher {
             println!("Authenticated as: {}", user);
         }
 
-        // Registry push simulation and verification
-        println!("Checking repository access...");
-        println!("Pushing layers...");
-        println!("Digest: {}", image.manifest_digest);
+        let mut client = crate::oci::distribution::RegistryClient::new();
+        let digest = client.push_image(&image, &reference).await?;
+        println!("Digest: {}", digest);
         println!("Successfully pushed {}:{}", image.reference, image.tag);
 
         Ok(())

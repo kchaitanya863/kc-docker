@@ -10,6 +10,38 @@ use std::process::Command;
 const PERM_SO_ARM64: &[u8] = include_bytes!("libboxr_perm.so");
 const PERM_SO_X86_64: &[u8] = include_bytes!("libboxr_perm_x86_64.so");
 
+fn apply_vm_resource_args(cmd: &mut Command, spec: Option<&Spec>) {
+    let mut mem_set = false;
+    let mut cpu_set = false;
+    if let Some(ann) = spec.and_then(|s| s.annotations.as_ref()) {
+        if let Some(m) = ann.get("boxr.memory") {
+            cmd.arg("--memory").arg(m);
+            mem_set = true;
+        }
+        if let Some(c) = ann.get("boxr.cpus") {
+            if let Ok(cpus_f) = c.parse::<f64>() {
+                let cpu_count = (cpus_f.ceil() as u64).max(1);
+                cmd.arg("--cpus").arg(cpu_count.to_string());
+                cpu_set = true;
+            }
+        }
+    }
+    if !mem_set {
+        if let Ok(mb) = std::env::var("BOXR_VM_MEMORY_MB") {
+            if let Ok(n) = mb.parse::<u64>() {
+                cmd.arg("--memory").arg((n * 1024 * 1024).to_string());
+            }
+        }
+    }
+    if !cpu_set {
+        if let Ok(cpus) = std::env::var("BOXR_VM_CPUS") {
+            if let Ok(n) = cpus.parse::<u64>() {
+                cmd.arg("--cpus").arg(n.max(1).to_string());
+            }
+        }
+    }
+}
+
 /// Ensure native Apple Virtualization runner binary is compiled and codesigned
 pub fn ensure_vz_runner() -> Result<PathBuf> {
     let home = boxr_home();
@@ -213,17 +245,7 @@ pub fn execute_bundle(
         ));
     }
 
-    if let Some(ann) = &spec.annotations {
-        if let Some(m) = ann.get("boxr.memory") {
-            cmd.arg("--memory").arg(m);
-        }
-        if let Some(c) = ann.get("boxr.cpus") {
-            if let Ok(cpus_f) = c.parse::<f64>() {
-                let cpu_count = (cpus_f.ceil() as u64).max(1);
-                cmd.arg("--cpus").arg(cpu_count.to_string());
-            }
-        }
-    }
+    apply_vm_resource_args(&mut cmd, Some(spec));
 
     // Build the runner script inside the container's rootfs
     let mut run_script = String::new();
@@ -340,11 +362,21 @@ pub fn execute_bundle(
         let tag = format!("m{}", idx);
         cmd.arg("--mount")
             .arg(format!("{}={}", tag, m.source.display()));
+        let mount_opts = if m.read_only { " -o ro" } else { "" };
         run_script.push_str(&format!(
-            "mkdir -p \"{}\" 2>/dev/null; mount -t virtiofs \"{}\" \"{}\" 2>/dev/null || true\n",
-            m.destination, tag, m.destination
+            "mkdir -p \"{}\" 2>/dev/null; mount -t virtiofs{} \"{}\" \"{}\" 2>/dev/null || true\n",
+            m.destination, mount_opts, tag, m.destination
         ));
     }
+
+    let readonly_teardown = if spec.root.readonly {
+        run_script.push_str(
+            "mount -o remount,ro,bind / 2>/dev/null || mount -o remount,ro / 2>/dev/null || true\n",
+        );
+        "mount -o remount,rw,bind / 2>/dev/null || mount -o remount,rw / 2>/dev/null || true\n"
+    } else {
+        ""
+    };
 
     // Environment variables
     for env_var in &spec.process.env {
@@ -419,6 +451,7 @@ pub fn execute_bundle(
         run_script.push_str("  for f in /boxr-exec-*.sh; do\n");
         run_script.push_str("    [ -f \"$f\" ] || continue\n");
         run_script.push_str("    ID=$(echo \"$f\" | sed 's/.*boxr-exec-//; s/\\.sh//')\n");
+        run_script.push_str(readonly_teardown);
         run_script.push_str("    /bin/sh \"$f\" > \"/boxr-exec-${ID}.log\" 2>&1\n");
         run_script.push_str("    echo $? > \"/boxr-exec-${ID}.done\"\n");
         run_script.push_str("    rm -f \"$f\"\n");
@@ -427,12 +460,14 @@ pub fn execute_bundle(
         run_script.push_str("done\n");
         run_script.push_str("wait $MAIN_PID 2>/dev/null\n");
         run_script.push_str("EXIT_CODE=$?\n");
+        run_script.push_str(readonly_teardown);
         run_script.push_str("echo $EXIT_CODE > /boxr-exitcode\n");
         run_script.push_str("sync 2>/dev/null || true\n");
         run_script.push_str("echo 1 > /proc/sys/kernel/sysrq 2>/dev/null; echo o > /proc/sysrq-trigger 2>/dev/null || /bin/busybox poweroff -f 2>/dev/null || poweroff -f 2>/dev/null || halt -f -p 2>/dev/null\n");
     } else {
         run_script.push_str(&format!("{}\n", final_cmd));
         run_script.push_str("EXIT_CODE=$?\n");
+        run_script.push_str(readonly_teardown);
         run_script.push_str("echo $EXIT_CODE > /boxr-exitcode\n");
         run_script.push_str("sync 2>/dev/null || true\n");
         run_script.push_str("echo 1 > /proc/sys/kernel/sysrq 2>/dev/null; echo o > /proc/sysrq-trigger 2>/dev/null || /bin/busybox poweroff -f 2>/dev/null || poweroff -f 2>/dev/null || halt -f -p 2>/dev/null\n");
@@ -457,8 +492,8 @@ pub fn execute_bundle(
             cmd.process_group(0);
         }
         let _child = cmd.spawn()?;
-        // Give background VM a brief moment to boot
-        std::thread::sleep(std::time::Duration::from_millis(300));
+        // Give background VM a brief moment to create vm.pid and bind published ports
+        std::thread::sleep(std::time::Duration::from_millis(1500));
         return Ok(0);
     }
 
@@ -602,16 +637,17 @@ pub fn exec_in_bundle(
         let _ = fs::set_permissions(&run_script_path, fs::Permissions::from_mode(0o777));
     }
 
-    let status = Command::new(&runner_bin)
-        .arg("--bundle")
+    let mut cmd = Command::new(&runner_bin);
+    cmd.arg("--bundle")
         .arg(bundle_path)
         .arg("--rootfs")
         .arg(&rootfs_path)
         .arg("--kernel")
         .arg(&kernel_path)
         .arg("--initrd")
-        .arg(&initrd_path)
-        .status()?;
+        .arg(&initrd_path);
+    apply_vm_resource_args(&mut cmd, None);
+    let status = cmd.status()?;
 
     Ok(status.code().unwrap_or(0))
 }

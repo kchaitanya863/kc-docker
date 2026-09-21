@@ -25,6 +25,8 @@ pub enum NetworkMode {
     Host,
     /// Private loopback-only network namespace
     None,
+    /// Share another container's network namespace (Podman/Docker `container:<name>`)
+    Container(String),
 }
 
 impl Default for NetworkMode {
@@ -35,13 +37,30 @@ impl Default for NetworkMode {
 
 impl NetworkMode {
     pub fn parse(s: &str) -> Self {
-        match s.trim().to_lowercase().as_str() {
+        let trimmed = s.trim();
+        if let Some(target) = trimmed
+            .strip_prefix("container:")
+            .or_else(|| trimmed.strip_prefix("container://"))
+        {
+            if !target.is_empty() {
+                return Self::Container(target.to_string());
+            }
+        }
+        match trimmed.to_lowercase().as_str() {
             "pasta" => Self::Pasta,
             "usernet" | "native" | "slirp" => Self::UserNet,
             "host" => Self::Host,
             "none" => Self::None,
             "bridge" => Self::Bridge,
             _ => Self::Auto,
+        }
+    }
+
+    /// Target container for `container:` network mode, if any.
+    pub fn container_target(&self) -> Option<&str> {
+        match self {
+            Self::Container(name) => Some(name.as_str()),
+            _ => None,
         }
     }
 
@@ -68,7 +87,7 @@ impl NetworkMode {
         match self {
             Self::Pasta | Self::UserNet | Self::None => true,
             Self::Auto => PastaDriver::is_available(),
-            Self::Host | Self::Bridge => false,
+            Self::Host | Self::Bridge | Self::Container(_) => false,
         }
     }
 }
@@ -82,6 +101,7 @@ impl std::fmt::Display for NetworkMode {
             Self::Bridge => write!(f, "bridge"),
             Self::Host => write!(f, "host"),
             Self::None => write!(f, "none"),
+            Self::Container(name) => write!(f, "container:{}", name),
         }
     }
 }

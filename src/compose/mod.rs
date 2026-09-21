@@ -402,6 +402,7 @@ impl ComposeProject {
                 volume_driver: None,
                 volumes_from: Vec::new(),
                 workdir: None,
+                pod: None,
                 image: image_name,
                 command: cmd_vec,
             };
@@ -532,6 +533,223 @@ impl ComposeProject {
             .filter(|c| c.name.starts_with(&prefix) || custom_names.contains(&c.name))
             .collect();
         Ok(containers)
+    }
+
+    pub async fn pull_images(&self) -> Result<()> {
+        for (svc_name, svc) in &self.compose.services {
+            if let Some(img) = &svc.image {
+                println!("Pulling service {} image {}...", svc_name, img);
+                let _ = crate::pull_image(img).await?;
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn push_images(&self) -> Result<()> {
+        for (svc_name, svc) in &self.compose.services {
+            if let Some(img) = &svc.image {
+                println!("Pushing service {} image {}...", svc_name, img);
+                let _ = crate::push_image(img).await?;
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn create_containers(&self) -> Result<()> {
+        let order = self.dependency_order()?;
+        for svc_name in order {
+            let svc = self.compose.services.get(&svc_name).unwrap();
+            let container_name = svc
+                .container_name
+                .clone()
+                .unwrap_or_else(|| format!("{}_{}_1", self.name, svc_name));
+            if let Some(img) = &svc.image {
+                let run_args = self.build_service_run_args(&svc_name, svc, &container_name, img, false)?;
+                let _ = crate::create_only_container(run_args).await?;
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn run_one_off(
+        &self,
+        service: &str,
+        command: Vec<String>,
+        rm: bool,
+    ) -> Result<()> {
+        let svc = self
+            .compose
+            .services
+            .get(service)
+            .ok_or_else(|| anyhow!("Service '{}' not found", service))?;
+        let container_name = format!("{}_{}_run_{}", self.name, service, hex::encode(crate::storage::container_store::rand_id()));
+        let image_name = svc
+            .image
+            .clone()
+            .ok_or_else(|| anyhow!("Service '{}' has no image", service))?;
+        let mut run_args = self.build_service_run_args(service, svc, &container_name, &image_name, true)?;
+        run_args.rm = rm;
+        run_args.detach = false;
+        run_args.interactive = true;
+        run_args.tty = true;
+        if !command.is_empty() {
+            run_args.command = command;
+        }
+        let _ = crate::run_container(run_args).await?;
+        Ok(())
+    }
+
+    fn build_service_run_args(
+        &self,
+        _svc_name: &str,
+        svc: &ServiceConfig,
+        container_name: &str,
+        image_name: &str,
+        detach: bool,
+    ) -> Result<RunArgs> {
+        let root_dir = self.compose_file_path.parent().unwrap_or(Path::new("."));
+        let mut env_vec = Vec::new();
+        if let Some(ef) = &svc.env_file {
+            for path_str in ef.to_vec() {
+                let p = root_dir.join(&path_str);
+                if let Ok(content) = fs::read_to_string(&p) {
+                    for line in content.lines() {
+                        let trimmed = line.trim();
+                        if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                            env_vec.push(trimmed.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(env_entries) = &svc.environment {
+            env_vec.extend(env_entries.to_vec());
+        }
+        let cmd_vec = svc.command.as_ref().map(|c| c.to_vec()).unwrap_or_default();
+        let port_vec = svc.ports.clone().unwrap_or_default();
+        let mut vol_vec = Vec::new();
+        if let Some(vols) = &svc.volumes {
+            for v in vols {
+                if let Some((src, dest)) = v.split_once(':') {
+                    if !src.starts_with('/') && !src.starts_with('.') && !src.starts_with('~') {
+                        vol_vec.push(format!("{}_{}:{}", self.name, src, dest));
+                    } else {
+                        vol_vec.push(v.clone());
+                    }
+                } else {
+                    vol_vec.push(v.clone());
+                }
+            }
+        }
+        Ok(RunArgs {
+            interactive: false,
+            tty: false,
+            detach,
+            rm: false,
+            name: Some(container_name.to_string()),
+            env: env_vec,
+            ports: port_vec,
+            volumes: vol_vec,
+            memory: None,
+            labels: Vec::new(),
+            dns: Vec::new(),
+            cidfile: None,
+            cpus: None,
+            pids_limit: None,
+            rootless: true,
+            restart: svc.restart.clone().unwrap_or_else(|| "no".to_string()),
+            health_cmd: None,
+            platform: None,
+            privileged: false,
+            network: "bridge".to_string(),
+            disable_content_trust: false,
+            gpus: None,
+            entrypoint: None,
+            env_file: None,
+            user: None,
+            hostname: None,
+            add_host: Vec::new(),
+            shm_size: None,
+            cap_add: Vec::new(),
+            cap_drop: Vec::new(),
+            read_only: false,
+            init: false,
+            tmpfs: Vec::new(),
+            devices: Vec::new(),
+            security_opt: Vec::new(),
+            cpu_shares: None,
+            cpuset_cpus: None,
+            memory_swap: None,
+            memory_reservation: None,
+            dns_search: Vec::new(),
+            dns_option: Vec::new(),
+            expose: Vec::new(),
+            sysctl: Vec::new(),
+            stop_timeout: None,
+            stop_signal: None,
+            annotations: Vec::new(),
+            ulimits: Vec::new(),
+            ipc: None,
+            pid: None,
+            uts: None,
+            userns: None,
+            cgroupns: None,
+            cgroup_parent: None,
+            isolation: None,
+            cpu_count: None,
+            cpu_percent: None,
+            io_maxbandwidth: None,
+            io_maxiops: None,
+            publish_all: false,
+            ip: None,
+            ip6: None,
+            mac_address: None,
+            link: Vec::new(),
+            network_alias: Vec::new(),
+            mount: Vec::new(),
+            health_interval: None,
+            health_timeout: None,
+            health_retries: None,
+            health_start_period: None,
+            health_start_interval: None,
+            no_healthcheck: false,
+            attach: Vec::new(),
+            pull: None,
+            quiet: false,
+            log_driver: None,
+            log_opt: Vec::new(),
+            oom_kill_disable: false,
+            oom_score_adj: None,
+            group_add: Vec::new(),
+            label_file: None,
+            umask: None,
+            domainname: None,
+            detach_keys: None,
+            blkio_weight: None,
+            blkio_weight_device: Vec::new(),
+            cpu_period: None,
+            cpu_quota: None,
+            cpu_rt_period: None,
+            cpu_rt_runtime: None,
+            cpuset_mems: None,
+            device_cgroup_rule: Vec::new(),
+            device_read_bps: Vec::new(),
+            device_read_iops: Vec::new(),
+            device_write_bps: Vec::new(),
+            device_write_iops: Vec::new(),
+            link_local_ip: Vec::new(),
+            memory_swappiness: None,
+            runtime: None,
+            sig_proxy: true,
+            storage_opt: Vec::new(),
+            use_api_socket: false,
+            volume_driver: None,
+            volumes_from: Vec::new(),
+            workdir: None,
+            pod: None,
+            image: image_name.to_string(),
+            command: cmd_vec,
+        })
     }
 }
 

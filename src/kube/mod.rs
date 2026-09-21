@@ -75,7 +75,22 @@ impl KubeManager {
         println!("Playing Kubernetes Pod '{}'...", pod_yaml.metadata.name);
 
         let pod_store = PodStore::new();
-        let pod = pod_store.create(Some(&pod_yaml.metadata.name), Vec::new())?;
+        let mut pod_ports = Vec::new();
+        for c_spec in &pod_yaml.spec.containers {
+            if let Some(ports) = &c_spec.ports {
+                for p in ports {
+                    if let Some(host_p) = p.host_port {
+                        pod_ports.push(crate::network::PortMapping {
+                            host_ip: None,
+                            host_port: host_p,
+                            container_port: p.container_port,
+                            protocol: "tcp".to_string(),
+                        });
+                    }
+                }
+            }
+        }
+        let pod = pod_store.create(Some(&pod_yaml.metadata.name), pod_ports)?;
 
         for c_spec in &pod_yaml.spec.containers {
             let container_name = format!("{}-{}", pod.name, c_spec.name);
@@ -203,6 +218,7 @@ impl KubeManager {
                 volume_driver: None,
                 volumes_from: Vec::new(),
                 workdir: None,
+                pod: Some(pod.name.clone()),
                 image: c_spec.image.clone(),
                 command: c_spec.command.clone().unwrap_or_default(),
             };
@@ -216,6 +232,39 @@ impl KubeManager {
             pod.name,
             pod_yaml.spec.containers.len()
         );
+        Ok(())
+    }
+
+    /// Tear down a Kubernetes Pod played via `play kube`.
+    pub fn play_kube_down(yaml_path: &Path) -> Result<()> {
+        let content = fs::read_to_string(yaml_path)
+            .with_context(|| format!("Failed to read Kubernetes YAML at {:?}", yaml_path))?;
+        let pod_yaml: KubePodYaml =
+            serde_yaml::from_str(&content).context("Failed to parse Kubernetes Pod YAML")?;
+
+        if pod_yaml.kind != "Pod" {
+            return Err(anyhow!(
+                "Unsupported Kubernetes kind '{}', expected 'Pod'",
+                pod_yaml.kind
+            ));
+        }
+
+        let pod_store = PodStore::new();
+        if let Some(pod) = pod_store.find(&pod_yaml.metadata.name) {
+            println!("Tearing down pod '{}'...", pod.name);
+            pod_store.remove_with_force(&pod.name, true)?;
+            println!("Pod '{}' removed", pod.name);
+        } else {
+            let c_store = ContainerStore::new();
+            for c_spec in &pod_yaml.spec.containers {
+                let container_name = format!("{}-{}", pod_yaml.metadata.name, c_spec.name);
+                if c_store.find(&container_name).is_some() {
+                    let _ = crate::stop_container(&container_name, None);
+                    let _ = crate::remove_container(&container_name, true);
+                }
+            }
+            println!("Pod '{}' resources removed", pod_yaml.metadata.name);
+        }
         Ok(())
     }
 

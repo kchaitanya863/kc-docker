@@ -1,15 +1,19 @@
-use crate::oci::image::{Descriptor, ImageConfig, ImageManifest, ManifestListOrIndex, media_types};
+use crate::oci::image::{
+    Descriptor, ImageConfig, ImageManifest, ManifestListOrIndex, is_runnable_image_descriptor,
+    media_types,
+};
 use crate::oci::reference::ImageReference;
+use crate::storage::ImageRecord;
 use anyhow::{Context, Result, anyhow};
 use futures_util::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::Client;
-use reqwest::header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderValue};
+use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use sha2::{Digest, Sha256};
 use std::env;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub struct RegistryClient {
     client: Client,
@@ -26,7 +30,7 @@ pub trait ImageDistribution: Send + Sync {
         &mut self,
         reference: &ImageReference,
         platform: Option<&str>,
-    ) -> Result<(ImageManifest, String)>;
+    ) -> Result<(ImageManifest, String, Vec<u8>)>;
 
     async fn fetch_config(
         &self,
@@ -51,7 +55,7 @@ impl ImageDistribution for RegistryClient {
         &mut self,
         reference: &ImageReference,
         platform: Option<&str>,
-    ) -> Result<(ImageManifest, String)> {
+    ) -> Result<(ImageManifest, String, Vec<u8>)> {
         RegistryClient::fetch_manifest_with_platform(self, reference, platform).await
     }
 
@@ -89,30 +93,35 @@ impl RegistryClient {
     pub async fn authenticate(&mut self, reference: &ImageReference) -> Result<()> {
         let cred_store = crate::auth::CredentialStore::new();
         let creds = cred_store.get_credentials(&reference.registry);
-        if let Some((u, p)) = &creds {
-            let encoded = crate::auth::custom_base64_encode(&format!("{}:{}", u, p));
-            self.basic_auth = Some(encoded);
-        }
 
         let ping_url = format!("https://{}/v2/", reference.registry);
-        let mut req = self.client.get(&ping_url);
-        if let Some(auth) = &self.basic_auth {
-            if let Ok(val) = HeaderValue::from_str(&format!("Basic {}", auth)) {
-                req = req.header(AUTHORIZATION, val);
-            }
-        }
-        let resp = req.send().await?;
+        let resp = self.client.get(&ping_url).send().await?;
 
         if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
             if let Some(auth_header) = resp.headers().get("www-authenticate") {
                 let auth_str = auth_header.to_str()?;
-                if let Some(token) = self
+                let token = self
                     .fetch_bearer_token(auth_str, reference, creds.as_ref())
-                    .await?
-                {
-                    self.token = Some(token);
+                    .await?;
+                if token.is_none() && creds.is_some() {
+                    self.basic_auth = None;
+                    self.token = self
+                        .fetch_bearer_token(auth_str, reference, None)
+                        .await?;
+                } else {
+                    self.token = token;
+                }
+                if self.token.is_some() {
+                    return Ok(());
                 }
             }
+        } else if resp.status().is_success() {
+            return Ok(());
+        }
+
+        if let Some((u, p)) = &creds {
+            let encoded = crate::auth::custom_base64_encode(&format!("{}:{}", u, p));
+            self.basic_auth = Some(encoded);
         }
         Ok(())
     }
@@ -149,7 +158,24 @@ impl RegistryClient {
             None => return Ok(None),
         };
 
-        let mut url = format!("{}?scope=repository:{}:pull", realm, reference.repository);
+        self.request_bearer_token(&realm, reference, service.as_deref(), creds, "pull")
+            .await
+    }
+
+    async fn request_bearer_token(
+        &self,
+        realm: &str,
+        reference: &ImageReference,
+        service: Option<&str>,
+        creds: Option<&(String, String)>,
+        scope_action: &str,
+    ) -> Result<Option<String>> {
+        let mut url = format!(
+            "{}?scope=repository:{}:{}",
+            realm,
+            reference.repository,
+            scope_action
+        );
         if let Some(s) = service {
             url.push_str(&format!("&service={}", s));
         }
@@ -159,6 +185,22 @@ impl RegistryClient {
             req = req.basic_auth(u, Some(p));
         }
         let resp = req.send().await?;
+        if resp.status() == reqwest::StatusCode::UNAUTHORIZED && creds.is_some() {
+            // Stale credentials: retry anonymously (Docker Hub allows anonymous pull tokens)
+            let resp = self.client.get(&url).send().await?;
+            if !resp.status().is_success() {
+                return Err(anyhow!(
+                    "Failed to obtain registry auth token: status {}",
+                    resp.status()
+                ));
+            }
+            let token_data: serde_json::Value = resp.json().await?;
+            return Ok(token_data
+                .get("token")
+                .or_else(|| token_data.get("access_token"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()));
+        }
         if !resp.status().is_success() {
             return Err(anyhow!(
                 "Failed to obtain registry auth token: status {}",
@@ -175,6 +217,201 @@ impl RegistryClient {
         let token_data: TokenResponse = resp.json().await?;
         let token = token_data.token.or(token_data.access_token);
         Ok(token)
+    }
+
+    /// Authenticate for push operations (pull,push scope).
+    pub async fn authenticate_push(&mut self, reference: &ImageReference) -> Result<()> {
+        let cred_store = crate::auth::CredentialStore::new();
+        let creds = cred_store.get_credentials(&reference.registry);
+        if let Some((u, p)) = &creds {
+            let encoded = crate::auth::custom_base64_encode(&format!("{}:{}", u, p));
+            self.basic_auth = Some(encoded);
+        }
+
+        let ping_url = format!("https://{}/v2/", reference.registry);
+        let mut req = self.client.get(&ping_url);
+        if let Some(auth) = &self.basic_auth {
+            if let Ok(val) = HeaderValue::from_str(&format!("Basic {}", auth)) {
+                req = req.header(AUTHORIZATION, val);
+            }
+        }
+        let resp = req.send().await?;
+
+        if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+            if let Some(auth_header) = resp.headers().get("www-authenticate") {
+                let auth_str = auth_header.to_str()?;
+                if auth_str.starts_with("Bearer ") {
+                    let params_str = &auth_str[7..];
+                    let mut realm = None;
+                    let mut service = None;
+                    for part in params_str.split(',') {
+                        let part = part.trim();
+                        if let Some((k, v)) = part.split_once('=') {
+                            let v = v.trim_matches('"');
+                            match k {
+                                "realm" => realm = Some(v.to_string()),
+                                "service" => service = Some(v.to_string()),
+                                _ => {}
+                            }
+                        }
+                    }
+                    if let Some(realm) = realm {
+                        if let Some(token) = self
+                            .request_bearer_token(
+                                &realm,
+                                reference,
+                                service.as_deref(),
+                                creds.as_ref(),
+                                "pull,push",
+                            )
+                            .await?
+                        {
+                            self.token = Some(token);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn upload_blob(
+        &self,
+        reference: &ImageReference,
+        digest: &str,
+        data: &[u8],
+    ) -> Result<()> {
+        let check_url = format!(
+            "https://{}/v2/{}/blobs/{}",
+            reference.registry,
+            reference.repository,
+            digest
+        );
+        let head = self
+            .client
+            .head(&check_url)
+            .headers(self.auth_headers())
+            .send()
+            .await?;
+        if head.status().is_success() {
+            return Ok(());
+        }
+
+        let upload_url = format!(
+            "https://{}/v2/{}/blobs/uploads/",
+            reference.registry,
+            reference.repository
+        );
+        let post = self
+            .client
+            .post(&upload_url)
+            .headers(self.auth_headers())
+            .send()
+            .await?;
+        if !post.status().is_success() {
+            return Err(anyhow!(
+                "Failed to initiate blob upload: status {}",
+                post.status()
+            ));
+        }
+
+        let location = post
+            .headers()
+            .get("location")
+            .and_then(|v| v.to_str().ok())
+            .ok_or_else(|| anyhow!("Missing upload location header"))?;
+
+        let put = self
+            .client
+            .put(location)
+            .headers(self.auth_headers())
+            .header(CONTENT_TYPE, "application/octet-stream")
+            .header("Content-Length", data.len())
+            .body(data.to_vec())
+            .send()
+            .await?;
+        if !put.status().is_success() {
+            return Err(anyhow!("Failed to upload blob {}: status {}", digest, put.status()));
+        }
+        Ok(())
+    }
+
+    /// Push a local image to a remote OCI registry.
+    pub async fn push_image(
+        &mut self,
+        image: &ImageRecord,
+        reference: &ImageReference,
+    ) -> Result<String> {
+        self.authenticate_push(reference).await?;
+
+        let rootfs_path = PathBuf::from(&image.rootfs_path);
+        let image_dir = rootfs_path
+            .parent()
+            .ok_or_else(|| anyhow!("Invalid image rootfs path"))?;
+        let manifest_path = image_dir.join("manifest.json");
+        let config_path = image_dir.join("config.json");
+
+        let manifest: ImageManifest = if manifest_path.exists() {
+            let content = fs::read_to_string(&manifest_path)?;
+            serde_json::from_str(&content)?
+        } else {
+            return Err(anyhow!(
+                "Cannot push image '{}': manifest metadata missing (re-pull or rebuild image)",
+                image.reference
+            ));
+        };
+
+        let config_bytes = if config_path.exists() {
+            fs::read(&config_path)?
+        } else {
+            serde_json::to_vec(&image.config)?
+        };
+        self.upload_blob(reference, &manifest.config.digest, &config_bytes)
+            .await?;
+
+        for layer in &manifest.layers {
+            let safe_name = layer.digest.replace(':', "_");
+            let layer_file = crate::storage::boxr_home()
+                .join("layers")
+                .join(format!("{}.tar", safe_name));
+            if !layer_file.exists() {
+                return Err(anyhow!(
+                    "Missing layer blob {} for push",
+                    layer.digest
+                ));
+            }
+            let layer_bytes = fs::read(&layer_file)?;
+            self.upload_blob(reference, &layer.digest, &layer_bytes).await?;
+        }
+
+        let manifest_bytes = serde_json::to_vec(&manifest)?;
+        let manifest_digest = format!("sha256:{}", hex::encode(Sha256::digest(&manifest_bytes)));
+
+        let put_url = format!(
+            "https://{}/v2/{}/manifests/{}",
+            reference.registry,
+            reference.repository,
+            reference.tag
+        );
+        let mut headers = self.auth_headers();
+        headers.insert(
+            CONTENT_TYPE,
+            HeaderValue::from_str(media_types::DOCKER_MANIFEST_V2)?,
+        );
+        let resp = self
+            .client
+            .put(&put_url)
+            .headers(headers)
+            .body(manifest_bytes)
+            .send()
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow!("Failed to push manifest: {} - {}", status, body));
+        }
+
+        Ok(manifest_digest)
     }
 
     fn auth_headers(&self) -> HeaderMap {
@@ -195,7 +432,7 @@ impl RegistryClient {
     pub async fn fetch_manifest(
         &mut self,
         reference: &ImageReference,
-    ) -> Result<(ImageManifest, String)> {
+    ) -> Result<(ImageManifest, String, Vec<u8>)> {
         self.fetch_manifest_with_platform(reference, None).await
     }
 
@@ -204,7 +441,7 @@ impl RegistryClient {
         &mut self,
         reference: &ImageReference,
         target_platform: Option<&str>,
-    ) -> Result<(ImageManifest, String)> {
+    ) -> Result<(ImageManifest, String, Vec<u8>)> {
         self.authenticate(reference).await?;
 
         let tag_or_digest = reference.digest.as_deref().unwrap_or(&reference.tag);
@@ -267,8 +504,13 @@ impl RegistryClient {
                     ("linux", host_arch)
                 };
 
-                let chosen_descriptor = index
+                let runnable = index
                     .manifests
+                    .iter()
+                    .filter(|desc| is_runnable_image_descriptor(desc))
+                    .collect::<Vec<_>>();
+
+                let chosen_descriptor = runnable
                     .iter()
                     .find(|desc| {
                         if let Some(p) = &desc.platform {
@@ -278,8 +520,16 @@ impl RegistryClient {
                         }
                     })
                     .or_else(|| {
-                        // Fallback to linux/amd64 or any linux
-                        index.manifests.iter().find(|desc| {
+                        runnable.iter().find(|desc| {
+                            if let Some(p) = &desc.platform {
+                                p.os == "linux" && p.architecture == "amd64"
+                            } else {
+                                false
+                            }
+                        })
+                    })
+                    .or_else(|| {
+                        runnable.iter().find(|desc| {
                             if let Some(p) = &desc.platform {
                                 p.os == "linux"
                             } else {
@@ -287,7 +537,7 @@ impl RegistryClient {
                             }
                         })
                     })
-                    .or_else(|| index.manifests.first())
+                    .or_else(|| runnable.first())
                     .ok_or_else(|| {
                         anyhow!("No suitable manifest found in index for target platform")
                     })?;
@@ -304,8 +554,14 @@ impl RegistryClient {
         let manifest: ImageManifest =
             serde_json::from_slice(&body_bytes).context("Failed to parse image manifest JSON")?;
 
+        if manifest.layers.is_empty() {
+            return Err(anyhow!(
+                "Registry returned a manifest with no layers (possible attestation artifact)"
+            ));
+        }
+
         let digest = format!("sha256:{}", hex::encode(Sha256::digest(&body_bytes)));
-        Ok((manifest, digest))
+        Ok((manifest, digest, body_bytes.to_vec()))
     }
 
     /// Fetch image configuration JSON blob

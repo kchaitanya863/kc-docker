@@ -86,15 +86,11 @@ impl ContainerCopy {
         let is_src_cont = !src.starts_with('.') && !src.starts_with('/') && src.contains(':');
         let is_dest_cont = !dest.starts_with('.') && !dest.starts_with('/') && dest.contains(':');
 
-        if is_src_cont && is_dest_cont {
-            return Err(anyhow!(
-                "Container to container copy is not supported: '{}' to '{}'",
-                src,
-                dest
-            ));
-        }
-
         let store = ContainerStore::new();
+
+        if is_src_cont && is_dest_cont {
+            return Self::copy_container_to_container(&store, src, dest);
+        }
 
         if is_src_cont {
             let (container_query, container_path) = src.split_once(':').unwrap();
@@ -147,6 +143,42 @@ impl ContainerCopy {
                 "Invalid copy syntax: at least one of SRC or DEST must specify <container>:<path>"
             ))
         }
+    }
+
+    fn copy_container_to_container(
+        store: &ContainerStore,
+        src: &str,
+        dest: &str,
+    ) -> Result<()> {
+        let (src_query, src_path) = src.split_once(':').unwrap();
+        let (dest_query, dest_path) = dest.split_once(':').unwrap();
+
+        let src_cont = store
+            .find(src_query)
+            .ok_or_else(|| anyhow!("Container '{}' not found", src_query))?;
+        let dest_cont = store
+            .find(dest_query)
+            .ok_or_else(|| anyhow!("Container '{}' not found", dest_query))?;
+
+        let src_rootfs = PathBuf::from(&src_cont.bundle_path).join("rootfs");
+        let dest_rootfs = PathBuf::from(&dest_cont.bundle_path).join("rootfs");
+
+        let source_abs = Self::resolve_container_path(&src_rootfs, src_path)?;
+        if !source_abs.exists() {
+            return Err(anyhow!(
+                "Path '{}' does not exist in container '{}'",
+                src_path,
+                src_query
+            ));
+        }
+
+        let dest_abs = Self::resolve_container_path(&dest_rootfs, dest_path)?;
+        Self::copy_path(&source_abs, &dest_abs)?;
+        println!(
+            "Successfully copied {}:{} to {}:{}",
+            src_query, src_path, dest_query, dest_path
+        );
+        Ok(())
     }
 
     fn copy_path(src: &Path, dst: &Path) -> Result<()> {
@@ -265,10 +297,9 @@ mod tests {
 
     #[test]
     fn test_copy_syntax_validation() {
-        // Container to container rejection
+        // Container to container requires existing containers
         let err = ContainerCopy::copy("c1:/file", "c2:/file");
         assert!(err.is_err());
-        assert!(err.unwrap_err().to_string().contains("Container to container copy is not supported"));
 
         // Host path with colon should not be parsed as container
         let err2 = ContainerCopy::copy("./local:file", "./dest:file");

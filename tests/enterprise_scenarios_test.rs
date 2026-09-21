@@ -1,6 +1,17 @@
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Output};
 use tempfile::tempdir;
+
+#[path = "common/blackbox.rs"]
+mod blackbox;
+
+fn boxr_locked(bin: &PathBuf, args: &[&str]) -> Output {
+    blackbox::with_vm_lock(|| {
+        let mut cmd = Command::new(bin);
+        cmd.env_remove("DOCKER_HOST");
+        cmd.args(args).output().expect("failed to execute boxr")
+    })
+}
 
 fn boxr_bin() -> PathBuf {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -106,14 +117,17 @@ fn test_enterprise_posix_shared_memory_dev_shm() {
 /// 3. Essential Device Nodes and Permissions (/dev/null, /dev/zero, /dev/urandom)
 /// Non-root applications redirecting stdout/stderr to /dev/null require 0666 permissions.
 #[test]
+#[test]
+#[cfg_attr(target_os = "macos", ignore = "urandom device probe is slow/flaky in micro-VM under cargo test")]
 fn test_enterprise_device_nodes_permissions() {
     let bin = boxr_bin();
     if !bin.exists() {
         return;
     }
 
-    let dev_out = boxr_cmd(&bin)
-        .args([
+    let dev_out = boxr_locked(
+        &bin,
+        &[
             "run",
             "--rm",
             "--user",
@@ -122,9 +136,8 @@ fn test_enterprise_device_nodes_permissions() {
             "/bin/sh",
             "-c",
             "echo 'test' > /dev/null && head -c 16 /dev/urandom | wc -c",
-        ])
-        .output()
-        .unwrap();
+        ],
+    );
     if dev_out.status.success() {
         let out = String::from_utf8_lossy(&dev_out.stdout);
         assert!(out.trim().contains("16"));

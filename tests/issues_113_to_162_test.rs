@@ -190,6 +190,7 @@ fn default_run_args(image: &str) -> RunArgs {
         use_api_socket: false,
         volume_driver: None,
         volumes_from: Vec::new(),
+        pod: None,
         image: image.to_string(),
         command: vec!["true".to_string()],
     }

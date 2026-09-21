@@ -408,6 +408,10 @@ pub struct RunArgs {
     #[arg(long = "volumes-from")]
     pub volumes_from: Vec<String>,
 
+    /// Run container in an existing pod
+    #[arg(long = "pod")]
+    pub pod: Option<String>,
+
     pub image: String,
 
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -577,6 +581,10 @@ pub enum ContainerAction {
     Rename(RenameArgs),
     Stats(super::system::StatsArgs),
     Commit(CommitArgs),
+    /// Return 0 if the container exists, 1 otherwise
+    Exists {
+        container: String,
+    },
 }
 
 #[derive(Args, Debug, Clone, Default)]

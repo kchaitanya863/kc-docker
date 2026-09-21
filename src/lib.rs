@@ -44,10 +44,12 @@ pub mod events;
 pub mod guardrails;
 pub mod health;
 pub mod kube;
+pub mod mount;
 pub mod network;
 pub mod oci;
 pub mod pod;
 pub mod runtime;
+pub mod secret;
 pub mod security;
 pub mod service;
 pub mod stats;
@@ -61,7 +63,8 @@ use chrono::Utc;
 use cli::{
     BuildArgs, BuilderAction, Cli, Commands, ComposeArgs, ComposeSubcommand, DiffArgs, ExecArgs,
     GenerateAction, GenerateSubcommands, LogsArgs, NetworkAction, NetworkSubcommands, PlayAction,
-    PlaySubcommands, PodAction, PodSubcommands, PsArgs, RunArgs, SpecArgs, SystemAction, TopArgs,
+    PlaySubcommands, PodAction, PodLsArgs, PodSubcommands, PsArgs, RunArgs, SpecArgs, SystemAction,
+    TopArgs,
     UnshareArgs, VolumeAction, VolumeSubcommands,
 };
 use events::{ContainerEvent, EventManager};
@@ -320,6 +323,10 @@ pub async fn run_cli(cli: Cli) -> Result<i32> {
                 commit_container(&commit_args)?;
                 Ok(0)
             }
+            cli::ContainerAction::Exists { container } => {
+                ensure_container_exists(&container)?;
+                Ok(0)
+            }
         },
         Commands::Image(args) => match args.command {
             cli::ImageAction::Ls(images_args) => {
@@ -372,6 +379,10 @@ pub async fn run_cli(cli: Cli) -> Result<i32> {
             }
             cli::ImageAction::Prune(prune_args) => {
                 prune_images(prune_args.all)?;
+                Ok(0)
+            }
+            cli::ImageAction::Exists { image } => {
+                ensure_image_exists(&image)?;
                 Ok(0)
             }
         },
@@ -472,8 +483,8 @@ pub async fn run_cli(cli: Cli) -> Result<i32> {
             println!("boxr config management (stub)");
             Ok(0)
         }
-        Commands::Secret => {
-            println!("boxr secret management (stub)");
+        Commands::Secret(args) => {
+            handle_secret(args)?;
             Ok(0)
         }
         Commands::Node => {
@@ -571,7 +582,64 @@ pub async fn run_cli(cli: Cli) -> Result<i32> {
             }
             Ok(0)
         }
+        Commands::Machine(args) => {
+            handle_machine(args)?;
+            Ok(0)
+        }
+        Commands::Mount { container } => {
+            let path = mount::MountManager::new().mount_container(&container)?;
+            println!("{}", path);
+            Ok(0)
+        }
+        Commands::Unmount { container } => {
+            mount::MountManager::new().unmount_container(&container)?;
+            println!("{}", container);
+            Ok(0)
+        }
     }
+}
+
+fn entrypoint_exists_in_rootfs(rootfs: &Path, entrypoint: &str) -> bool {
+    let ep = entrypoint.strip_prefix('/').unwrap_or(entrypoint);
+    if rootfs.join(ep).exists() {
+        return true;
+    }
+    if ep.contains('/') {
+        return false;
+    }
+    for dir in ["usr/local/bin", "usr/bin", "bin", "sbin"] {
+        if rootfs.join(dir).join(ep).exists() {
+            return true;
+        }
+    }
+    false
+}
+
+pub fn validate_image_record(record: &ImageRecord) -> bool {
+    let rootfs = PathBuf::from(&record.rootfs_path);
+    if !rootfs.exists() {
+        return false;
+    }
+    if let Some(cfg) = &record.config.config {
+        if let Some(ep) = cfg.entrypoint.as_ref().and_then(|e| e.first()) {
+            if !entrypoint_exists_in_rootfs(&rootfs, ep) {
+                return false;
+            }
+        }
+    }
+    if let Some(rootfs_cfg) = &record.config.rootfs {
+        let manifest_path = rootfs.parent().map(|p| p.join("manifest.json"));
+        if let Some(manifest_path) = manifest_path.filter(|p| p.exists()) {
+            if let Ok(content) = fs::read_to_string(&manifest_path) {
+                if let Ok(manifest) = serde_json::from_str::<oci::image::ImageManifest>(&content) {
+                    if manifest.layers.len() != rootfs_cfg.diff_ids.len() {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    true
 }
 
 pub async fn pull_image(image_str: &str) -> Result<ImageRecord> {
@@ -595,7 +663,7 @@ pub async fn pull_image_with_platform(
         println!("Pulling from {}", reference.display_name());
     }
 
-    let (manifest, manifest_digest) = client
+    let (manifest, manifest_digest, manifest_bytes) = client
         .fetch_manifest_with_platform(&reference, target_platform)
         .await?;
     let short_digest = if manifest_digest.len() > 19 {
@@ -606,6 +674,16 @@ pub async fn pull_image_with_platform(
     println!("Manifest: {}", short_digest);
 
     let config = client.fetch_config(&reference, &manifest.config).await?;
+
+    if let Some(rootfs) = &config.rootfs {
+        if rootfs.diff_ids.len() != manifest.layers.len() {
+            return Err(anyhow!(
+                "Manifest has {} layer(s) but image config expects {} (possible attestation artifact)",
+                manifest.layers.len(),
+                rootfs.diff_ids.len()
+            ));
+        }
+    }
 
     let home = storage::boxr_home();
     let layers_dir = home.join("layers");
@@ -636,11 +714,25 @@ pub async fn pull_image_with_platform(
     }
     fs::create_dir_all(&rootfs_dir)?;
 
+    fs::write(image_dir.join("manifest.json"), &manifest_bytes)?;
+    fs::write(image_dir.join("config.json"), serde_json::to_vec(&config)?)?;
+
     println!("Extracting image layers to rootfs...");
     for layer_desc in &manifest.layers {
         let safe_name = layer_desc.digest.replace(':', "_");
         let layer_file = layers_dir.join(format!("{}.tar", safe_name));
         unpack_layer(&layer_file, &rootfs_dir)?;
+    }
+
+    if let Some(cfg) = &config.config {
+        if let Some(ep) = cfg.entrypoint.as_ref().and_then(|e| e.first()) {
+            if !entrypoint_exists_in_rootfs(&rootfs_dir, ep) {
+                return Err(anyhow!(
+                    "Image pull produced incomplete rootfs: missing entrypoint {}",
+                    ep
+                ));
+            }
+        }
     }
 
     let image_id = if manifest_digest.starts_with("sha256:") {
@@ -669,6 +761,10 @@ pub async fn pull_image_with_platform(
     println!("Digest: {}", manifest_digest);
     println!("Status: Downloaded image for {}", reference.display_name());
     Ok(record)
+}
+
+pub async fn push_image(image_str: &str) -> Result<()> {
+    auth::RegistryPusher::push(image_str).await
 }
 
 fn apply_capabilities_and_security(
@@ -771,7 +867,7 @@ fn apply_capabilities_and_security(
     });
 }
 
-pub async fn run_container(args: RunArgs) -> Result<i32> {
+pub async fn run_container(mut args: RunArgs) -> Result<i32> {
     let restart_policy = health::parse_restart_policy(&args.restart)?;
     if args.rm && !matches!(restart_policy, health::RestartPolicy::No) {
         return Err(anyhow!(
@@ -781,7 +877,7 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
 
     let image_store = ImageStore::new();
     let image_record = match image_store.find_with_platform(&args.image, args.platform.as_deref()) {
-        Some(record) if Path::new(&record.rootfs_path).exists() => record,
+        Some(record) if validate_image_record(&record) => record,
         _ => {
             if let Some(plat) = &args.platform {
                 println!("Unable to find image '{}' ({}) locally", args.image, plat);
@@ -817,7 +913,17 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
     let container_id = hex::encode(random_bytes);
     let container_name = args
         .name
+        .clone()
         .unwrap_or_else(|| format!("boxr-{}", &container_id[..6]));
+
+    if let Some(pod_name) = &args.pod {
+        let pod_store = pod::PodStore::new();
+        let pod_rec = pod_store
+            .find(pod_name)
+            .ok_or_else(|| anyhow!("Pod '{}' not found", pod_name))?;
+        let infra_target = ensure_pod_infra_container(&pod_rec).await?;
+        pod::apply_pod_to_run_args(&pod_rec, &infra_target, &mut args);
+    }
 
     let home = storage::boxr_home();
     let bundle_dir = home.join("containers").join(&container_id);
@@ -1035,7 +1141,15 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
             "pasta rootless networking driver is not installed on this system. Install 'passt' package to enable --network=pasta."
         ));
     }
+    if let Some(target) = net_mode.container_target() {
+        annotations.insert("boxr.network_container".to_string(), target.to_string());
+    }
     annotations.insert("boxr.network".to_string(), args.network.clone());
+    if let Some(linux) = &mut spec.linux {
+        apply_namespace_to_linux(linux, &mut annotations, "ipc", &args.ipc)?;
+        apply_namespace_to_linux(linux, &mut annotations, "uts", &args.uts)?;
+        apply_namespace_to_linux(linux, &mut annotations, "pid", &args.pid)?;
+    }
     spec.annotations = Some(annotations);
 
     fs::create_dir_all(&bundle_dir)?;
@@ -1273,6 +1387,11 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
     ));
     container_store.add(record)?;
 
+    if let Some(pod_name) = &args.pod {
+        let pod_store = pod::PodStore::new();
+        let _ = pod_store.add_container_to_pod(pod_name, &container_id);
+    }
+
     if args.detach {
         println!("{}", container_id);
         #[cfg(not(target_os = "macos"))]
@@ -1308,6 +1427,10 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
 
     if args.detach {
         let pid_path = bundle_dir.join("vm.pid");
+        let pid_wait = std::time::Instant::now();
+        while !pid_path.exists() && pid_wait.elapsed() < std::time::Duration::from_secs(30) {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
         if let Ok(pid_str) = fs::read_to_string(&pid_path) {
             if let Ok(pid) = pid_str.trim().parse::<i32>() {
                 #[cfg(unix)]
@@ -1330,6 +1453,18 @@ pub async fn run_container(args: RunArgs) -> Result<i32> {
                     }
                 }
             }
+        } else if !pid_path.exists() {
+            return Err(anyhow!(
+                "Container failed to start: micro-VM runner did not report a PID"
+            ));
+        }
+
+        #[cfg(target_os = "linux")]
+        if !parsed_ports.is_empty() {
+            network::wait_for_published_ports(
+                &parsed_ports,
+                std::time::Duration::from_secs(90),
+            )?;
         }
         if !health_cfg.test.is_empty() {
             let mut health_res = health::HealthCheckResult::default();
@@ -1505,6 +1640,13 @@ pub async fn start_container_with_home(container: &str, home_opt: Option<&Path>)
 
     store.update_status(&rec.id, ContainerStatus::Running)?;
     let _ = execute_bundle(&bundle_path, &spec, &[], &rec.ports, true)?;
+    #[cfg(target_os = "linux")]
+    if !rec.ports.is_empty() {
+        network::wait_for_published_ports(
+            &rec.ports,
+            std::time::Duration::from_secs(90),
+        )?;
+    }
     println!("{}", container);
     Ok(())
 }
@@ -2603,6 +2745,7 @@ pub async fn handle_compose(args: ComposeArgs) -> Result<()> {
             })?;
         }
         ComposeSubcommand::Create => {
+            project.create_containers().await?;
             println!("Creating compose project '{}'...", project.name);
         }
         ComposeSubcommand::Events => {
@@ -2667,15 +2810,16 @@ pub async fn handle_compose(args: ComposeArgs) -> Result<()> {
                 }
             }
         }
-        ComposeSubcommand::Pull | ComposeSubcommand::Push => {
-            for svc in project.compose.services.values() {
-                if let Some(img) = &svc.image {
-                    println!("{}", img);
-                }
-            }
+        ComposeSubcommand::Pull => {
+            project.pull_images().await?;
+        }
+        ComposeSubcommand::Push => {
+            project.push_images().await?;
         }
         ComposeSubcommand::Run(opts) => {
-            println!("Running one-off command for service '{}'", opts.service);
+            project
+                .run_one_off(&opts.service, opts.command, true)
+                .await?;
         }
         ComposeSubcommand::Top(opts) => {
             for c in project.ps()? {
@@ -2714,6 +2858,7 @@ pub fn handle_volume(args: VolumeSubcommands) -> Result<()> {
     match args.command {
         VolumeAction::Create {
             name,
+            name_flag,
             driver,
             opts,
             labels,
@@ -2734,8 +2879,9 @@ pub fn handle_volume(args: VolumeSubcommands) -> Result<()> {
                     opt_map.insert(o.to_string(), "".to_string());
                 }
             }
+            let resolved_name = name_flag.or(name);
             let vol = store.create_with_options(
-                name.as_deref(),
+                resolved_name.as_deref(),
                 &driver,
                 Some(label_map),
                 scope.as_deref().unwrap_or("local"),
@@ -2744,7 +2890,7 @@ pub fn handle_volume(args: VolumeSubcommands) -> Result<()> {
             println!("{}", vol.name);
         }
         VolumeAction::Ls(ls_args) => {
-            let vols = store.list();
+            let vols = store.list_filtered(&ls_args.filter);
             if ls_args.quiet {
                 for v in &vols {
                     println!("{}", v.name);
@@ -2787,14 +2933,17 @@ pub fn handle_volume(args: VolumeSubcommands) -> Result<()> {
             store.remove(&name)?;
             println!("{}", name);
         }
-        VolumeAction::Prune(_) => {
-            let pruned = store.prune()?;
+        VolumeAction::Prune(prune_args) => {
+            let pruned = store.prune_with_options(prune_args.all, &prune_args.filter)?;
             if !pruned.is_empty() {
                 println!("Deleted Volumes:");
                 for p in pruned {
                     println!("{}", p);
                 }
             }
+        }
+        VolumeAction::Exists { name } => {
+            ensure_volume_exists(&name)?;
         }
     }
     Ok(())
@@ -2933,6 +3082,12 @@ pub fn handle_network(args: NetworkSubcommands) -> Result<()> {
         NetworkAction::Disconnect { network, container } => {
             store.disconnect_container(&network, &container)?;
             println!("Disconnected {} from {}", container, network);
+        }
+        NetworkAction::Reload { containers } => {
+            reload_container_networks(&containers)?;
+        }
+        NetworkAction::Exists { name } => {
+            ensure_network_exists(&name)?;
         }
     }
     Ok(())
@@ -3388,11 +3543,26 @@ pub fn prune_images(all: bool) -> Result<()> {
     Ok(())
 }
 
-pub async fn create_only_container(args: RunArgs) -> Result<String> {
+pub async fn create_only_container(mut args: RunArgs) -> Result<String> {
+    if let Some(pod_name) = &args.pod {
+        let pod_store = pod::PodStore::new();
+        let pod_rec = pod_store
+            .find(pod_name)
+            .ok_or_else(|| anyhow!("Pod '{}' not found", pod_name))?;
+        let infra_target = ensure_pod_infra_container(&pod_rec).await?;
+        pod::apply_pod_to_run_args(&pod_rec, &infra_target, &mut args);
+    }
     create_only_container_with_home(args, None).await
 }
 
 pub async fn create_only_container_with_home(
+    args: RunArgs,
+    home_opt: Option<&Path>,
+) -> Result<String> {
+    create_only_container_impl(args, home_opt).await
+}
+
+async fn create_only_container_impl(
     args: RunArgs,
     home_opt: Option<&Path>,
 ) -> Result<String> {
@@ -3408,7 +3578,7 @@ pub async fn create_only_container_with_home(
         None => ImageStore::new(),
     };
     let image_record = match image_store.find_with_platform(&args.image, args.platform.as_deref()) {
-        Some(record) if Path::new(&record.rootfs_path).exists() => record,
+        Some(record) if validate_image_record(&record) => record,
         _ => {
             if let Some(plat) = &args.platform {
                 println!("Unable to find image '{}' ({}) locally", args.image, plat);
@@ -3843,28 +4013,9 @@ pub async fn create_only_container_with_home(
             l.cgroup_parent = Some(cg_parent.clone());
             annotations.insert("boxr.cgroup-parent".to_string(), cg_parent.clone());
         }
-        if let Some(ipc) = &args.ipc {
-            annotations.insert("boxr.ipc".to_string(), ipc.clone());
-            if ipc == "host" {
-                l.namespaces.retain(|ns| ns.ns_type != "ipc");
-            } else if !ipc.is_empty() {
-                l.namespaces.push(oci::runtime::LinuxNamespace {
-                    ns_type: "ipc".to_string(),
-                    path: if ipc.starts_with('/') { Some(ipc.clone()) } else { None },
-                });
-            }
-        }
-        if let Some(uts) = &args.uts {
-            annotations.insert("boxr.uts".to_string(), uts.clone());
-            if uts == "host" {
-                l.namespaces.retain(|ns| ns.ns_type != "uts");
-            } else if !uts.is_empty() {
-                l.namespaces.push(oci::runtime::LinuxNamespace {
-                    ns_type: "uts".to_string(),
-                    path: if uts.starts_with('/') { Some(uts.clone()) } else { None },
-                });
-            }
-        }
+        apply_namespace_to_linux(l, &mut annotations, "ipc", &args.ipc)?;
+        apply_namespace_to_linux(l, &mut annotations, "uts", &args.uts)?;
+        apply_namespace_to_linux(l, &mut annotations, "pid", &args.pid)?;
         if let Some(userns) = &args.userns {
             annotations.insert("boxr.userns".to_string(), userns.clone());
             if userns == "host" {
@@ -4568,6 +4719,114 @@ pub fn show_version(args: &cli::FormatArgs) -> Result<()> {
     Ok(())
 }
 
+fn parse_pod_share(share: &str) -> (bool, bool, bool, bool) {
+    let parts = share
+        .split(',')
+        .map(|s| s.trim().to_lowercase())
+        .collect::<Vec<_>>();
+    (
+        parts.iter().any(|p| p == "ipc"),
+        parts.iter().any(|p| p == "net"),
+        parts.iter().any(|p| p == "uts"),
+        parts.iter().any(|p| p == "pid"),
+    )
+}
+
+fn apply_namespace_to_linux(
+    l: &mut oci::runtime::Linux,
+    annotations: &mut HashMap<String, String>,
+    ns_type: &str,
+    value: &Option<String>,
+) -> Result<()> {
+    if let Some(val) = value {
+        annotations.insert(format!("boxr.{}", ns_type), val.clone());
+        if val == "host" {
+            l.namespaces.retain(|ns| ns.ns_type != ns_type);
+            return Ok(());
+        }
+        if val == "private" || val.is_empty() {
+            return Ok(());
+        }
+        if let Ok(Some(path)) = pod::resolve_namespace_spec(val, ns_type) {
+            if path == "host" {
+                l.namespaces.retain(|ns| ns.ns_type != ns_type);
+            } else {
+                l.namespaces.retain(|ns| ns.ns_type != ns_type);
+                l.namespaces.push(oci::runtime::LinuxNamespace {
+                    ns_type: ns_type.to_string(),
+                    path: Some(path),
+                });
+            }
+            return Ok(());
+        }
+        if val.starts_with('/') {
+            l.namespaces.retain(|ns| ns.ns_type != ns_type);
+            l.namespaces.push(oci::runtime::LinuxNamespace {
+                ns_type: ns_type.to_string(),
+                path: Some(val.clone()),
+            });
+        }
+    }
+    Ok(())
+}
+
+async fn start_pod_members(pod: &pod::PodRecord) -> Result<()> {
+    let store = pod::PodStore::new();
+    let infra = store.infra_name(pod);
+    let _ = ensure_pod_infra_container(pod).await?;
+    let _ = start_container(&infra).await;
+    for cid in &pod.containers {
+        let _ = start_container(cid).await;
+    }
+    store.update_status(&pod.name, "Running")?;
+    Ok(())
+}
+
+async fn stop_pod_members(pod: &pod::PodRecord) -> Result<()> {
+    let store = pod::PodStore::new();
+    for cid in &pod.containers {
+        let _ = stop_container(cid, None);
+    }
+    let infra = store.infra_name(pod);
+    let _ = stop_container(&infra, None);
+    store.update_status(&pod.name, "Exited")?;
+    Ok(())
+}
+
+fn print_pod_table(pods: &[pod::PodRecord], ls_args: &PodLsArgs) {
+    if ls_args.quiet {
+        for p in pods {
+            println!("{}", p.id);
+        }
+        return;
+    }
+    if let Some(fmt) = &ls_args.format {
+        for p in pods {
+            let mut line = fmt.clone();
+            line = line.replace("{{.ID}}", &p.id);
+            line = line.replace("{{.Name}}", &p.name);
+            line = line.replace("{{.Status}}", &p.status);
+            line = line.replace("{{.Containers}}", &p.containers.len().to_string());
+            println!("{}", line);
+        }
+        return;
+    }
+    println!(
+        "{:<14} {:<24} {:<16} {:<24} {:<14}",
+        "POD ID", "NAME", "STATUS", "CREATED", "# CONTAINERS"
+    );
+    for p in pods {
+        println!(
+            "{:<14} {:<24} {:<16} {:<24} {:<14}",
+            p.id,
+            p.name,
+            p.status,
+            p.created_at.format("%Y-%m-%d %H:%M:%S"),
+            p.containers.len()
+        );
+    }
+}
+
 fn validate_ps_filter_key(key: &str) -> Result<()> {
     const VALID: &[&str] = &[
         "status", "name", "ancestor", "id", "label", "publish", "expose", "network", "volume",
@@ -4767,63 +5026,610 @@ pub fn generate_spec(args: SpecArgs) -> Result<()> {
     Ok(())
 }
 
+pub fn handle_secret(args: cli::SecretSubcommands) -> Result<()> {
+    use cli::SecretAction;
+    use std::io::Read;
+    let store = secret::SecretStore::new();
+    match args.command {
+        SecretAction::Create { name, file, labels } => {
+            let mut label_map = HashMap::new();
+            for l in labels {
+                if let Some((k, v)) = l.split_once('=') {
+                    label_map.insert(k.to_string(), v.to_string());
+                }
+            }
+            let data = if let Some(path) = file {
+                if path == "-" {
+                    let mut buf = Vec::new();
+                    std::io::stdin().read_to_end(&mut buf)?;
+                    buf
+                } else {
+                    fs::read(&path)?
+                }
+            } else {
+                Vec::new()
+            };
+            let record = store.create(name.as_deref(), &data, label_map)?;
+            println!("{}", record.id);
+        }
+        SecretAction::Ls { quiet, format, filter } => {
+            let secrets = store
+                .list()
+                .into_iter()
+                .filter(|s| {
+                    filter.is_empty()
+                        || filter.iter().all(|f| {
+                            if let Some((k, v)) = f.split_once('=') {
+                                match k {
+                                    "name" => s.name == v,
+                                    "label" => s.labels.get(v).is_some(),
+                                    _ => true,
+                                }
+                            } else {
+                                true
+                            }
+                        })
+                })
+                .collect::<Vec<_>>();
+            if quiet {
+                for s in &secrets {
+                    println!("{}", s.id);
+                }
+            } else if let Some(fmt) = &format {
+                for s in &secrets {
+                    let mut line = fmt.clone();
+                    line = line.replace("{{.ID}}", &s.id);
+                    line = line.replace("{{.Name}}", &s.name);
+                    println!("{}", line);
+                }
+            } else {
+                println!("{:<14} {:<24} {:<12}", "ID", "NAME", "DRIVER");
+                for s in secrets {
+                    println!("{:<14} {:<24} {:<12}", s.id, s.name, s.driver);
+                }
+            }
+        }
+        SecretAction::Inspect { format, name } => {
+            let record = store
+                .find(&name)
+                .ok_or_else(|| anyhow!("Secret '{}' not found", name))?;
+            let json = serde_json::json!({
+                "ID": record.id,
+                "Name": record.name,
+                "CreatedAt": record.created_at.to_rfc3339(),
+                "Labels": record.labels,
+                "Driver": record.driver,
+                "Spec": { "Name": record.name }
+            });
+            if let Some(fmt) = &format {
+                println!("{}", evaluate_simple_template(fmt, &json));
+            } else {
+                println!("{}", serde_json::to_string_pretty(&json)?);
+            }
+        }
+        SecretAction::Rm { force: _, names } => {
+            for name in names {
+                store.remove(&name)?;
+                println!("{}", name);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn write_machine_state(home: &Path, name: &str, state: &str, rootful: bool) -> Result<()> {
+    let state_file = home.join("machine.json");
+    let payload = serde_json::json!({
+        "name": name,
+        "state": state,
+        "rootful": rootful,
+    });
+    fs::write(state_file, serde_json::to_string_pretty(&payload)?)?;
+    Ok(())
+}
+
+fn read_machine_state(home: &Path) -> Option<(String, String, bool)> {
+    let state_file = home.join("machine.json");
+    if !state_file.exists() {
+        return None;
+    }
+    let content = fs::read_to_string(state_file).ok()?;
+    let val = serde_json::from_str::<serde_json::Value>(&content).ok()?;
+    Some((
+        val.get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("boxr-machine-default")
+            .to_string(),
+        val.get("state")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string(),
+        val.get("rootful").and_then(|v| v.as_bool()).unwrap_or(false),
+    ))
+}
+
+pub fn ensure_container_exists(query: &str) -> Result<()> {
+    let store = ContainerStore::new();
+    if store.find(query).is_none() {
+        return Err(anyhow!("Container '{}' not found", query));
+    }
+    Ok(())
+}
+
+pub fn ensure_image_exists(reference: &str) -> Result<()> {
+    let store = ImageStore::new();
+    if store.find(reference).is_none() {
+        return Err(anyhow!("Image '{}' not found", reference));
+    }
+    Ok(())
+}
+
+pub fn ensure_volume_exists(name: &str) -> Result<()> {
+    let store = VolumeStore::new();
+    if store.find(name).is_none() {
+        return Err(anyhow!("Volume '{}' not found", name));
+    }
+    Ok(())
+}
+
+pub fn ensure_network_exists(name: &str) -> Result<()> {
+    let store = NetworkStore::new();
+    if store.find(name).is_none() {
+        return Err(anyhow!("Network '{}' not found", name));
+    }
+    Ok(())
+}
+
+pub fn reload_container_networks(containers: &[String]) -> Result<()> {
+    if containers.is_empty() {
+        return Err(anyhow!("requires at least one container name or ID"));
+    }
+    let store = ContainerStore::new();
+    for query in containers {
+        let container = store
+            .find(query)
+            .ok_or_else(|| anyhow!("Container '{}' not found", query))?;
+        if !container.ports.is_empty() {
+            network::wait_for_published_ports(
+                &container.ports,
+                std::time::Duration::from_secs(15),
+            )?;
+        }
+        println!("{}", container.name);
+    }
+    Ok(())
+}
+
+pub fn handle_machine(args: cli::MachineSubcommands) -> Result<()> {
+    use cli::MachineAction;
+    let home = storage::boxr_home();
+    let vm_dir = home.join("vm");
+    let machine_name = |name: &Option<String>| name.clone().unwrap_or_else(|| "boxr-machine-default".to_string());
+
+    match args.command {
+        MachineAction::Init { name, now, rootful } => {
+            let mname = machine_name(&name);
+            fs::create_dir_all(&vm_dir)?;
+            if now {
+                #[cfg(target_os = "macos")]
+                {
+                    runtime::darwin::ensure_vz_runner()?;
+                    runtime::darwin::ensure_vm_assets()?;
+                }
+            }
+            write_machine_state(&home, &mname, if now { "running" } else { "created" }, rootful)?;
+            println!("{}", mname);
+        }
+        MachineAction::Start { name } => {
+            let mname = machine_name(&name);
+            fs::create_dir_all(&vm_dir)?;
+            #[cfg(target_os = "macos")]
+            {
+                runtime::darwin::ensure_vz_runner()?;
+                runtime::darwin::ensure_vm_assets()?;
+            }
+            let rootful = read_machine_state(&home)
+                .map(|(_, _, rootful)| rootful)
+                .unwrap_or(false);
+            write_machine_state(&home, &mname, "running", rootful)?;
+            println!("{}", mname);
+        }
+        MachineAction::Stop { name } => {
+            let mname = machine_name(&name);
+            let rootful = read_machine_state(&home)
+                .map(|(_, _, rootful)| rootful)
+                .unwrap_or(false);
+            write_machine_state(&home, &mname, "stopped", rootful)?;
+            println!("{}", mname);
+        }
+        MachineAction::Ls => {
+            let state_file = home.join("machine.json");
+            if state_file.exists() {
+                let content = fs::read_to_string(state_file)?;
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                    println!(
+                        "{:<24} {:<12} {:<12}",
+                        val.get("name").and_then(|v| v.as_str()).unwrap_or("default"),
+                        val.get("state").and_then(|v| v.as_str()).unwrap_or("unknown"),
+                        "libkrun"
+                    );
+                }
+            } else {
+                println!("No machines found. Run 'boxr machine init --now' to create one.");
+            }
+        }
+        MachineAction::Rm { name, force: _ } => {
+            let mname = machine_name(&name);
+            let _ = fs::remove_file(home.join("machine.json"));
+            println!("{}", mname);
+        }
+        MachineAction::Ssh { name, command } => {
+            let mname = machine_name(&name);
+            if command.is_empty() {
+                println!("SSH into machine {} (use container exec for workload shells)", mname);
+            } else {
+                println!("{}: {}", mname, command.join(" "));
+            }
+        }
+        MachineAction::Info { name } => {
+            let mname = machine_name(&name);
+            println!("Name: {}", mname);
+            println!("OS: linux");
+            println!("Provider: boxr-vz");
+            println!("CPUs: {}", std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4));
+        }
+        MachineAction::Cp { source, dest } => {
+            fs::copy(&source, &dest)?;
+            println!("Copied {} to {}", source, dest);
+        }
+    }
+    Ok(())
+}
+
+async fn ensure_pod_infra_container(pod: &pod::PodRecord) -> Result<String> {
+    let c_store = ContainerStore::new();
+    let infra_name = format!("{}-infra", pod.name);
+
+    if let Some(existing) = c_store.find(&infra_name).or_else(|| c_store.find(&pod.infra_container_id)) {
+        if matches!(existing.status, ContainerStatus::Running) {
+            return Ok(existing.name);
+        }
+        let _ = start_container(&existing.name).await;
+        return Ok(existing.name);
+    }
+
+    let image_store = ImageStore::new();
+    let image = image_store
+        .find("alpine")
+        .or_else(|| image_store.find("alpine:latest"))
+        .or_else(|| image_store.list().first().cloned());
+
+    let image_ref = image
+        .map(|i| format!("{}:{}", i.reference, i.tag))
+        .unwrap_or_else(|| "alpine:latest".to_string());
+
+    let infra_args = cli::RunArgs {
+        interactive: false,
+        tty: false,
+        detach: true,
+        rm: false,
+        name: Some(infra_name.clone()),
+        env: Vec::new(),
+        ports: pod
+            .ports
+            .iter()
+            .map(|p| {
+                if p.host_port == 0 {
+                    format!("{}", p.container_port)
+                } else {
+                    format!("{}:{}", p.host_port, p.container_port)
+                }
+            })
+            .collect(),
+        volumes: Vec::new(),
+        memory: None,
+        labels: vec!["boxr.pod.infra=true".to_string()],
+        dns: Vec::new(),
+        cidfile: None,
+        cpus: None,
+        pids_limit: None,
+        rootless: true,
+        restart: "always".to_string(),
+        health_cmd: None,
+        platform: None,
+        privileged: false,
+        network: "bridge".to_string(),
+        disable_content_trust: false,
+        gpus: None,
+        entrypoint: None,
+        env_file: None,
+        user: None,
+        hostname: Some(pod.name.clone()),
+        add_host: Vec::new(),
+        shm_size: None,
+        cap_add: Vec::new(),
+        cap_drop: Vec::new(),
+        read_only: false,
+        init: false,
+        tmpfs: Vec::new(),
+        devices: Vec::new(),
+        security_opt: Vec::new(),
+        cpu_shares: None,
+        cpuset_cpus: None,
+        memory_swap: None,
+        memory_reservation: None,
+        dns_search: Vec::new(),
+        dns_option: Vec::new(),
+        expose: Vec::new(),
+        sysctl: Vec::new(),
+        stop_timeout: None,
+        stop_signal: None,
+        annotations: Vec::new(),
+        ulimits: Vec::new(),
+        ipc: None,
+        pid: None,
+        uts: None,
+        userns: None,
+        cgroupns: None,
+        cgroup_parent: None,
+        isolation: None,
+        cpu_count: None,
+        cpu_percent: None,
+        io_maxbandwidth: None,
+        io_maxiops: None,
+        publish_all: false,
+        ip: None,
+        ip6: None,
+        mac_address: None,
+        link: Vec::new(),
+        network_alias: Vec::new(),
+        mount: Vec::new(),
+        health_interval: None,
+        health_timeout: None,
+        health_retries: None,
+        health_start_period: None,
+        health_start_interval: None,
+        no_healthcheck: true,
+        attach: Vec::new(),
+        pull: None,
+        quiet: false,
+        log_driver: None,
+        log_opt: Vec::new(),
+        oom_kill_disable: false,
+        oom_score_adj: None,
+        group_add: Vec::new(),
+        label_file: None,
+        umask: None,
+        domainname: None,
+        detach_keys: None,
+        blkio_weight: None,
+        blkio_weight_device: Vec::new(),
+        cpu_period: None,
+        cpu_quota: None,
+        cpu_rt_period: None,
+        cpu_rt_runtime: None,
+        cpuset_mems: None,
+        device_cgroup_rule: Vec::new(),
+        device_read_bps: Vec::new(),
+        device_read_iops: Vec::new(),
+        device_write_bps: Vec::new(),
+        device_write_iops: Vec::new(),
+        link_local_ip: Vec::new(),
+        memory_swappiness: None,
+        runtime: None,
+        sig_proxy: true,
+        storage_opt: Vec::new(),
+        use_api_socket: false,
+        volume_driver: None,
+        volumes_from: Vec::new(),
+        workdir: None,
+        pod: None,
+        image: image_ref,
+        command: vec!["sleep".to_string(), "infinity".to_string()],
+    };
+
+    let cont_id = create_only_container_impl(infra_args, None).await?;
+    start_container(&infra_name).await?;
+    let pod_store = pod::PodStore::new();
+    let _ = pod_store.set_infra_container_id(&pod.name, &cont_id);
+    Ok(infra_name)
+}
+
 pub async fn handle_pod(args: PodSubcommands) -> Result<()> {
     let store = pod::PodStore::new();
     match args.command {
-        PodAction::Create { name, ports } => {
+        PodAction::Create {
+            name,
+            ports,
+            hostname,
+            labels,
+            dns,
+            memory,
+            cpus,
+            network,
+            share,
+            infra,
+            no_infra,
+        } => {
             let mut parsed_ports = Vec::new();
             for p in &ports {
                 parsed_ports.push(PortMapping::parse(p)?);
             }
-            let pod = store.create(name.as_deref(), parsed_ports)?;
+            let mut label_map = HashMap::new();
+            for l in labels {
+                if let Some((k, v)) = l.split_once('=') {
+                    label_map.insert(k.to_string(), v.to_string());
+                }
+            }
+            let (share_ipc, share_net, share_uts, share_pid) = parse_pod_share(&share);
+            let config = pod::PodConfig {
+                name: name.clone(),
+                ports: parsed_ports,
+                hostname,
+                labels: label_map,
+                dns,
+                memory,
+                cpus,
+                share_ipc,
+                share_net,
+                share_uts,
+                share_pid,
+                infra: infra && !no_infra,
+                network,
+            };
+            let pod = store.create_with_config(config)?;
+            if infra && !no_infra {
+                let _ = ensure_pod_infra_container(&pod).await?;
+            }
             println!("{}", pod.id);
         }
-        PodAction::Ps | PodAction::Ls => {
-            let pods = store.list();
-            println!(
-                "{:<14} {:<24} {:<16} {:<24} {:<14}",
-                "POD ID", "NAME", "STATUS", "CREATED", "# CONTAINERS"
-            );
-            for p in pods {
-                println!(
-                    "{:<14} {:<24} {:<16} {:<24} {:<14}",
-                    p.id,
-                    p.name,
-                    p.status,
-                    p.created_at.format("%Y-%m-%d %H:%M:%S"),
-                    p.containers.len()
-                );
+        PodAction::Ps(ls_args) | PodAction::Ls(ls_args) => {
+            let pods = if ls_args.latest {
+                store.list().into_iter().take(1).collect()
+            } else {
+                store.list()
+            };
+            print_pod_table(&pods, &ls_args);
+        }
+        PodAction::Rm { force, pods } => {
+            for pod in pods {
+                let removed = store.remove_with_force(&pod, force)?;
+                println!("{}", removed.id);
             }
         }
-        PodAction::Rm { pod } => {
-            let removed = store.remove(&pod)?;
-            println!("{}", removed.id);
-        }
-        PodAction::Inspect { pod } => {
-            let p = store
-                .find(&pod)
-                .ok_or_else(|| anyhow!("Pod '{}' not found", pod))?;
-            println!("{}", serde_json::to_string_pretty(&p)?);
-        }
-        PodAction::Stop { pod } => {
-            let p = store
-                .find(&pod)
-                .ok_or_else(|| anyhow!("Pod '{}' not found", pod))?;
-            for cid in &p.containers {
-                let _ = stop_container(cid, None);
+        PodAction::Inspect { format, pods } => {
+            for pod in pods {
+                let p = store
+                    .find(&pod)
+                    .ok_or_else(|| anyhow!("Pod '{}' not found", pod))?;
+                let json = serde_json::json!({
+                    "Id": p.id,
+                    "Name": p.name,
+                    "Status": p.status,
+                    "Created": p.created_at.to_rfc3339(),
+                    "InfraContainerId": p.infra_container_id,
+                    "Containers": p.containers,
+                    "Labels": p.labels,
+                    "ShareIpc": p.share_ipc,
+                    "ShareNet": p.share_net,
+                    "ShareUts": p.share_uts,
+                    "SharePid": p.share_pid,
+                });
+                if let Some(fmt) = &format {
+                    println!("{}", evaluate_simple_template(fmt, &json));
+                } else {
+                    println!("{}", serde_json::to_string_pretty(&json)?);
+                }
             }
-            let _ = store.update_status(&p.name, "Exited");
-            println!("{}", pod);
         }
-        PodAction::Start { pod } => {
-            let p = store
-                .find(&pod)
-                .ok_or_else(|| anyhow!("Pod '{}' not found", pod))?;
-            for cid in &p.containers {
-                let _ = start_container(cid).await;
+        PodAction::Stop { pods } => {
+            for pod in pods {
+                let p = store
+                    .find(&pod)
+                    .ok_or_else(|| anyhow!("Pod '{}' not found", pod))?;
+                stop_pod_members(&p).await?;
+                println!("{}", pod);
             }
-            let _ = store.update_status(&p.name, "Running");
-            println!("{}", pod);
+        }
+        PodAction::Start { pods } => {
+            for pod in pods {
+                let p = store
+                    .find(&pod)
+                    .ok_or_else(|| anyhow!("Pod '{}' not found", pod))?;
+                start_pod_members(&p).await?;
+                println!("{}", pod);
+            }
+        }
+        PodAction::Restart { pods } => {
+            for pod in pods {
+                let p = store
+                    .find(&pod)
+                    .ok_or_else(|| anyhow!("Pod '{}' not found", pod))?;
+                stop_pod_members(&p).await?;
+                start_pod_members(&p).await?;
+                println!("{}", pod);
+            }
+        }
+        PodAction::Kill { signal, pods } => {
+            for pod in pods {
+                let p = store
+                    .find(&pod)
+                    .ok_or_else(|| anyhow!("Pod '{}' not found", pod))?;
+                for cid in store.member_container_ids(&p) {
+                    let _ = kill_container(&cli::KillArgs {
+                        signal: Some(signal.clone()),
+                        container: cid,
+                    });
+                }
+                println!("{}", pod);
+            }
+        }
+        PodAction::Pause { pods } => {
+            for pod in pods {
+                let p = store
+                    .find(&pod)
+                    .ok_or_else(|| anyhow!("Pod '{}' not found", pod))?;
+                for cid in store.member_container_ids(&p) {
+                    pause_container(&cli::PauseArgs {
+                        containers: vec![cid],
+                    })?;
+                }
+                store.update_status(&p.name, "Paused")?;
+                println!("{}", pod);
+            }
+        }
+        PodAction::Unpause { pods } => {
+            for pod in pods {
+                let p = store
+                    .find(&pod)
+                    .ok_or_else(|| anyhow!("Pod '{}' not found", pod))?;
+                for cid in store.member_container_ids(&p) {
+                    unpause_container(&cli::UnpauseArgs {
+                        containers: vec![cid],
+                    })?;
+                }
+                store.update_status(&p.name, "Running")?;
+                println!("{}", pod);
+            }
+        }
+        PodAction::Top { ps_args, pods } => {
+            for pod in pods {
+                let p = store
+                    .find(&pod)
+                    .ok_or_else(|| anyhow!("Pod '{}' not found", pod))?;
+                for cid in store.member_container_ids(&p) {
+                    println!("=== {} ===", cid);
+                    top_container(&TopArgs {
+                        container: cid,
+                        ps_args: ps_args.clone(),
+                    })?;
+                }
+            }
+        }
+        PodAction::Stats { no_stream, pods } => {
+            for pod in pods {
+                let p = store
+                    .find(&pod)
+                    .ok_or_else(|| anyhow!("Pod '{}' not found", pod))?;
+                stats::StatsCollector::display_stats(
+                    &store.member_container_ids(&p),
+                    no_stream,
+                )?;
+            }
+        }
+        PodAction::Prune { force: _ } => {
+            let pruned = store.prune()?;
+            if !pruned.is_empty() {
+                println!("Deleted Pods:");
+                for p in pruned {
+                    println!("{}", p);
+                }
+            }
+        }
+        PodAction::Exists { pod } => {
+            if !store.exists(&pod) {
+                return Err(anyhow!("Pod '{}' not found", pod));
+            }
         }
     }
     Ok(())
@@ -4831,8 +5637,12 @@ pub async fn handle_pod(args: PodSubcommands) -> Result<()> {
 
 pub async fn handle_play(args: PlaySubcommands) -> Result<()> {
     match args.command {
-        PlayAction::Kube { file } => {
-            kube::KubeManager::play_kube(Path::new(&file)).await?;
+        PlayAction::Kube { file, down } => {
+            if down {
+                kube::KubeManager::play_kube_down(Path::new(&file))?;
+            } else {
+                kube::KubeManager::play_kube(Path::new(&file)).await?;
+            }
         }
     }
     Ok(())
@@ -4843,6 +5653,30 @@ pub fn handle_generate(args: GenerateSubcommands) -> Result<()> {
         GenerateAction::Kube { target } => {
             let yaml = kube::KubeManager::generate_kube(&target)?;
             println!("{}", yaml);
+        }
+        GenerateAction::Systemd {
+            containers,
+            output,
+            restart,
+        } => {
+            let store = ContainerStore::new();
+            for name in containers {
+                let cont = store
+                    .find(&name)
+                    .ok_or_else(|| anyhow!("Container '{}' not found", name))?;
+                let unit = format!(
+                    "[Unit]\nDescription=Boxr container {}\nAfter=network-online.target\n\n[Container]\nImage={}\nContainerName={}\n\n[Service]\nRestart={}\n\n[Install]\nWantedBy=multi-user.target\n",
+                    cont.name, cont.image, cont.name, restart
+                );
+                if let Some(dir) = &output {
+                    let path = PathBuf::from(dir).join(format!("{}.container", cont.name));
+                    fs::write(&path, unit)?;
+                    println!("{}", path.display());
+                } else {
+                    println!("--- {}.container ---", cont.name);
+                    println!("{}", unit);
+                }
+            }
         }
     }
     Ok(())
@@ -5077,7 +5911,7 @@ pub async fn handle_manifest(args: cli::ManifestSubcommands) -> Result<()> {
             } else {
                 let parsed = ImageReference::parse(&image)?;
                 let mut client = RegistryClient::new();
-                let manifest = client.fetch_manifest(&parsed).await?;
+                let (manifest, _, _) = client.fetch_manifest(&parsed).await?;
                 println!("{}", serde_json::to_string_pretty(&manifest)?);
             }
         }

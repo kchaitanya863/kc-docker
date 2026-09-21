@@ -534,12 +534,17 @@ fn test_issue_83_rmi_no_prune_flag() {
     assert!(lib_rs.contains("img_store.remove_metadata_only"));
 }
 
-// Issue #84: boxr cp container-to-container syntax attempts host write with colon instead of rejecting
+// Issue #84: boxr cp container-to-container syntax is supported (lookup missing containers)
 #[test]
-fn test_issue_84_cp_container_to_container_rejected() {
+fn test_issue_84_cp_container_to_container_supported() {
     let res = ContainerCopy::copy("c1:/app/data", "c2:/app/data");
     assert!(res.is_err());
-    assert!(res.unwrap_err().to_string().contains("Container to container copy is not supported"));
+    let err = res.unwrap_err().to_string();
+    assert!(
+        err.contains("Container 'c1' not found") || err.contains("Container 'c2' not found"),
+        "expected container lookup error, got: {}",
+        err
+    );
 }
 
 // Issue #85: boxr cp misinterprets host paths containing colon (./file:name) as container spec

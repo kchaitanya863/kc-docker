@@ -1,10 +1,14 @@
 pub mod container;
 pub mod image;
+pub mod machine;
+pub mod secret;
 pub mod system;
 pub mod volumes_networks;
 
 pub use container::*;
 pub use image::*;
+pub use machine::*;
+pub use secret::*;
 pub use system::*;
 pub use volumes_networks::*;
 
@@ -208,12 +212,25 @@ pub enum Commands {
     /// Manage Swarm configs (stub)
     Config,
 
-    /// Manage Swarm secrets (stub)
-    Secret,
+    /// Manage secrets
+    Secret(SecretSubcommands),
 
     /// Manage Swarm nodes (stub)
     Node,
 
     /// Manage trust (stub)
     Trust,
+
+    /// Manage Podman-style virtual machines (macOS / Windows)
+    Machine(MachineSubcommands),
+
+    /// Mount a container's root filesystem and return the mount path
+    Mount {
+        container: String,
+    },
+
+    /// Unmount a container's root filesystem
+    Unmount {
+        container: String,
+    },
 }
