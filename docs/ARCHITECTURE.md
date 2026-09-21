@@ -254,3 +254,36 @@ To prevent architectural degradation and maintain sub-millisecond execution guar
 - **Pluggable Distribution Client (`src/oci/distribution.rs`)**: `ImageDistribution` defines manifest fetching and blob streaming contracts.
 - **Health Probing & Resource Control**: `HealthProbe` (`src/health/mod.rs`) and `ResourceManager` (`src/cgroups/mod.rs`) invert control from concrete OS routines to testable traits.
 
+### 5.4. Extended Domain Subsystems (Podman Parity Sprint)
+To prevent monoliths as features expand, new domains are modularized:
+- **OCI Artifact Store (`src/artifact/mod.rs`)**: Isolated content-addressable storage indexing arbitrary MIME-type blobs with SHA-256 digests.
+- **Quadlet Unit Management (`src/quadlet/mod.rs`)**: Systemd unit generator and manager supporting `.container`, `.kube`, `.volume`, `.network`, and `.artifact` declarations.
+- **Podman Specgen (`src/specgen/mod.rs`)**: Translates container runtime configurations into Podman-compatible `SpecGenerator` JSON specifications.
+- **Checkpoint & Restore Runtime (`src/runtime/checkpoint.rs`)**: Saves container state, bundle metadata, and open ports into standalone tarballs for checkpoint/restore lifecycle operations.
+- **Extended Volume Operations (`src/volume/ops.rs`)**: Dedicated sub-module for volume tarball export/import, dynamic reloads, safe renaming, and host directory mounting.
+- **Extended Pod Operations (`src/pod/ops.rs`)**: Manages pod replication/cloning and multi-container log multiplexing.
+
+---
+
+## 6. Testing & Continuous Verification Architecture
+
+Boxr includes an enterprise-grade automated testing pipeline:
+
+```
+Test Pipeline Hierarchy
+├── 1. Unit Tests (`cargo test --lib`)
+│   └── 81 unit tests (cgroups, networking, usernet, OCI parser, compose DAG, storage)
+├── 2. Parallel Fast Runner (`./scripts/test-fast.sh`)
+│   ├── Release compilation (`cargo test --release --no-run`)
+│   ├── Multi-threaded CPU tests (14 test suites executed concurrently across all cores)
+│   ├── Serial async issue suites (`issues_163_to_342_test`)
+│   └── Parallel micro-VM workers with isolated `BOXR_HOME` mounts
+├── 3. Podman & Docker Parity Suites (`tests/`)
+│   ├── `issues_47_to_111_test` (String contracts, daemon endpoints, signal traps)
+│   ├── `issues_113_to_162_test` (Validation limits, relative workdirs, network IPAM)
+│   ├── `issues_163_to_342_test` (180 Docker CLI drift and Compose subcommands)
+│   └── `issues_343_to_391_test` (49 Podman parity features: artifacts, quadlets, kube, checkpoint)
+└── 4. Enterprise Black-Box QA (`./scripts/run_blackbox_qa.sh`)
+    └── Invariant verification: sticky bit 1777, /dev/shm tmpfs, device node permissions, and zombie reaping.
+```
+

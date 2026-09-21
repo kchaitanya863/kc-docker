@@ -97,6 +97,7 @@ cargo test --lib --release -j "$NCPU" -- --test-threads="$NCPU"
 
 CPU_TESTS=(
     integration_test issues_47_to_111_test issues_113_to_162_test
+    issues_343_to_391_test
     pasta_test podman_parity_test popular_softwares_matrix_test
     qa_dockerfile_and_compose_test qa_e2e_cli_negative_test qa_reference_test
     qa_security_and_system_test qa_volume_and_network_test usernet_test

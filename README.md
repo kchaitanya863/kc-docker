@@ -35,10 +35,21 @@ boxr/
 │   ├── lib.rs                  # Library crate root and command orchestration
 │   ├── cli/                    # Clap CLI arguments, options, and command definitions
 │   │   ├── mod.rs              # Top-level Cli and Commands enum
-│   │   ├── container.rs        # Container flags (RunArgs, ExecArgs, LogsArgs, PsArgs)
-│   │   ├── image.rs            # Image flags (BuildArgs, ImagesArgs, PullArgs, Save/Load)
-│   │   ├── system.rs           # System flags (DaemonArgs, EventsArgs, ServiceArgs, Pods)
+│   │   ├── artifact.rs         # Artifact subcommands (add, extract, inspect, ls, pull, push, rm)
+│   │   ├── container.rs        # Container flags (RunArgs, ExecArgs, LogsArgs, PsArgs, Checkpoint)
+│   │   ├── image.rs            # Image flags (BuildArgs, ImagesArgs, PullArgs, Save/Load, Diff, Scp)
+│   │   ├── kube.rs             # Modern Kubernetes command tree (play, down, generate, apply)
+│   │   ├── machine.rs          # Virtual machine commands (inspect, set, os, reset, restart, ssh, cp)
+│   │   ├── quadlet.rs          # Quadlet unit file subcommands (ls, install, print, rm)
+│   │   ├── secret.rs           # Secret subcommands (create, ls, inspect, rm, exists)
+│   │   ├── system.rs           # System flags (DaemonArgs, EventsArgs, ServiceArgs, Pods, Check)
 │   │   └── volumes_networks.rs # VolumeSubcommands and NetworkSubcommands
+│   ├── artifact/
+│   │   └── mod.rs              # Content-addressable OCI artifact store with SHA-256 digests
+│   ├── quadlet/
+│   │   └── mod.rs              # Podman Quadlet unit file manager (.container, .kube, .volume...)
+│   ├── specgen/
+│   │   └── mod.rs              # Podman Specgen (SpecGenerator JSON) serializer
 │   ├── oci/
 │   │   ├── mod.rs              # OCI module definitions
 │   │   ├── reference.rs        # Image reference parsing (e.g. library/hello-world:latest)
@@ -63,7 +74,7 @@ boxr/
 │   │   ├── mod.rs              # Builder module exports and regression contracts
 │   │   ├── parser.rs           # Multi-stage Dockerfile parser & Instruction AST
 │   │   ├── executor.rs         # Build stage executor and containerized step runner
-│   │   ├── cache.rs            # Content-addressed build cache manager
+│   │   ├── cache.rs            # Content-addressed build cache manager (disk_usage, prune)
 │   │   └── dockerignore.rs     # .dockerignore pattern matcher and wildcard resolver
 │   ├── compose/
 │   │   └── mod.rs              # Compose YAML parser, dependency graph, and orchestrator
@@ -76,9 +87,10 @@ boxr/
 │   │   │   └── engine.rs       # In-memory ARP, ICMP echo, and TCP NAT proxy engine
 │   │   └── rootless.rs         # Rootless user-space TCP port forwarder proxy
 │   ├── pod/
-│   │   └── mod.rs              # Podman pod lifecycle and namespace sharing (PodReader/Writer)
+│   │   ├── mod.rs              # Podman pod lifecycle and namespace sharing (PodReader/Writer)
+│   │   └── ops.rs              # Pod cloning and aggregated container logging
 │   ├── kube/
-│   │   └── mod.rs              # Kubernetes Pod YAML play, generate, and unshare
+│   │   └── mod.rs              # Multi-resource Kubernetes YAML (Pod, Deployment, Service, PVC)
 │   ├── health/
 │   │   └── mod.rs              # Container healthcheck probes (HealthProbe trait) and restart supervisor
 │   ├── stats/
@@ -88,7 +100,8 @@ boxr/
 │   ├── system/
 │   │   └── mod.rs              # Disk space auditing (df_with_readers) and automated pruning
 │   ├── volume/
-│   │   └── mod.rs              # Named volume storage and bind mount resolver (VolumeReader/Writer)
+│   │   ├── mod.rs              # Named volume storage and bind mount resolver (VolumeReader/Writer)
+│   │   └── ops.rs              # Volume export, import, reload, rename, and mount operations
 │   ├── daemon/
 │   │   ├── mod.rs              # Unix domain socket server & router dispatcher
 │   │   ├── containers.rs       # Container lifecycle REST endpoints (create, inspect, wait, logs)
@@ -98,6 +111,7 @@ boxr/
 │   │   └── volumes_networks.rs # Volume & network REST CRUD endpoints
 │   └── runtime/
 │       ├── mod.rs              # Execution runtime traits (ContainerRuntime & ProcessKiller)
+│       ├── checkpoint.rs       # Container checkpoint and restore runtime engine
 │       ├── traits.rs           # Container runtime engine abstractions
 │       ├── kill.rs             # Process termination & signal parsing
 │       ├── cp.rs               # Container-to-host and host-to-container copy engine
@@ -107,11 +121,14 @@ boxr/
 │       └── darwin.rs           # macOS container execution bridge (Virtualization.framework)
 └── tests/
     ├── docker_parity_test.rs   # Upstream Docker and Podman CLI parity tests
+    ├── podman_parity_test.rs   # Podman parity tests
     ├── e2e_test.rs             # End-to-end container, network, and compose tests
     ├── enterprise_scenarios_test.rs # Enterprise workload and security isolation tests
     ├── integration_test.rs     # Integration test suite
     ├── issues_47_to_111_test.rs # Regression tests for issues #47 to #111
     ├── issues_113_to_162_test.rs# Regression tests for issues #113 to #162
+    ├── issues_163_to_342_test.rs# Regression tests for issues #163 to #342 (180 tests)
+    ├── issues_343_to_391_test.rs# Regression tests for issues #343 to #391 (49 tests)
     └── qa_*.rs                 # Edge-case, negative, and breaking test matrices
 ```
 
