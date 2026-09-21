@@ -3,7 +3,6 @@ mod blackbox;
 
 use blackbox::*;
 use std::fs;
-use std::time::Duration;
 
 #[test]
 fn test_c1_volume_crud_lifecycle() {

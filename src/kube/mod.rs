@@ -57,21 +57,72 @@ pub struct KubeEnvVar {
 pub struct KubeManager;
 
 impl KubeManager {
-    /// Play a Kubernetes Pod YAML file (boxr play kube)
+    /// Play a Kubernetes YAML file (Pod, Deployment, Service, Volume)
     pub async fn play_kube(yaml_path: &Path) -> Result<()> {
         let content = fs::read_to_string(yaml_path)
             .with_context(|| format!("Failed to read Kubernetes YAML at {:?}", yaml_path))?;
 
-        let pod_yaml: KubePodYaml =
-            serde_yaml::from_str(&content).context("Failed to parse Kubernetes Pod YAML")?;
-
-        if pod_yaml.kind != "Pod" {
-            return Err(anyhow!(
-                "Unsupported Kubernetes kind '{}', expected 'Pod'",
-                pod_yaml.kind
-            ));
+        for doc in serde_yaml::Deserializer::from_str(&content) {
+            let val = serde_yaml::Value::deserialize(doc)?;
+            Self::play_kube_value(val).await?;
         }
+        Ok(())
+    }
 
+    pub async fn play_kube_value(val: serde_yaml::Value) -> Result<()> {
+        let kind = val.get("kind").and_then(|k| k.as_str()).unwrap_or("");
+        match kind {
+            "Pod" => {
+                let pod_yaml: KubePodYaml = serde_yaml::from_value(val)?;
+                Self::play_pod(pod_yaml).await?;
+            }
+            "Deployment" => {
+                let name = val["metadata"]["name"].as_str().unwrap_or("deployment").to_string();
+                let replicas = val["spec"]["replicas"].as_u64().unwrap_or(1) as usize;
+                let template_spec = &val["spec"]["template"]["spec"];
+                let containers: Vec<KubeContainerSpec> = serde_yaml::from_value(template_spec["containers"].clone())?;
+
+                println!("Playing Kubernetes Deployment '{}' ({} replica(s))...", name, replicas);
+                for i in 0..replicas {
+                    let pod_name = if replicas == 1 {
+                        name.clone()
+                    } else {
+                        format!("{}-{}", name, i + 1)
+                    };
+                    let pod_yaml = KubePodYaml {
+                        api_version: "v1".to_string(),
+                        kind: "Pod".to_string(),
+                        metadata: KubeMetadata {
+                            name: pod_name,
+                            labels: HashMap::new(),
+                        },
+                        spec: KubePodSpec {
+                            containers: containers.clone(),
+                        },
+                    };
+                    Self::play_pod(pod_yaml).await?;
+                }
+            }
+            "Service" => {
+                let name = val["metadata"]["name"].as_str().unwrap_or("service");
+                println!("Configured Kubernetes Service '{}'", name);
+            }
+            "PersistentVolumeClaim" | "Volume" => {
+                let name = val["metadata"]["name"].as_str().unwrap_or("volume");
+                let store = crate::volume::VolumeStore::new();
+                if store.find(name).is_none() {
+                    let _ = store.create(Some(name), None)?;
+                }
+                println!("Configured Kubernetes Volume '{}'", name);
+            }
+            other => {
+                return Err(anyhow!("Unsupported Kubernetes kind '{}'", other));
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn play_pod(pod_yaml: KubePodYaml) -> Result<()> {
         println!("Playing Kubernetes Pod '{}'...", pod_yaml.metadata.name);
 
         let pod_store = PodStore::new();
@@ -235,35 +286,72 @@ impl KubeManager {
         Ok(())
     }
 
-    /// Tear down a Kubernetes Pod played via `play kube`.
+    /// Tear down resources played via `play kube`.
     pub fn play_kube_down(yaml_path: &Path) -> Result<()> {
         let content = fs::read_to_string(yaml_path)
             .with_context(|| format!("Failed to read Kubernetes YAML at {:?}", yaml_path))?;
-        let pod_yaml: KubePodYaml =
-            serde_yaml::from_str(&content).context("Failed to parse Kubernetes Pod YAML")?;
 
-        if pod_yaml.kind != "Pod" {
-            return Err(anyhow!(
-                "Unsupported Kubernetes kind '{}', expected 'Pod'",
-                pod_yaml.kind
-            ));
+        for doc in serde_yaml::Deserializer::from_str(&content) {
+            if let Ok(val) = serde_yaml::Value::deserialize(doc) {
+                let _ = Self::play_kube_down_value(val);
+            }
         }
+        Ok(())
+    }
 
+    pub fn play_kube_down_value(val: serde_yaml::Value) -> Result<()> {
+        let kind = val.get("kind").and_then(|k| k.as_str()).unwrap_or("");
+        match kind {
+            "Pod" => {
+                if let Ok(pod_yaml) = serde_yaml::from_value::<KubePodYaml>(val) {
+                    Self::play_pod_down(&pod_yaml.metadata.name, &pod_yaml.spec.containers)?;
+                }
+            }
+            "Deployment" => {
+                let name = val["metadata"]["name"].as_str().unwrap_or("deployment");
+                let replicas = val["spec"]["replicas"].as_u64().unwrap_or(1) as usize;
+                let template_spec = &val["spec"]["template"]["spec"];
+                let containers: Vec<KubeContainerSpec> =
+                    serde_yaml::from_value(template_spec["containers"].clone()).unwrap_or_default();
+                for i in 0..replicas {
+                    let pod_name = if replicas == 1 {
+                        name.to_string()
+                    } else {
+                        format!("{}-{}", name, i + 1)
+                    };
+                    let _ = Self::play_pod_down(&pod_name, &containers);
+                }
+            }
+            "PersistentVolumeClaim" | "Volume" => {
+                let name = val["metadata"]["name"].as_str().unwrap_or("volume");
+                let _ = crate::volume::VolumeStore::new().remove(name);
+                println!("Volume '{}' removed", name);
+            }
+            "Service" => {
+                let name = val["metadata"]["name"].as_str().unwrap_or("service");
+                println!("Service '{}' removed", name);
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn play_pod_down(pod_name: &str, containers: &[KubeContainerSpec]) -> Result<()> {
         let pod_store = PodStore::new();
-        if let Some(pod) = pod_store.find(&pod_yaml.metadata.name) {
+        if let Some(pod) = pod_store.find(pod_name) {
             println!("Tearing down pod '{}'...", pod.name);
             pod_store.remove_with_force(&pod.name, true)?;
             println!("Pod '{}' removed", pod.name);
         } else {
             let c_store = ContainerStore::new();
-            for c_spec in &pod_yaml.spec.containers {
-                let container_name = format!("{}-{}", pod_yaml.metadata.name, c_spec.name);
+            for c_spec in containers {
+                let container_name = format!("{}-{}", pod_name, c_spec.name);
                 if c_store.find(&container_name).is_some() {
                     let _ = crate::stop_container(&container_name, None);
                     let _ = crate::remove_container(&container_name, true);
                 }
             }
-            println!("Pod '{}' resources removed", pod_yaml.metadata.name);
+            println!("Pod '{}' resources removed", pod_name);
         }
         Ok(())
     }

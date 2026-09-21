@@ -151,6 +151,18 @@ impl SecretStore {
             }
         })
     }
+
+    pub fn exists(&self, query: &str) -> bool {
+        self.find(query).is_some()
+    }
+}
+
+pub fn ensure_secret_exists(name: &str) -> Result<()> {
+    let store = SecretStore::new();
+    if !store.exists(name) {
+        return Err(anyhow!("Secret '{}' not found", name));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

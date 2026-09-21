@@ -1,9 +1,11 @@
+pub mod checkpoint;
 pub mod cp;
 pub mod diff;
 pub mod kill;
 pub mod top;
 pub mod traits;
 
+pub use checkpoint::CheckpointManager;
 pub use kill::{ContainerKiller, ProcessKiller};
 pub use traits::{ContainerRuntime, NativeContainerRuntime};
 

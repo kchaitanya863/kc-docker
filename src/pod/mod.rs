@@ -1,3 +1,6 @@
+pub mod ops;
+pub use ops::PodOps;
+
 use crate::network::PortMapping;
 use crate::storage::{ContainerRecord, ContainerStore, ContainerStatus, boxr_home};
 use anyhow::{Result, anyhow};

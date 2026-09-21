@@ -154,6 +154,28 @@ pub enum SystemAction {
         #[arg(long = "filter")]
         filter: Vec<String>,
     },
+    /// Check system configuration and storage health
+    Check,
+    /// Manage remote system destination connections
+    Connection(SystemConnectionSubcommands),
+    /// Migrate container storage to current version
+    Migrate,
+    /// Renumber container state files and locks
+    Renumber,
+    /// Reset storage completely
+    Reset {
+        #[arg(short = 'f', long = "force")]
+        force: bool,
+    },
+    /// Run an API service for Podman/Docker clients
+    Service {
+        /// Timeout in seconds until service stops when idle
+        #[arg(short = 't', long = "time")]
+        timeout: Option<u64>,
+    },
+    /// Prepare Hyper-V virtualization prerequisites
+    #[command(name = "hyperv-prep")]
+    HypervPrep,
 }
 
 #[derive(Args, Debug)]
@@ -305,6 +327,15 @@ pub enum PodAction {
     Exists {
         pod: String,
     },
+    /// Clone a pod and its containers
+    Clone {
+        /// Source pod name or ID
+        source: String,
+        /// Target pod name
+        target: String,
+    },
+    /// Fetch logs for all containers in a pod
+    Logs(PodLogsArgs),
 }
 
 #[derive(Args, Debug)]
@@ -349,6 +380,8 @@ pub enum GenerateAction {
         #[arg(long = "restart", default_value = "always")]
         restart: String,
     },
+    /// Generate Podman Specgen JSON for a container
+    Spec(GenerateSpecArgs),
 }
 
 #[derive(Args, Debug)]
@@ -357,3 +390,83 @@ pub struct UnshareArgs {
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub command: Vec<String>,
 }
+
+#[derive(Args, Debug, Clone, Default)]
+pub struct AutoUpdateArgs {
+    /// Only check for updates without pulling or restarting
+    #[arg(long = "dry-run")]
+    pub dry_run: bool,
+    /// Path of the authentication file
+    #[arg(long = "authfile")]
+    pub authfile: Option<String>,
+    /// Format output using JSON or Go template
+    #[arg(long = "format")]
+    pub format: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct HealthcheckSubcommands {
+    #[command(subcommand)]
+    pub command: HealthcheckAction,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum HealthcheckAction {
+    /// Run health check on a container
+    Run {
+        /// Container to run health check for
+        container: String,
+    },
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct PodLogsArgs {
+    /// Pod to fetch logs from
+    pub pod: String,
+    /// Show timestamps
+    #[arg(short = 't', long = "timestamps")]
+    pub timestamps: bool,
+    /// Number of lines to show from the end of the logs
+    #[arg(short = 'n', long = "tail")]
+    pub tail: Option<usize>,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct GenerateSpecArgs {
+    /// Container name or ID to generate Specgen JSON for
+    pub target: String,
+}
+
+#[derive(Args, Debug)]
+pub struct SystemConnectionSubcommands {
+    #[command(subcommand)]
+    pub command: SystemConnectionAction,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum SystemConnectionAction {
+    /// List system connections
+    #[command(alias = "list")]
+    Ls,
+    /// Add a new system connection
+    Add {
+        /// Destination name
+        name: String,
+        /// Destination URI
+        uri: String,
+        /// Default connection
+        #[arg(long = "default")]
+        default: bool,
+    },
+    /// Remove a system connection
+    Rm {
+        /// Destination name
+        name: String,
+    },
+    /// Set the default system connection
+    Default {
+        /// Destination name
+        name: String,
+    },
+}
+

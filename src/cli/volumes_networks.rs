@@ -64,6 +64,27 @@ pub enum VolumeAction {
         name: String,
     },
     Prune(VolumePruneArgs),
+    /// Export volume data to a tar archive
+    Export(VolumeExportArgs),
+    /// Import volume data from a tar archive
+    Import(VolumeImportArgs),
+    /// Reload volume plugins or configuration
+    Reload {
+        name: Option<String>,
+    },
+    /// Rename a volume
+    Rename {
+        old_name: String,
+        new_name: String,
+    },
+    /// Mount a volume filesystem
+    Mount {
+        name: String,
+    },
+    /// Unmount a volume filesystem
+    Unmount {
+        name: String,
+    },
     /// Return 0 if the volume exists, 1 otherwise
     Exists {
         name: String,
@@ -166,10 +187,13 @@ pub enum NetworkAction {
         network: String,
         container: String,
     },
+    /// Disconnect a container from a network
     Disconnect {
         network: String,
         container: String,
     },
+    /// Update network configuration
+    Update(NetworkUpdateArgs),
     /// Reload firewall rules and port forwarding for a container (Podman parity)
     Reload {
         containers: Vec<String>,
@@ -199,3 +223,39 @@ pub struct NetworkPruneArgs {
     #[arg(long = "filter")]
     pub filter: Vec<String>,
 }
+
+#[derive(Args, Debug, Clone)]
+pub struct VolumeExportArgs {
+    /// Volume name
+    pub name: String,
+    /// Output archive path (default: <name>.tar)
+    #[arg(short = 'o', long = "output")]
+    pub output: Option<String>,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct VolumeImportArgs {
+    /// Volume name
+    pub name: String,
+    /// Path to tarball archive to import
+    pub input: String,
+}
+
+#[derive(Args, Debug, Clone, Default)]
+pub struct NetworkUpdateArgs {
+    /// Network name to update
+    pub network: String,
+    /// DNS servers to add
+    #[arg(long = "dns-add")]
+    pub dns_add: Vec<String>,
+    /// DNS servers to drop
+    #[arg(long = "dns-drop")]
+    pub dns_drop: Vec<String>,
+    /// Labels to add (key=value)
+    #[arg(long = "label-add")]
+    pub label_add: Vec<String>,
+    /// Labels to drop (key)
+    #[arg(long = "label-drop")]
+    pub label_drop: Vec<String>,
+}
+

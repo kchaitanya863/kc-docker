@@ -137,6 +137,8 @@ pub struct NetworkRecord {
     pub attachable: bool,
     #[serde(default)]
     pub labels: HashMap<String, String>,
+    #[serde(default)]
+    pub dns_servers: Vec<String>,
     pub created_at: DateTime<Utc>,
     pub containers: HashMap<String, NetworkEndpoint>,
 }
@@ -261,6 +263,7 @@ impl NetworkStore {
                     internal: false,
                     attachable: false,
                     labels: HashMap::new(),
+                    dns_servers: Vec::new(),
                     created_at: Utc::now(),
                     containers: HashMap::new(),
                 };
@@ -349,6 +352,7 @@ impl NetworkStore {
                 internal,
                 attachable,
                 labels,
+                dns_servers: Vec::new(),
                 created_at: Utc::now(),
                 containers: HashMap::new(),
             };
@@ -356,6 +360,51 @@ impl NetworkStore {
             data.networks.push(record.clone());
             self.save_unlocked(&data)?;
             Ok(record)
+        })
+    }
+
+    pub fn update(
+        &self,
+        query: &str,
+        dns_add: &[String],
+        dns_drop: &[String],
+        label_add: &[String],
+        label_drop: &[String],
+    ) -> Result<NetworkRecord> {
+        let q = query.trim();
+        if q.is_empty() {
+            return Err(anyhow!("Network name cannot be empty"));
+        }
+        crate::storage::index_lock::with_index_lock(&self.index_file, || {
+            let mut data = self.load_unlocked();
+            let net = data
+                .networks
+                .iter_mut()
+                .find(|n| n.id == q || n.id.starts_with(q) || n.name == q)
+                .ok_or_else(|| anyhow!("Network '{}' not found", q))?;
+
+            for dns in dns_add {
+                if !net.dns_servers.contains(dns) {
+                    net.dns_servers.push(dns.clone());
+                }
+            }
+            for dns in dns_drop {
+                net.dns_servers.retain(|d| d != dns);
+            }
+            for l in label_add {
+                if let Some((k, v)) = l.split_once('=') {
+                    net.labels.insert(k.to_string(), v.to_string());
+                } else {
+                    net.labels.insert(l.clone(), String::new());
+                }
+            }
+            for k in label_drop {
+                net.labels.remove(k);
+            }
+
+            let updated = net.clone();
+            self.save_unlocked(&data)?;
+            Ok(updated)
         })
     }
 

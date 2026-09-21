@@ -581,6 +581,28 @@ pub enum ContainerAction {
     Rename(RenameArgs),
     Stats(super::system::StatsArgs),
     Commit(CommitArgs),
+    /// Checkpoint a container
+    Checkpoint(ContainerCheckpointArgs),
+    /// Restore a container from a checkpoint
+    Restore(ContainerRestoreArgs),
+    /// Clean up container network and storage
+    Cleanup(ContainerCleanupArgs),
+    /// Clone a container into a new container
+    Clone(ContainerCloneArgs),
+    /// Initialize a container
+    Init {
+        container: String,
+    },
+    /// Run a container using an image label command
+    Runlabel(ContainerRunlabelArgs),
+    /// Mount a container filesystem
+    Mount {
+        container: String,
+    },
+    /// Unmount a container filesystem
+    Unmount {
+        container: String,
+    },
     /// Return 0 if the container exists, 1 otherwise
     Exists {
         container: String,
@@ -850,3 +872,76 @@ pub struct ExportArgs {
     /// Container to export
     pub container: String,
 }
+
+#[derive(Args, Debug, Clone)]
+pub struct ContainerCheckpointArgs {
+    /// Container to checkpoint
+    pub container: String,
+
+    /// Export checkpoint to a tar.gz archive
+    #[arg(short = 'e', long = "export")]
+    pub export: Option<String>,
+
+    /// Keep all temporary checkpoint files
+    #[arg(short = 'k', long = "keep")]
+    pub keep: bool,
+
+    /// Leave the container running after checkpoint
+    #[arg(short = 'R', long = "leave-running")]
+    pub leave_running: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct ContainerRestoreArgs {
+    /// Container to restore
+    pub container: String,
+
+    /// Import checkpoint from a tar.gz archive
+    #[arg(short = 'i', long = "import")]
+    pub import: Option<String>,
+
+    /// Keep all temporary checkpoint files
+    #[arg(short = 'k', long = "keep")]
+    pub keep: bool,
+}
+
+#[derive(Args, Debug, Clone, Default)]
+pub struct ContainerCleanupArgs {
+    /// Container to cleanup
+    pub container: Option<String>,
+
+    /// Cleanup all containers
+    #[arg(short = 'a', long = "all")]
+    pub all: bool,
+
+    /// Remove the container after cleanup
+    #[arg(long = "rm")]
+    pub rm: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct ContainerCloneArgs {
+    /// Container to clone from
+    pub source: String,
+
+    /// Name for the cloned container
+    pub target: String,
+
+    /// Start the container after cloning
+    #[arg(long = "run")]
+    pub run: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct ContainerRunlabelArgs {
+    /// Label key to execute
+    pub label: String,
+
+    /// Image containing the label
+    pub image: String,
+
+    /// Extra arguments passed to the label command
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    pub extra_args: Vec<String>,
+}
+

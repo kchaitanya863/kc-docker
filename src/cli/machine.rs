@@ -51,4 +51,57 @@ pub enum MachineAction {
         source: String,
         dest: String,
     },
+    /// Inspect details of a virtual machine
+    Inspect {
+        name: Option<String>,
+    },
+    /// Set machine properties
+    Set(MachineSetArgs),
+    /// Manage the virtual machine operating system
+    Os(MachineOsArgs),
+    /// Reset a virtual machine
+    Reset {
+        #[arg(short = 'f', long = "force")]
+        force: bool,
+    },
+    /// Restart a virtual machine
+    Restart {
+        name: Option<String>,
+    },
+}
+
+#[derive(Args, Debug, Clone, Default)]
+pub struct MachineSetArgs {
+    /// Machine name
+    pub name: Option<String>,
+    /// Number of CPUs
+    #[arg(long = "cpus")]
+    pub cpus: Option<u64>,
+    /// Memory size in MB
+    #[arg(short = 'm', long = "memory")]
+    pub memory: Option<u64>,
+    /// Disk size in GB
+    #[arg(long = "disk-size")]
+    pub disk_size: Option<u64>,
+    /// Rootful mode
+    #[arg(long = "rootful")]
+    pub rootful: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct MachineOsArgs {
+    #[command(subcommand)]
+    pub action: MachineOsAction,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum MachineOsAction {
+    /// Apply an OS update to the machine
+    Apply {
+        name: Option<String>,
+    },
+    /// Check for available OS updates
+    Check {
+        name: Option<String>,
+    },
 }

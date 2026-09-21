@@ -1,3 +1,6 @@
+pub mod ops;
+pub use ops::VolumeOps;
+
 use crate::storage::boxr_home;
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};

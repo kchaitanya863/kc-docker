@@ -1,13 +1,19 @@
+pub mod artifact;
 pub mod container;
 pub mod image;
+pub mod kube;
 pub mod machine;
+pub mod quadlet;
 pub mod secret;
 pub mod system;
 pub mod volumes_networks;
 
+pub use artifact::*;
 pub use container::*;
 pub use image::*;
+pub use kube::*;
 pub use machine::*;
+pub use quadlet::*;
 pub use secret::*;
 pub use system::*;
 pub use volumes_networks::*;
@@ -233,4 +239,28 @@ pub enum Commands {
     Unmount {
         container: String,
     },
+
+    /// Manage OCI artifacts
+    Artifact(ArtifactSubcommands),
+
+    /// Auto-update containers based on updated images
+    #[command(name = "auto-update")]
+    AutoUpdate(AutoUpdateArgs),
+
+    /// Run health check on a container
+    Healthcheck(HealthcheckSubcommands),
+
+    /// Manage Quadlet systemd unit files
+    Quadlet(QuadletSubcommands),
+
+    /// Modern Kubernetes YAML resources manager (play, down, generate, apply)
+    Kube(KubeSubcommands),
+
+    /// Initialize a container
+    Init {
+        container: String,
+    },
+
+    /// Remove one or more tags from an image
+    Untag(UntagArgs),
 }

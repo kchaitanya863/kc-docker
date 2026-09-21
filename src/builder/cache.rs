@@ -38,6 +38,24 @@ impl BuildCache {
             Ok(0)
         }
     }
+
+    pub fn disk_usage() -> Result<(usize, u64)> {
+        let cache = Self::cache_dir();
+        if !cache.exists() {
+            return Ok((0, 0));
+        }
+
+        let mut count = 0;
+        let mut total_size = 0u64;
+        for entry in fs::read_dir(&cache)? {
+            let path = entry?.path();
+            if path.is_dir() {
+                count += 1;
+                total_size += crate::system::dir_size(&path);
+            }
+        }
+        Ok((count, total_size))
+    }
 }
 
 pub fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {

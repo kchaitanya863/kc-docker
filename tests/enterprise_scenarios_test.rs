@@ -117,7 +117,6 @@ fn test_enterprise_posix_shared_memory_dev_shm() {
 /// 3. Essential Device Nodes and Permissions (/dev/null, /dev/zero, /dev/urandom)
 /// Non-root applications redirecting stdout/stderr to /dev/null require 0666 permissions.
 #[test]
-#[test]
 #[cfg_attr(target_os = "macos", ignore = "urandom device probe is slow/flaky in micro-VM under cargo test")]
 fn test_enterprise_device_nodes_permissions() {
     let bin = boxr_bin();

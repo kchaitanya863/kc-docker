@@ -377,6 +377,26 @@ pub enum ImageAction {
     Load(LoadArgs),
     Import(ImportArgs),
     Prune(ImagePruneArgs),
+    /// Inspect differences between image layers or images
+    Diff(ImageDiffArgs),
+    /// Securely copy images between hosts
+    Scp(ImageScpArgs),
+    /// Sign an image
+    Sign(ImageSignArgs),
+    /// Print image layer hierarchy tree
+    Tree(ImageTreeArgs),
+    /// Manage image trust policies
+    Trust(ImageTrustSubcommands),
+    /// Untag an image
+    Untag(UntagArgs),
+    /// Mount an image filesystem
+    Mount {
+        image: String,
+    },
+    /// Unmount an image filesystem
+    Unmount {
+        image: String,
+    },
     /// Return 0 if the image exists, 1 otherwise
     Exists {
         image: String,
@@ -548,3 +568,93 @@ pub struct SearchArgs {
     /// Search term
     pub term: String,
 }
+
+#[derive(Args, Debug, Clone)]
+pub struct ImageDiffArgs {
+    /// Base image (or first image)
+    pub image1: String,
+
+    /// Second image to compare against (optional)
+    pub image2: Option<String>,
+
+    /// Format output
+    #[arg(long = "format")]
+    pub format: Option<String>,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct ImageScpArgs {
+    /// Source image spec (e.g. [user@]host::image)
+    pub source: String,
+
+    /// Destination image spec
+    pub destination: String,
+
+    /// Suppress status output
+    #[arg(short = 'q', long = "quiet")]
+    pub quiet: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct ImageSignArgs {
+    /// Image to sign
+    pub image: String,
+
+    /// Key identity to sign with
+    #[arg(long = "sign-by")]
+    pub sign_by: Option<String>,
+
+    /// Directory for signatures
+    #[arg(long = "directory")]
+    pub directory: Option<String>,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct ImageTreeArgs {
+    /// Image to show tree for
+    pub image: String,
+
+    /// Show what images require this image
+    #[arg(long = "whatrequires")]
+    pub whatrequires: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct ImageTrustSubcommands {
+    #[command(subcommand)]
+    pub command: ImageTrustAction,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum ImageTrustAction {
+    /// Show trust policy
+    Show {
+        /// Registry or scope
+        registry: Option<String>,
+        /// Display raw policy JSON
+        #[arg(long = "raw")]
+        raw: bool,
+    },
+    /// Set trust policy
+    Set {
+        /// Trust type (accept, reject, signedBy)
+        #[arg(short = 't', long = "type", default_value = "accept")]
+        trust_type: String,
+        /// Registry or scope
+        registry: String,
+        /// Public keys for signedBy
+        #[arg(long = "pubkeys")]
+        pubkeys: Vec<String>,
+    },
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct UntagArgs {
+    /// Image to untag
+    pub image: String,
+
+    /// Tags to remove
+    #[arg(trailing_var_arg = true)]
+    pub tags: Vec<String>,
+}
+

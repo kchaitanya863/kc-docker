@@ -106,4 +106,83 @@ impl MountManager {
             .get(&cont.id)
             .map(|r| r.mount_path.clone())
     }
+
+    pub fn mount_image(&self, query: &str) -> Result<String> {
+        let store = crate::storage::ImageStore::new();
+        let img = store
+            .find(query)
+            .ok_or_else(|| anyhow!("Image '{}' not found", query))?;
+
+        let rootfs = PathBuf::from(&img.rootfs_path);
+        if !rootfs.exists() {
+            return Err(anyhow!(
+                "Image '{}' rootfs not found at {}",
+                query,
+                rootfs.display()
+            ));
+        }
+
+        let mount_path = rootfs.canonicalize()?;
+        let mut data = self.load();
+        let record = MountRecord {
+            container_id: img.id.clone(),
+            container_name: format!("{}:{}", img.reference, img.tag),
+            mount_path: mount_path.to_string_lossy().to_string(),
+            mounted_at: chrono::Utc::now().to_rfc3339(),
+        };
+        data.mounts.insert(img.id.clone(), record);
+        self.save(&data)?;
+        Ok(mount_path.to_string_lossy().to_string())
+    }
+
+    pub fn unmount_image(&self, query: &str) -> Result<()> {
+        let store = crate::storage::ImageStore::new();
+        let img = store
+            .find(query)
+            .ok_or_else(|| anyhow!("Image '{}' not found", query))?;
+
+        let mut data = self.load();
+        if data.mounts.remove(&img.id).is_some() {
+            self.save(&data)?;
+            Ok(())
+        } else {
+            Err(anyhow!("Image '{}' is not mounted", query))
+        }
+    }
+
+    pub fn mount_volume(&self, query: &str) -> Result<String> {
+        let store = crate::volume::VolumeStore::new();
+        let vol = store
+            .find(query)
+            .ok_or_else(|| anyhow!("Volume '{}' not found", query))?;
+
+        let mountpoint = PathBuf::from(&vol.mountpoint);
+        fs::create_dir_all(&mountpoint)?;
+        let mount_path = mountpoint.canonicalize()?;
+        let mut data = self.load();
+        let record = MountRecord {
+            container_id: vol.name.clone(),
+            container_name: vol.name.clone(),
+            mount_path: mount_path.to_string_lossy().to_string(),
+            mounted_at: chrono::Utc::now().to_rfc3339(),
+        };
+        data.mounts.insert(vol.name.clone(), record);
+        self.save(&data)?;
+        Ok(mount_path.to_string_lossy().to_string())
+    }
+
+    pub fn unmount_volume(&self, query: &str) -> Result<()> {
+        let store = crate::volume::VolumeStore::new();
+        let vol = store
+            .find(query)
+            .ok_or_else(|| anyhow!("Volume '{}' not found", query))?;
+
+        let mut data = self.load();
+        if data.mounts.remove(&vol.name).is_some() {
+            self.save(&data)?;
+            Ok(())
+        } else {
+            Err(anyhow!("Volume '{}' is not mounted", query))
+        }
+    }
 }
