@@ -8,6 +8,12 @@ A fast, lightweight, production-grade **Open Container Initiative (OCI)** compli
 
 > **Note**: `boxr` is currently in **Beta**. We are actively hardening features, testing parity workloads, and welcoming community contributions and feedback!
 
+## Demo
+
+![boxr demo: pull, run, and manage rootless containers](docs/demo.gif)
+
+*Pull, run, and manage rootless containers — no daemon, no sudo. Recorded with `boxr` 0.1.43 on Linux.*
+
 `boxr` is designed to be **rootless by default** and built from scratch with custom implementations:
 1. **Rootless by Default**: User namespaces (`CLONE_NEWUSER`) with `uid_map` and `gid_map` mapping the unprivileged user to container root (UID 0), capability dropping (dropping `CAP_SYS_ADMIN`, `CAP_SYS_RAWIO`, etc.), and default seccomp profiles without requiring `sudo`/root.
 2. **Copy-on-Write / OverlayFS Driver**: Native OverlayFS (`lowerdir`, `upperdir`, `workdir`, `merged`) with custom fast hardlink CoW trees for instant sub-millisecond container startup and near-zero disk usage.
