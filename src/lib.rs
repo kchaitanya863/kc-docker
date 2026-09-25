@@ -5046,7 +5046,7 @@ pub fn show_version(args: &cli::FormatArgs) -> Result<()> {
             "Version": env!("CARGO_PKG_VERSION"),
             "ApiVersion": "1.45",
             "GitCommit": "main",
-            "GoVersion": format!("rustc {}", env!("CARGO_PKG_VERSION")),
+            "GoVersion": env!("RUSTC_VERSION"),
             "Os": std::env::consts::OS,
             "Arch": std::env::consts::ARCH
         },
@@ -5055,7 +5055,7 @@ pub fn show_version(args: &cli::FormatArgs) -> Result<()> {
             "ApiVersion": "1.45",
             "MinAPIVersion": "1.24",
             "GitCommit": "main",
-            "GoVersion": format!("rustc {}", env!("CARGO_PKG_VERSION")),
+            "GoVersion": env!("RUSTC_VERSION"),
             "Os": std::env::consts::OS,
             "Arch": std::env::consts::ARCH
         }
@@ -5073,7 +5073,7 @@ pub fn show_version(args: &cli::FormatArgs) -> Result<()> {
     println!("Client: Boxr Engine");
     println!(" Version:           {}", env!("CARGO_PKG_VERSION"));
     println!(" API version:       1.45");
-    println!(" Go version:        rustc {}", env!("CARGO_PKG_VERSION"));
+    println!(" Rustc version:     {}", env!("RUSTC_VERSION"));
     println!(" Git commit:        main");
     println!(" Built:             2026-09-14");
     println!(
