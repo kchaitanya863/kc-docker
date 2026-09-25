@@ -233,8 +233,9 @@ pub fn run_trampoline(args: &[String]) -> Result<i32> {
                 let mut tap_worker_pid = None;
                 if network_mode.should_use_native_usernet() {
                     use crate::network::usernet::{
-                        DEFAULT_CONTAINER_IP, DEFAULT_GATEWAY_IP, platform,
+                        DEFAULT_CONTAINER_IP, DEFAULT_GATEWAY_IP,
                     };
+                    use crate::network::usernet::engine::platform;
                     if let Ok(tap_file) = platform::create_tap_device("eth0") {
                         let _ = platform::configure_container_netns(
                             "eth0",
