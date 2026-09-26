@@ -5129,7 +5129,7 @@ pub fn info_system(args: &cli::FormatArgs) -> Result<()> {
             "ContainersStopped": stopped,
             "Images": i_store.list().len(),
             "Driver": storage_driver,
-            "ServerVersion": "0.1.0",
+            "ServerVersion": env!("CARGO_PKG_VERSION"),
             "CgroupVersion": cgroup_ver,
             "Architecture": std::env::consts::ARCH,
             "OSType": os_type,
@@ -5149,7 +5149,7 @@ pub fn info_system(args: &cli::FormatArgs) -> Result<()> {
     println!(" Paused: {}", paused);
     println!(" Stopped: {}", stopped);
     println!("Images: {}", i_store.list().len());
-    println!("Server Version: 0.1.0");
+    println!("Server Version: {}", env!("CARGO_PKG_VERSION"));
     println!("Storage Driver: {}", storage_driver);
     println!("Logging Driver: json-file");
     println!("Cgroup Version: {}", cgroup_ver);

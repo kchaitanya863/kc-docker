@@ -53,7 +53,7 @@ pub async fn ping() -> &'static str {
 
 pub async fn version() -> Json<VersionResponse> {
     Json(VersionResponse {
-        version: "0.1.0".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
         api_version: "1.45".to_string(),
         min_api_version: "1.24".to_string(),
         git_commit: "boxr-git".to_string(),
@@ -87,6 +87,6 @@ pub async fn info(State(state): State<DaemonState>) -> Json<InfoResponse> {
         images: i_store.list().len(),
         driver: "overlayfs".to_string(),
         system_time: chrono::Utc::now().to_rfc3339(),
-        server_version: "0.1.0".to_string(),
+        server_version: env!("CARGO_PKG_VERSION").to_string(),
     })
 }
