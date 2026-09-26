@@ -1,13 +1,12 @@
 use super::DaemonState;
+use crate::network::NetworkStore;
 use crate::storage::{ContainerStatus, ContainerStore, ImageStore};
 use crate::volume::VolumeStore;
-use crate::network::NetworkStore;
-use axum::{
-    Json,
-    extract::State,
-};
+use axum::{Json, extract::State};
 
-pub async fn prune_containers_endpoint(State(state): State<DaemonState>) -> Json<serde_json::Value> {
+pub async fn prune_containers_endpoint(
+    State(state): State<DaemonState>,
+) -> Json<serde_json::Value> {
     let c_store = ContainerStore::with_home(state.home.clone());
     let containers = c_store.list();
     let mut deleted = Vec::new();
@@ -38,7 +37,8 @@ pub async fn prune_images_endpoint(State(state): State<DaemonState>) -> Json<ser
             || used_images.contains(&img.reference)
             || used_images.contains(&img.id);
         if !is_used {
-            let is_dangling = img.tag == "<none>" || img.reference.is_empty() || img.reference == "<none>";
+            let is_dangling =
+                img.tag == "<none>" || img.reference.is_empty() || img.reference == "<none>";
             if is_dangling {
                 let _ = i_store.remove(&img.id);
                 deleted.push(serde_json::json!({ "Deleted": img.id }));

@@ -217,9 +217,7 @@ impl ContainerStore {
             let old_container = data
                 .containers
                 .iter()
-                .find(|c| {
-                    c.id == old_query || c.id.starts_with(old_query) || c.name == old_query
-                })
+                .find(|c| c.id == old_query || c.id.starts_with(old_query) || c.name == old_query)
                 .ok_or_else(|| anyhow!("Container not found: {}", old_query))?;
 
             let old_id = old_container.id.clone();
@@ -238,11 +236,7 @@ impl ContainerStore {
                 ));
             }
 
-            if let Some(c) = data
-                .containers
-                .iter_mut()
-                .find(|c| c.id == old_id)
-            {
+            if let Some(c) = data.containers.iter_mut().find(|c| c.id == old_id) {
                 c.name = new_name_trimmed.to_string();
                 self.save_unlocked(&data)?;
                 Ok(())

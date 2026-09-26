@@ -293,7 +293,8 @@ pub fn execute_bundle(
         dns_str.push_str(&format!("domain {}\\n", domain));
     }
     if dns_str.is_empty() {
-        dns_str = "nameserver 192.168.64.1\\nnameserver 1.1.1.1\\nnameserver 8.8.8.8\\n".to_string();
+        dns_str =
+            "nameserver 192.168.64.1\\nnameserver 1.1.1.1\\nnameserver 8.8.8.8\\n".to_string();
     }
     run_script.push_str(&format!(
         "printf '{}' > /etc/resolv.conf 2>/dev/null || true\n",

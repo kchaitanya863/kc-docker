@@ -232,10 +232,8 @@ pub fn run_trampoline(args: &[String]) -> Result<i32> {
                 // If using native pure-Rust user-mode networking stack:
                 let mut tap_worker_pid = None;
                 if network_mode.should_use_native_usernet() {
-                    use crate::network::usernet::{
-                        DEFAULT_CONTAINER_IP, DEFAULT_GATEWAY_IP,
-                    };
                     use crate::network::usernet::engine::platform;
+                    use crate::network::usernet::{DEFAULT_CONTAINER_IP, DEFAULT_GATEWAY_IP};
                     if let Ok(tap_file) = platform::create_tap_device("eth0") {
                         let _ = platform::configure_container_netns(
                             "eth0",
@@ -990,8 +988,10 @@ fn run_container_child(rootfs: &Path, spec: &Spec, mounts: &[MountSpec]) -> Resu
     }
 
     if let Some(gids) = &spec.process.user.additional_gids {
-        let raw_gids: Vec<nix::unistd::Gid> =
-            gids.iter().map(|g| nix::unistd::Gid::from_raw(*g)).collect();
+        let raw_gids: Vec<nix::unistd::Gid> = gids
+            .iter()
+            .map(|g| nix::unistd::Gid::from_raw(*g))
+            .collect();
         let _ = nix::unistd::setgroups(&raw_gids);
     }
     if let Some(u) = spec.process.umask {

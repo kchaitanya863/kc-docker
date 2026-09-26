@@ -123,8 +123,14 @@ impl EventManager {
                 match k.trim() {
                     "event" | "action" => event.action == v.trim(),
                     "type" => event.event_type == v.trim(),
-                    "container" | "image" => event.actor_name == v.trim() || event.actor_id.starts_with(v.trim()),
-                    _ => event.attributes.get(k.trim()).map(|val| val == v.trim()).unwrap_or(false),
+                    "container" | "image" => {
+                        event.actor_name == v.trim() || event.actor_id.starts_with(v.trim())
+                    }
+                    _ => event
+                        .attributes
+                        .get(k.trim())
+                        .map(|val| val == v.trim())
+                        .unwrap_or(false),
                 }
             } else {
                 event.event_type.contains(filt)
@@ -208,8 +214,14 @@ mod tests {
                 match k.trim() {
                     "event" | "action" => event.action == v.trim(),
                     "type" => event.event_type == v.trim(),
-                    "container" | "image" => event.actor_name == v.trim() || event.actor_id.starts_with(v.trim()),
-                    _ => event.attributes.get(k.trim()).map(|val| val == v.trim()).unwrap_or(false),
+                    "container" | "image" => {
+                        event.actor_name == v.trim() || event.actor_id.starts_with(v.trim())
+                    }
+                    _ => event
+                        .attributes
+                        .get(k.trim())
+                        .map(|val| val == v.trim())
+                        .unwrap_or(false),
                 }
             } else {
                 event.event_type.contains(filt)

@@ -1,8 +1,8 @@
 //! Integration tests for GitHub issues #343 through #391 (Podman parity sprint).
 
 use boxr::artifact::ArtifactStore;
-use boxr::cli::Cli;
 use boxr::builder::BuildCache;
+use boxr::cli::Cli;
 use clap::Parser;
 use std::fs;
 use tempfile::tempdir;
@@ -14,7 +14,8 @@ fn test_issue_343_artifact_command_group() {
     let _ = cli;
     let cli_add = Cli::try_parse_from(["boxr", "artifact", "add", "my-art", "test.tar"]).unwrap();
     let _ = cli_add;
-    let cli_extract = Cli::try_parse_from(["boxr", "artifact", "extract", "my-art", "/tmp"]).unwrap();
+    let cli_extract =
+        Cli::try_parse_from(["boxr", "artifact", "extract", "my-art", "/tmp"]).unwrap();
     let _ = cli_extract;
 
     let temp = tempdir().unwrap();
@@ -22,7 +23,9 @@ fn test_issue_343_artifact_command_group() {
     let src_file = temp.path().join("data.bin");
     fs::write(&src_file, b"sample artifact payload").unwrap();
 
-    let rec = store.add("test-artifact", &src_file, "application/octet-stream").unwrap();
+    let rec = store
+        .add("test-artifact", &src_file, "application/octet-stream")
+        .unwrap();
     assert_eq!(rec.name, "test-artifact");
     assert!(rec.digest.starts_with("sha256:"));
 
@@ -100,14 +103,30 @@ fn test_issue_349_toplevel_untag() {
 fn test_issue_350_container_checkpoint() {
     let cli = Cli::try_parse_from(["boxr", "container", "checkpoint", "--keep", "c1"]).unwrap();
     let _ = cli;
-    let cli_exp = Cli::try_parse_from(["boxr", "container", "checkpoint", "--export", "/tmp/cp.tar", "c1"]).unwrap();
+    let cli_exp = Cli::try_parse_from([
+        "boxr",
+        "container",
+        "checkpoint",
+        "--export",
+        "/tmp/cp.tar",
+        "c1",
+    ])
+    .unwrap();
     let _ = cli_exp;
 }
 
 // Issue #351: Podman parity: `container restore`
 #[test]
 fn test_issue_351_container_restore() {
-    let cli = Cli::try_parse_from(["boxr", "container", "restore", "--import", "/tmp/cp.tar", "c1"]).unwrap();
+    let cli = Cli::try_parse_from([
+        "boxr",
+        "container",
+        "restore",
+        "--import",
+        "/tmp/cp.tar",
+        "c1",
+    ])
+    .unwrap();
     let _ = cli;
 }
 
@@ -123,7 +142,15 @@ fn test_issue_352_container_cleanup() {
 // Issue #353: Podman parity: `container clone`
 #[test]
 fn test_issue_353_container_clone() {
-    let cli = Cli::try_parse_from(["boxr", "container", "clone", "--run", "source_c", "target_c"]).unwrap();
+    let cli = Cli::try_parse_from([
+        "boxr",
+        "container",
+        "clone",
+        "--run",
+        "source_c",
+        "target_c",
+    ])
+    .unwrap();
     let _ = cli;
 }
 
@@ -137,7 +164,8 @@ fn test_issue_354_container_init() {
 // Issue #355: Podman parity: `container runlabel`
 #[test]
 fn test_issue_355_container_runlabel() {
-    let cli = Cli::try_parse_from(["boxr", "container", "runlabel", "run", "alpine:latest"]).unwrap();
+    let cli =
+        Cli::try_parse_from(["boxr", "container", "runlabel", "run", "alpine:latest"]).unwrap();
     let _ = cli;
 }
 
@@ -155,7 +183,8 @@ fn test_issue_356_container_mount_unmount() {
 fn test_issue_357_start_checkpoint() {
     let cli = Cli::try_parse_from(["boxr", "start", "--checkpoint", "cp1", "c1"]).unwrap();
     let _ = cli;
-    let cli_dir = Cli::try_parse_from(["boxr", "start", "--checkpoint-dir", "/tmp/cp", "c1"]).unwrap();
+    let cli_dir =
+        Cli::try_parse_from(["boxr", "start", "--checkpoint-dir", "/tmp/cp", "c1"]).unwrap();
     let _ = cli_dir;
 }
 
@@ -176,7 +205,15 @@ fn test_issue_359_image_scp() {
 // Issue #360: Podman parity: `image sign`
 #[test]
 fn test_issue_360_image_sign() {
-    let cli = Cli::try_parse_from(["boxr", "image", "sign", "--sign-by", "me@example.com", "alpine"]).unwrap();
+    let cli = Cli::try_parse_from([
+        "boxr",
+        "image",
+        "sign",
+        "--sign-by",
+        "me@example.com",
+        "alpine",
+    ])
+    .unwrap();
     let _ = cli;
 }
 
@@ -192,7 +229,16 @@ fn test_issue_361_image_tree() {
 fn test_issue_362_image_trust() {
     let cli_show = Cli::try_parse_from(["boxr", "image", "trust", "show", "--raw"]).unwrap();
     let _ = cli_show;
-    let cli_set = Cli::try_parse_from(["boxr", "image", "trust", "set", "--type", "accept", "docker.io"]).unwrap();
+    let cli_set = Cli::try_parse_from([
+        "boxr",
+        "image",
+        "trust",
+        "set",
+        "--type",
+        "accept",
+        "docker.io",
+    ])
+    .unwrap();
     let _ = cli_set;
 }
 
@@ -215,7 +261,8 @@ fn test_issue_364_image_mount_unmount() {
 // Issue #365: Podman parity: `volume export`
 #[test]
 fn test_issue_365_volume_export() {
-    let cli = Cli::try_parse_from(["boxr", "volume", "export", "--output", "vol.tar", "myvol"]).unwrap();
+    let cli =
+        Cli::try_parse_from(["boxr", "volume", "export", "--output", "vol.tar", "myvol"]).unwrap();
     let _ = cli;
 }
 
@@ -253,13 +300,20 @@ fn test_issue_369_volume_mount_unmount() {
 #[test]
 fn test_issue_370_network_update() {
     let cli = Cli::try_parse_from([
-        "boxr", "network", "update",
-        "--dns-add", "8.8.8.8",
-        "--dns-drop", "1.1.1.1",
-        "--label-add", "env=prod",
-        "--label-drop", "temp",
-        "net1"
-    ]).unwrap();
+        "boxr",
+        "network",
+        "update",
+        "--dns-add",
+        "8.8.8.8",
+        "--dns-drop",
+        "1.1.1.1",
+        "--label-add",
+        "env=prod",
+        "--label-drop",
+        "temp",
+        "net1",
+    ])
+    .unwrap();
     let _ = cli;
 }
 
@@ -333,7 +387,8 @@ fn test_issue_379_machine_restart() {
 // Issue #380: Podman parity: `machine ssh` and `machine cp` real implementation
 #[test]
 fn test_issue_380_machine_ssh_cp() {
-    let cli_ssh = Cli::try_parse_from(["boxr", "machine", "ssh", "my-vm", "echo", "hello"]).unwrap();
+    let cli_ssh =
+        Cli::try_parse_from(["boxr", "machine", "ssh", "my-vm", "echo", "hello"]).unwrap();
     let _ = cli_ssh;
     let cli_cp = Cli::try_parse_from(["boxr", "machine", "cp", "/tmp/a", "/tmp/b"]).unwrap();
     let _ = cli_cp;
@@ -358,11 +413,20 @@ fn test_issue_382_system_check() {
 fn test_issue_383_system_connection() {
     let cli_ls = Cli::try_parse_from(["boxr", "system", "connection", "ls"]).unwrap();
     let _ = cli_ls;
-    let cli_add = Cli::try_parse_from(["boxr", "system", "connection", "add", "remote", "ssh://user@host"]).unwrap();
+    let cli_add = Cli::try_parse_from([
+        "boxr",
+        "system",
+        "connection",
+        "add",
+        "remote",
+        "ssh://user@host",
+    ])
+    .unwrap();
     let _ = cli_add;
     let cli_rm = Cli::try_parse_from(["boxr", "system", "connection", "rm", "remote"]).unwrap();
     let _ = cli_rm;
-    let cli_def = Cli::try_parse_from(["boxr", "system", "connection", "default", "remote"]).unwrap();
+    let cli_def =
+        Cli::try_parse_from(["boxr", "system", "connection", "default", "remote"]).unwrap();
     let _ = cli_def;
 }
 
@@ -434,7 +498,14 @@ metadata:
     let yaml_file = temp.path().join("deploy.yaml");
     fs::write(&yaml_file, yaml).unwrap();
 
-    let cli_down = Cli::try_parse_from(["boxr", "play", "kube", "--down", yaml_file.to_str().unwrap()]).unwrap();
+    let cli_down = Cli::try_parse_from([
+        "boxr",
+        "play",
+        "kube",
+        "--down",
+        yaml_file.to_str().unwrap(),
+    ])
+    .unwrap();
     let _ = cli_down;
 }
 

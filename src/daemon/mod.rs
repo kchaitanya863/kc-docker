@@ -79,7 +79,10 @@ pub fn create_router(state: DaemonState) -> Router {
         .route("/images/{name}/tag", post(tag_image_endpoint))
         .route("/v1.45/images/{name}/tag", post(tag_image_endpoint))
         .route("/images/{name}/history", get(get_image_history_endpoint))
-        .route("/v1.45/images/{name}/history", get(get_image_history_endpoint))
+        .route(
+            "/v1.45/images/{name}/history",
+            get(get_image_history_endpoint),
+        )
         .route("/containers/json", get(list_containers))
         .route("/v1.45/containers/json", get(list_containers))
         .route("/containers/{id}/json", get(inspect_container))
@@ -396,7 +399,10 @@ mod tests {
             .unwrap();
         let cont_inspect: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert_eq!(
-            cont_inspect.get("State").and_then(|s| s.get("Status")).and_then(|v| v.as_str()),
+            cont_inspect
+                .get("State")
+                .and_then(|s| s.get("Status"))
+                .and_then(|v| v.as_str()),
             Some("created")
         );
         assert!(cont_inspect.get("Config").is_some());

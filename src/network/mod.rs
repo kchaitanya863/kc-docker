@@ -303,7 +303,15 @@ impl NetworkStore {
         subnet: Option<&str>,
         gateway: Option<&str>,
     ) -> Result<NetworkRecord> {
-        self.create_with_options(name, "bridge", subnet, gateway, false, false, HashMap::new())
+        self.create_with_options(
+            name,
+            "bridge",
+            subnet,
+            gateway,
+            false,
+            false,
+            HashMap::new(),
+        )
     }
 
     pub fn create_with_options(
@@ -613,7 +621,11 @@ fn allocate_ip_in_subnet(
         return Err(anyhow!("Unsupported subnet prefix length /{}", prefix_len));
     }
 
-    let mask_u32 = if prefix_len == 0 { 0 } else { (!0u32) << (32 - prefix_len) };
+    let mask_u32 = if prefix_len == 0 {
+        0
+    } else {
+        (!0u32) << (32 - prefix_len)
+    };
     let base_u32 = u32::from(base_ip) & mask_u32;
     let bcast_u32 = base_u32 | (!mask_u32);
 
@@ -673,10 +685,7 @@ fn probe_published_port(mapping: &PortMapping) -> bool {
 
 /// Wait until all published TCP ports accept connections on the host.
 pub fn wait_for_published_ports(ports: &[PortMapping], timeout: Duration) -> Result<()> {
-    let targets: Vec<&PortMapping> = ports
-        .iter()
-        .filter(|p| p.protocol == "tcp")
-        .collect();
+    let targets: Vec<&PortMapping> = ports.iter().filter(|p| p.protocol == "tcp").collect();
     if targets.is_empty() {
         return Ok(());
     }

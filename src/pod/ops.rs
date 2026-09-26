@@ -41,7 +41,10 @@ impl PodOps {
 
         for cid in &src_pod.containers {
             if let Some(c) = c_store.find(cid) {
-                let suffix = c.name.strip_prefix(&format!("{}-", src_pod.name)).unwrap_or(&c.name);
+                let suffix = c
+                    .name
+                    .strip_prefix(&format!("{}-", src_pod.name))
+                    .unwrap_or(&c.name);
                 let new_c_name = format!("{}-{}", target, suffix);
 
                 let rand_bytes: [u8; 6] = crate::rand_bytes();
@@ -98,7 +101,9 @@ impl PodOps {
         for cid in &pod.containers {
             if let Some(c) = c_store.find(cid) {
                 let log_path = PathBuf::from(&c.bundle_path).join("logs.txt");
-                let rootfs_log = PathBuf::from(&c.bundle_path).join("rootfs").join("logs.txt");
+                let rootfs_log = PathBuf::from(&c.bundle_path)
+                    .join("rootfs")
+                    .join("logs.txt");
                 let content = if log_path.exists() {
                     fs::read_to_string(&log_path).unwrap_or_default()
                 } else if rootfs_log.exists() {

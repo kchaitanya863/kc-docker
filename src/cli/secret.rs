@@ -44,7 +44,5 @@ pub enum SecretAction {
         names: Vec<String>,
     },
     /// Return 0 if the secret exists, 1 otherwise
-    Exists {
-        name: String,
-    },
+    Exists { name: String },
 }

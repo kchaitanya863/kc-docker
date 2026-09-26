@@ -40,7 +40,10 @@ impl ResourceLimits {
 
         let val: i64 = num_str.parse().context("Invalid memory limit string")?;
         if val <= 0 {
-            return Err(anyhow::anyhow!("Memory limit must be greater than 0, got '{}'", input));
+            return Err(anyhow::anyhow!(
+                "Memory limit must be greater than 0, got '{}'",
+                input
+            ));
         }
         Ok(val * multiplier)
     }
@@ -48,7 +51,10 @@ impl ResourceLimits {
     pub fn parse_cpus(input: &str) -> Result<(i64, u64)> {
         let cpus: f64 = input.parse().context("Invalid cpus limit string")?;
         if !cpus.is_finite() || cpus <= 0.0 {
-            return Err(anyhow::anyhow!("Invalid cpus limit: must be a positive finite number, got '{}'", input));
+            return Err(anyhow::anyhow!(
+                "Invalid cpus limit: must be a positive finite number, got '{}'",
+                input
+            ));
         }
         let period: u64 = 100_000; // 100ms default period
         let quota = (cpus * period as f64) as i64;
@@ -157,7 +163,10 @@ impl CgroupV2Manager {
         // Apply memory reservation (cgroups v2 memory.low)
         if let Some(res) = limits.memory_reservation_bytes {
             let _ = fs::write(self.cgroup_path.join("memory.low"), res.to_string());
-            let _ = fs::write(self.cgroup_path.join("memory.soft_limit_in_bytes"), res.to_string());
+            let _ = fs::write(
+                self.cgroup_path.join("memory.soft_limit_in_bytes"),
+                res.to_string(),
+            );
         }
 
         // Apply CPU quota (cgroups v2 and v1)
@@ -178,8 +187,14 @@ impl CgroupV2Manager {
 
         // Apply memory swappiness
         if let Some(swappiness) = limits.memory_swappiness {
-            let _ = fs::write(self.cgroup_path.join("memory.swap.high"), swappiness.to_string());
-            let _ = fs::write(self.cgroup_path.join("memory.swappiness"), swappiness.to_string());
+            let _ = fs::write(
+                self.cgroup_path.join("memory.swap.high"),
+                swappiness.to_string(),
+            );
+            let _ = fs::write(
+                self.cgroup_path.join("memory.swappiness"),
+                swappiness.to_string(),
+            );
         }
 
         // Apply PID limits

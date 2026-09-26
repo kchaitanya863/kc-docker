@@ -1,8 +1,8 @@
 //! Podman-specific parity tests (exists subcommands, network reload, machine, farm, umount, quadlet, kube).
 
-use clap::Parser;
 use boxr::cli::Cli;
 use boxr::farm::FarmManager;
+use clap::Parser;
 use tempfile::tempdir;
 
 #[test]
@@ -91,7 +91,8 @@ fn test_podman_umount_alias_parses() {
 
 #[test]
 fn test_podman_farm_cli_parses() {
-    let cli_create = Cli::try_parse_from(["boxr", "farm", "create", "arm-farm", "node1", "node2"]).unwrap();
+    let cli_create =
+        Cli::try_parse_from(["boxr", "farm", "create", "arm-farm", "node1", "node2"]).unwrap();
     let _ = cli_create;
     let cli_ls = Cli::try_parse_from(["boxr", "farm", "ls"]).unwrap();
     let _ = cli_ls;
@@ -102,20 +103,31 @@ fn test_podman_farm_cli_parses() {
     let cli_rm_all = Cli::try_parse_from(["boxr", "farm", "remove", "--all"]).unwrap();
     let _ = cli_rm_all;
     let cli_update = Cli::try_parse_from([
-        "boxr", "farm", "update",
-        "--add", "node3",
-        "--remove", "node1",
+        "boxr",
+        "farm",
+        "update",
+        "--add",
+        "node3",
+        "--remove",
+        "node1",
         "--default",
-        "arm-farm"
-    ]).unwrap();
+        "arm-farm",
+    ])
+    .unwrap();
     let _ = cli_update;
     let cli_build = Cli::try_parse_from([
-        "boxr", "farm", "build",
-        "--farm", "arm-farm",
-        "-t", "myimage:latest",
-        "--platforms", "linux/amd64,linux/arm64",
-        "."
-    ]).unwrap();
+        "boxr",
+        "farm",
+        "build",
+        "--farm",
+        "arm-farm",
+        "-t",
+        "myimage:latest",
+        "--platforms",
+        "linux/amd64,linux/arm64",
+        ".",
+    ])
+    .unwrap();
     let _ = cli_build;
 }
 
@@ -125,7 +137,9 @@ fn test_podman_farm_manager_lifecycle() {
     let mgr = FarmManager::with_home(temp.path().to_path_buf());
 
     // Create
-    let f1 = mgr.create("farm1", &["node-a".to_string(), "node-b".to_string()]).unwrap();
+    let f1 = mgr
+        .create("farm1", &["node-a".to_string(), "node-b".to_string()])
+        .unwrap();
     assert_eq!(f1.name, "farm1");
     assert!(f1.is_default);
     assert_eq!(f1.connections.len(), 2);
@@ -139,12 +153,14 @@ fn test_podman_farm_manager_lifecycle() {
     assert!(mgr.create("farm1", &[]).is_err());
 
     // Update
-    let updated = mgr.update(
-        "farm1",
-        &["node-c".to_string()],
-        &["node-a".to_string()],
-        true
-    ).unwrap();
+    let updated = mgr
+        .update(
+            "farm1",
+            &["node-c".to_string()],
+            &["node-a".to_string()],
+            true,
+        )
+        .unwrap();
     assert!(updated.connections.contains(&"node-c".to_string()));
     assert!(!updated.connections.contains(&"node-a".to_string()));
 

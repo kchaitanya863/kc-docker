@@ -15,7 +15,10 @@ pub enum ArtifactAction {
         /// Path to the artifact file
         file: String,
         /// Media type of the artifact
-        #[arg(long = "type", default_value = "application/vnd.oci.image.layer.v1.tar")]
+        #[arg(
+            long = "type",
+            default_value = "application/vnd.oci.image.layer.v1.tar"
+        )]
         media_type: String,
     },
     /// Extract an artifact to disk

@@ -145,11 +145,7 @@ impl ContainerCopy {
         }
     }
 
-    fn copy_container_to_container(
-        store: &ContainerStore,
-        src: &str,
-        dest: &str,
-    ) -> Result<()> {
+    fn copy_container_to_container(store: &ContainerStore, src: &str, dest: &str) -> Result<()> {
         let (src_query, src_path) = src.split_once(':').unwrap();
         let (dest_query, dest_path) = dest.split_once(':').unwrap();
 
@@ -304,6 +300,10 @@ mod tests {
         // Host path with colon should not be parsed as container
         let err2 = ContainerCopy::copy("./local:file", "./dest:file");
         assert!(err2.is_err());
-        assert!(err2.unwrap_err().to_string().contains("Invalid copy syntax"));
+        assert!(
+            err2.unwrap_err()
+                .to_string()
+                .contains("Invalid copy syntax")
+        );
     }
 }

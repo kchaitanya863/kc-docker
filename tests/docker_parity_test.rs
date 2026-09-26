@@ -509,7 +509,10 @@ fn test_docker_parity_exec_flags() {
     let name = format!("dockertest-exec-{}", unique_id());
 
     // 1. Run a background container
-    let out = run_isolated(&home, &["run", "-d", "--name", &name, "alpine", "sleep", "60"]);
+    let out = run_isolated(
+        &home,
+        &["run", "-d", "--name", &name, "alpine", "sleep", "60"],
+    );
     assert!(out.status.success());
 
     // 2. Exec with workdir (-w)
@@ -599,7 +602,10 @@ fn test_docker_parity_ps_flags() {
     ensure_alpine(&home);
     let name = format!("dockertest-ps-{}", unique_id());
 
-    let out = run_isolated(&home, &["run", "-d", "--name", &name, "alpine", "sleep", "60"]);
+    let out = run_isolated(
+        &home,
+        &["run", "-d", "--name", &name, "alpine", "sleep", "60"],
+    );
     assert!(out.status.success());
 
     // ps -q
@@ -887,7 +893,9 @@ fn test_docker_parity_run_init() {
 
     let out = run_isolated(
         &home,
-        &["run", "--rm", "--init", "--name", &name, "alpine", "echo", "init-ok"],
+        &[
+            "run", "--rm", "--init", "--name", &name, "alpine", "echo", "init-ok",
+        ],
     );
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -1101,7 +1109,10 @@ fn test_docker_parity_exec_env_file() {
     ensure_alpine(&home);
     let name = format!("dockertest-execenv-{}", unique_id());
 
-    let out = run_isolated(&home, &["run", "-d", "--name", &name, "alpine", "sleep", "60"]);
+    let out = run_isolated(
+        &home,
+        &["run", "-d", "--name", &name, "alpine", "sleep", "60"],
+    );
     assert!(out.status.success());
 
     let out = run_isolated(

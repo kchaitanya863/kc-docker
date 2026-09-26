@@ -245,7 +245,10 @@ pub async fn create_container(
     }
 }
 
-pub async fn start_container(State(state): State<DaemonState>, Path(id): Path<String>) -> StatusCode {
+pub async fn start_container(
+    State(state): State<DaemonState>,
+    Path(id): Path<String>,
+) -> StatusCode {
     match crate::start_container_with_home(&id, Some(&state.home)).await {
         Ok(_) => StatusCode::NO_CONTENT,
         Err(_) => StatusCode::NOT_FOUND,
@@ -286,7 +289,10 @@ pub async fn restart_container(
     }
 }
 
-pub async fn kill_container(State(state): State<DaemonState>, Path(id): Path<String>) -> StatusCode {
+pub async fn kill_container(
+    State(state): State<DaemonState>,
+    Path(id): Path<String>,
+) -> StatusCode {
     let store = ContainerStore::with_home(state.home.clone());
     if let Some(c) = store.find(&id) {
         let _ = crate::runtime::kill::ContainerKiller::kill(&c, None);
@@ -394,8 +400,8 @@ pub async fn remove_container(
     };
 
     let force = query.force.unwrap_or(false);
-    let is_active = matches!(c.status, ContainerStatus::Running)
-        || matches!(c.status, ContainerStatus::Paused);
+    let is_active =
+        matches!(c.status, ContainerStatus::Running) || matches!(c.status, ContainerStatus::Paused);
 
     if is_active && !force {
         return StatusCode::CONFLICT;

@@ -101,10 +101,7 @@ pub enum ContextAction {
     /// Remove one or more contexts
     Rm { name: String },
     /// Import a context
-    Import {
-        name: String,
-        source: String,
-    },
+    Import { name: String, source: String },
     /// Export a context
     Export {
         name: String,
@@ -281,17 +278,11 @@ pub enum PodAction {
         pods: Vec<String>,
     },
     /// Stop one or more pods
-    Stop {
-        pods: Vec<String>,
-    },
+    Stop { pods: Vec<String> },
     /// Start one or more pods
-    Start {
-        pods: Vec<String>,
-    },
+    Start { pods: Vec<String> },
     /// Restart one or more pods
-    Restart {
-        pods: Vec<String>,
-    },
+    Restart { pods: Vec<String> },
     /// Kill pods with a signal
     Kill {
         #[arg(short = 's', long = "signal", default_value = "SIGKILL")]
@@ -299,13 +290,9 @@ pub enum PodAction {
         pods: Vec<String>,
     },
     /// Pause pods
-    Pause {
-        pods: Vec<String>,
-    },
+    Pause { pods: Vec<String> },
     /// Unpause pods
-    Unpause {
-        pods: Vec<String>,
-    },
+    Unpause { pods: Vec<String> },
     /// Display the running processes of containers in pods
     Top {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -324,9 +311,7 @@ pub enum PodAction {
         force: bool,
     },
     /// Check if a pod exists
-    Exists {
-        pod: String,
-    },
+    Exists { pod: String },
     /// Clone a pod and its containers
     Clone {
         /// Source pod name or ID
@@ -469,4 +454,3 @@ pub enum SystemConnectionAction {
         name: String,
     },
 }
-

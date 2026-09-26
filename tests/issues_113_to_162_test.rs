@@ -2,7 +2,9 @@
 
 use boxr::builder::{BuildOptions, DockerfileParser, ImageBuilder, Instruction, matches_wildcard};
 use boxr::cgroups::ResourceLimits;
-use boxr::cli::{self, FormatArgs, InspectArgs, NetworkAction, NetworkSubcommands, RunArgs, TagArgs};
+use boxr::cli::{
+    self, FormatArgs, InspectArgs, NetworkAction, NetworkSubcommands, RunArgs, TagArgs,
+};
 use boxr::guardrails::PortCollisionGuard;
 use boxr::network::{NetworkStore, PortMapping};
 use boxr::oci::image::{ExecutionConfig, HistoryEntry, ImageConfig};
@@ -40,7 +42,12 @@ fn create_isolated_home() -> tempfile::TempDir {
     temp
 }
 
-fn dummy_container_record(id: &str, name: &str, home: &Path, status: ContainerStatus) -> ContainerRecord {
+fn dummy_container_record(
+    id: &str,
+    name: &str,
+    home: &Path,
+    status: ContainerStatus,
+) -> ContainerRecord {
     let bundle = home.join("containers").join(id);
     let _ = fs::create_dir_all(&bundle);
     let spec = Spec::new_default(None, Some(&["sh".to_string()]), None);
@@ -63,7 +70,10 @@ fn dummy_container_record(id: &str, name: &str, home: &Path, status: ContainerSt
 }
 
 fn dummy_image_record(repo: &str, tag: &str, home: &Path) -> ImageRecord {
-    let rootfs = home.join("images").join(format!("{}_{}", repo, tag)).join("rootfs");
+    let rootfs = home
+        .join("images")
+        .join(format!("{}_{}", repo, tag))
+        .join("rootfs");
     let _ = fs::create_dir_all(&rootfs);
     ImageRecord {
         id: "img123456789".to_string(),
@@ -233,12 +243,19 @@ async fn test_issue_114_env_without_equals_inherits_host() {
         .await
         .unwrap();
 
-    let config_path = temp.path().join("containers").join(&cid).join("config.json");
+    let config_path = temp
+        .path()
+        .join("containers")
+        .join(&cid)
+        .join("config.json");
     let content = fs::read_to_string(&config_path).unwrap();
     let spec: Spec = serde_json::from_str(&content).unwrap();
 
     assert!(
-        spec.process.env.iter().any(|e| e == "BOXR_TEST_HOST_VAR_114=my_secret_val_114"),
+        spec.process
+            .env
+            .iter()
+            .any(|e| e == "BOXR_TEST_HOST_VAR_114=my_secret_val_114"),
         "Environment did not inherit host variable: {:?}",
         spec.process.env
     );
@@ -259,7 +276,11 @@ async fn test_issue_115_workdir_relative_path_normalized() {
         .await
         .unwrap();
 
-    let config_path = temp.path().join("containers").join(&cid).join("config.json");
+    let config_path = temp
+        .path()
+        .join("containers")
+        .join(&cid)
+        .join("config.json");
     let content = fs::read_to_string(&config_path).unwrap();
     let spec: Spec = serde_json::from_str(&content).unwrap();
 
@@ -576,7 +597,8 @@ fn test_issue_130_inspect_multiple_targets() {
 #[test]
 fn test_issue_131_inspect_restart_policy() {
     let temp = create_isolated_home();
-    let mut cont = dummy_container_record("c131", "cont-131", temp.path(), ContainerStatus::Running);
+    let mut cont =
+        dummy_container_record("c131", "cont-131", temp.path(), ContainerStatus::Running);
     cont.restart_policy = boxr::health::RestartPolicy::Always;
 
     assert_eq!(cont.restart_policy.to_string(), "always");
@@ -586,7 +608,8 @@ fn test_issue_131_inspect_restart_policy() {
 #[test]
 fn test_issue_132_inspect_port_bindings() {
     let temp = create_isolated_home();
-    let mut cont = dummy_container_record("c132", "cont-132", temp.path(), ContainerStatus::Running);
+    let mut cont =
+        dummy_container_record("c132", "cont-132", temp.path(), ContainerStatus::Running);
     cont.ports = vec![PortMapping {
         host_ip: Some("0.0.0.0".to_string()),
         host_port: 8080,
@@ -603,8 +626,12 @@ fn test_issue_132_inspect_port_bindings() {
 fn test_issue_133_inspect_network_ip_and_mac() {
     let temp = tempdir().unwrap();
     let store = NetworkStore::with_home(temp.path().to_path_buf());
-    let net = store.create("custom_net133", Some("172.30.0.0/16"), Some("172.30.0.1")).unwrap();
-    let ep = store.connect_container(&net.name, "c133", "cont-133").unwrap();
+    let net = store
+        .create("custom_net133", Some("172.30.0.0/16"), Some("172.30.0.1"))
+        .unwrap();
+    let ep = store
+        .connect_container(&net.name, "c133", "cont-133")
+        .unwrap();
 
     assert!(ep.ipv4_address.starts_with("172.30.0."));
     assert!(ep.mac_address.starts_with("02:42:"));
@@ -921,7 +948,10 @@ fn test_issue_152_allocate_ip_in_subnet_cidr_mask() {
 
     // 6th container should fail because subnet /29 is exhausted (no broadcast or out-of-subnet allocation)
     let overflow = store.connect_container(&net.name, "c_overflow", "cont_overflow");
-    assert!(overflow.is_err(), "Subnet /29 must not allocate beyond broadcast");
+    assert!(
+        overflow.is_err(),
+        "Subnet /29 must not allocate beyond broadcast"
+    );
 }
 
 // Issue #153: ContainerStore::find and remove match and delete the first container when query is an empty string
@@ -1073,5 +1103,8 @@ fn test_issue_162_port_collision_guard_ephemeral_port_zero() {
     };
 
     let res = PortCollisionGuard::ensure_no_conflicts_with_containers(&port2, &[cont]);
-    assert!(res.is_ok(), "Ephemeral port 0 must not falsely trigger collision");
+    assert!(
+        res.is_ok(),
+        "Ephemeral port 0 must not falsely trigger collision"
+    );
 }

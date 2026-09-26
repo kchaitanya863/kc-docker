@@ -176,7 +176,11 @@ mod tests {
         let store = SecretStore::with_home(temp.path().to_path_buf());
 
         let secret = store
-            .create(Some("db-password"), b"s3cr3t", std::collections::HashMap::new())
+            .create(
+                Some("db-password"),
+                b"s3cr3t",
+                std::collections::HashMap::new(),
+            )
             .unwrap();
         assert_eq!(secret.name, "db-password");
         assert_eq!(store.list().len(), 1);

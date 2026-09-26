@@ -62,10 +62,7 @@ impl VolumeOps {
         let store = VolumeStore::new();
         let vols = store.list();
         if let Some(n) = name {
-            let found = vols
-                .into_iter()
-                .filter(|v| v.name == n)
-                .collect::<Vec<_>>();
+            let found = vols.into_iter().filter(|v| v.name == n).collect::<Vec<_>>();
             if found.is_empty() {
                 return Err(anyhow!("Volume '{}' not found", n));
             }
