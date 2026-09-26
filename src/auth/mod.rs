@@ -251,7 +251,7 @@ impl ImageArchiver {
         builder.append_data(&mut layer_header, layer_filename, &mut layer_file)?;
 
         // 3. Pack manifest.json
-        let tag = format!("{}:{}", image.reference, image.tag);
+        let tag = format!("{}:{}", image.display_reference(), image.tag);
         let manifest_item = TarManifestItem {
             config: config_filename,
             repo_tags: vec![tag],
@@ -328,16 +328,22 @@ impl ImageArchiver {
             }
 
             for repo_tag in item.repo_tags {
-                let (repo, tag) = if let Some((r, t)) = repo_tag.split_once(':') {
-                    (r.to_string(), t.to_string())
-                } else {
-                    (repo_tag.clone(), "latest".to_string())
-                };
+                // Normalize so loaded tags store canonical registry/repo/tag.
+                let parsed = crate::oci::reference::ImageReference::parse(&repo_tag).unwrap_or(
+                    crate::oci::reference::ImageReference {
+                        registry: crate::oci::reference::ImageReference::DEFAULT_REGISTRY
+                            .to_string(),
+                        repository: repo_tag.clone(),
+                        tag: crate::oci::reference::ImageReference::DEFAULT_TAG.to_string(),
+                        digest: None,
+                    },
+                );
 
                 let record = ImageRecord {
                     id: random_id[..12].to_string(),
-                    reference: repo,
-                    tag,
+                    reference: parsed.repository,
+                    tag: parsed.tag,
+                    registry: parsed.registry,
                     manifest_digest: image_id.clone(),
                     config_digest: image_id.clone(),
                     size_bytes: 1024 * 1024,

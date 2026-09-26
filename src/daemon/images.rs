@@ -38,7 +38,7 @@ pub async fn inspect_image(
     let img = store.find(&name).ok_or(StatusCode::NOT_FOUND)?;
     Ok(Json(serde_json::json!({
         "Id": format!("sha256:{}", img.id),
-        "RepoTags": [format!("{}:{}", img.reference, img.tag)],
+        "RepoTags": [format!("{}:{}", img.display_reference(), img.tag)],
         "Size": img.size_bytes,
         "Created": img.created_at.to_rfc3339(),
         "Architecture": img.config.architecture,
@@ -66,16 +66,12 @@ pub async fn remove_image_endpoint(
     if !force {
         let c_store = crate::storage::ContainerStore::with_home(state.home.clone());
         let containers = c_store.list();
-        let full_name = format!("{}:{}", img.reference, img.tag);
-        let short_ref = img
-            .reference
-            .strip_prefix("library/")
-            .unwrap_or(&img.reference);
-        let short_name = format!("{}:{}", short_ref, img.tag);
+        let full_name = img.qualified_name();
+        let short_name = format!("{}:{}", img.reference, img.tag);
 
         for c in containers {
-            if c.image == full_name
-                || c.image == short_name
+            if crate::storage::image_store::refs_equivalent(&c.image, &full_name)
+                || crate::storage::image_store::refs_equivalent(&c.image, &short_name)
                 || c.image == img.id
                 || c.image.starts_with(&img.id)
             {
@@ -120,10 +116,20 @@ pub async fn tag_image_endpoint(
     let repo = query.repo.unwrap_or_else(|| src.reference.clone());
     let tag = query.tag.unwrap_or_else(|| "latest".to_string());
 
+    // Normalize the target so qualified spellings store canonical registry/repo/tag.
+    let target = crate::oci::reference::ImageReference::parse(&format!("{}:{}", repo, tag))
+        .unwrap_or(crate::oci::reference::ImageReference {
+            registry: crate::oci::reference::ImageReference::DEFAULT_REGISTRY.to_string(),
+            repository: repo.clone(),
+            tag: tag.clone(),
+            digest: None,
+        });
+
     let record = crate::storage::ImageRecord {
         id: src.id.clone(),
-        reference: repo,
-        tag,
+        reference: target.repository,
+        tag: target.tag,
+        registry: target.registry,
         manifest_digest: src.manifest_digest.clone(),
         config_digest: src.config_digest.clone(),
         size_bytes: src.size_bytes,

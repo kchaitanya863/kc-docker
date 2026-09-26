@@ -1,4 +1,5 @@
 use crate::oci::image::ImageConfig;
+use crate::oci::reference::ImageReference;
 use crate::storage::boxr_home;
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -6,11 +7,19 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+fn default_image_registry() -> String {
+    ImageReference::DEFAULT_REGISTRY.to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageRecord {
     pub id: String, // Short 12-char ID or full sha256
     pub reference: String,
     pub tag: String,
+    /// Normalized registry host (e.g. "registry-1.docker.io").
+    /// Defaults to Docker Hub for records written before this field existed.
+    #[serde(default = "default_image_registry")]
+    pub registry: String,
     pub manifest_digest: String,
     pub config_digest: String,
     pub size_bytes: i64,
@@ -19,9 +28,96 @@ pub struct ImageRecord {
     pub config: ImageConfig,
 }
 
+impl ImageRecord {
+    /// Repository name for display and filters: qualified with the registry
+    /// unless it is the default Docker Hub registry, e.g. "library/alpine"
+    /// for Docker Hub but "ghcr.io/org/repo" elsewhere.
+    pub fn display_reference(&self) -> String {
+        if self.registry == ImageReference::DEFAULT_REGISTRY {
+            self.reference.clone()
+        } else {
+            format!("{}/{}", self.registry, self.reference)
+        }
+    }
+
+    /// Fully qualified "registry/repository:tag" string, usable as a query.
+    pub fn qualified_name(&self) -> String {
+        format!("{}/{}:{}", self.registry, self.reference, self.tag)
+    }
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct ImageStoreData {
     images: Vec<ImageRecord>,
+}
+
+/// True when `query` identifies `img`: by image id prefix, by manifest
+/// digest, or by normalized (registry, repository, tag) reference.
+///
+/// The reference is parsed with `ImageReference::parse`, which normalizes
+/// Docker Hub aliases (`docker.io`, `index.docker.io`,
+/// `registry-1.docker.io`), adds the `library/` prefix for official images,
+/// applies the default `latest` tag, and handles registry ports. Equivalent
+/// spellings of the same image (e.g. `alpine`,
+/// `docker.io/library/alpine:latest`) therefore match the same record.
+fn query_matches_image(img: &ImageRecord, query: &str) -> bool {
+    let query = query.trim();
+    if query.is_empty() {
+        return false;
+    }
+    if img.id.starts_with(query) {
+        return true;
+    }
+    if let Some(hex) = query.strip_prefix("sha256:") {
+        return img.manifest_digest == query || img.id.starts_with(hex);
+    }
+    match ImageReference::parse(query) {
+        Ok(r) => {
+            if let Some(digest) = r.digest {
+                return img.manifest_digest == digest;
+            }
+            let (reg, repo, tag) = record_identity(img);
+            reg == r.registry && repo == r.repository && tag == r.tag
+        }
+        Err(_) => {
+            // Fall back to the historical raw comparison for unparseable queries.
+            img.reference == query
+        }
+    }
+}
+
+/// Canonical (registry, repository, tag) identity for a stored record. The
+/// record's reference is parsed exactly like a query so that legacy records
+/// written with un-normalized references (e.g. "test101" instead of
+/// "library/test101") still match normalized queries.
+fn record_identity(img: &ImageRecord) -> (String, String, String) {
+    let probe = format!("{}/{}:{}", img.registry, img.reference, img.tag);
+    match ImageReference::parse(&probe) {
+        Ok(r) => (r.registry, r.repository, r.tag),
+        Err(_) => (img.registry.clone(), img.reference.clone(), img.tag.clone()),
+    }
+}
+
+/// True when two image query strings name the same image, normalizing
+/// registry aliases, `library/` prefixes, default tags, and digests.
+/// Used where exact string comparison would miss equivalent spellings
+/// (e.g. checking whether a container uses the image being removed).
+pub fn refs_equivalent(a: &str, b: &str) -> bool {
+    match (ImageReference::parse(a), ImageReference::parse(b)) {
+        (Ok(ra), Ok(rb)) => {
+            match (ra.digest.as_deref(), rb.digest.as_deref()) {
+                // A digest pins an exact image: both sides must carry the
+                // same digest. A digest on only one side is never equivalent
+                // to a tag on the other.
+                (Some(da), Some(db)) => da == db,
+                (Some(_), None) | (None, Some(_)) => false,
+                (None, None) => {
+                    ra.registry == rb.registry && ra.repository == rb.repository && ra.tag == rb.tag
+                }
+            }
+        }
+        _ => a.trim() == b.trim(),
+    }
 }
 
 pub struct ImageStore {
@@ -77,30 +173,8 @@ impl ImageStore {
         crate::storage::index_lock::with_index_lock(&self.index_file, || {
             let data = self.load_unlocked();
 
-            // Normalize query: e.g. "hello-world" -> short name "hello-world", tag "latest"
-            let (q_name, q_tag) = if let Some((n, t)) = query_trimmed.split_once(':') {
-                (n, Some(t))
-            } else {
-                (query_trimmed, None)
-            };
-
             Ok(data.images.into_iter().find(|img| {
-                let id_matches = img.id.starts_with(query_trimmed);
-                let img_short = img
-                    .reference
-                    .strip_prefix("library/")
-                    .unwrap_or(&img.reference);
-                let name_matches = img.reference == q_name || img_short == q_name;
-
-                let matches = if id_matches {
-                    true
-                } else if let Some(tag) = q_tag {
-                    name_matches && img.tag == tag
-                } else {
-                    name_matches && (img.tag == "latest" || img.tag == query_trimmed)
-                };
-
-                if !matches {
+                if !query_matches_image(img, query_trimmed) {
                     return false;
                 }
 
@@ -153,9 +227,10 @@ impl ImageStore {
     pub fn add(&self, record: ImageRecord) -> Result<()> {
         crate::storage::index_lock::with_index_lock(&self.index_file, || {
             let mut data = self.load_unlocked();
-            // Remove previous entry with same reference, tag, architecture, and os if present
+            // Remove previous entry with same registry, reference, tag, architecture, and os if present
             data.images.retain(|img| {
-                !(img.reference == record.reference
+                !(img.registry == record.registry
+                    && img.reference == record.reference
                     && img.tag == record.tag
                     && img.config.architecture == record.config.architecture
                     && img.config.os == record.config.os)
@@ -173,29 +248,11 @@ impl ImageStore {
         }
         crate::storage::index_lock::with_index_lock(&self.index_file, || {
             let mut data = self.load_unlocked();
-            let (q_name, q_tag) = if let Some((n, t)) = query_trimmed.split_once(':') {
-                (n, Some(t))
-            } else {
-                (query_trimmed, None)
-            };
 
-            let pos = data.images.iter().position(|img| {
-                if img.id.starts_with(query_trimmed) {
-                    return true;
-                }
-
-                let img_short = img
-                    .reference
-                    .strip_prefix("library/")
-                    .unwrap_or(&img.reference);
-                let name_matches = img.reference == q_name || img_short == q_name;
-
-                if let Some(tag) = q_tag {
-                    name_matches && img.tag == tag
-                } else {
-                    name_matches && (img.tag == "latest" || img.tag == query_trimmed)
-                }
-            });
+            let pos = data
+                .images
+                .iter()
+                .position(|img| query_matches_image(img, query_trimmed));
 
             if let Some(index) = pos {
                 let removed = data.images.remove(index);
@@ -230,28 +287,11 @@ impl ImageStore {
         crate::storage::index_lock::with_index_lock(&self.index_file, || {
             let mut data = self.load_unlocked();
             let query_trimmed = query.trim();
-            let (q_name, q_tag) = if let Some((n, t)) = query_trimmed.split_once(':') {
-                (n, Some(t))
-            } else {
-                (query_trimmed, None)
-            };
 
-            let pos = data.images.iter().position(|img| {
-                if img.id.starts_with(query_trimmed) {
-                    return true;
-                }
-                let img_short = img
-                    .reference
-                    .strip_prefix("library/")
-                    .unwrap_or(&img.reference);
-                let name_matches = img.reference == q_name || img_short == q_name;
-
-                if let Some(tag) = q_tag {
-                    name_matches && img.tag == tag
-                } else {
-                    name_matches && (img.tag == "latest" || img.tag == query_trimmed)
-                }
-            });
+            let pos = data
+                .images
+                .iter()
+                .position(|img| query_matches_image(img, query_trimmed));
 
             if let Some(index) = pos {
                 let removed = data.images.remove(index);
@@ -296,11 +336,19 @@ impl ImageStore {
         }
 
         let full_tag = repo_tag.unwrap_or_else(|| &container.name);
-        let (repo, tag) = if let Some((r, t)) = full_tag.split_once(':') {
-            (r.to_string(), t.to_string())
-        } else {
-            (full_tag.to_string(), "latest".to_string())
-        };
+        // Normalize through ImageReference so qualified spellings
+        // (e.g. docker.io/library/foo:bar) store canonical registry/repo/tag.
+        let parsed_ref = ImageReference::parse(full_tag).unwrap_or(ImageReference {
+            registry: ImageReference::DEFAULT_REGISTRY.to_string(),
+            repository: full_tag.to_string(),
+            tag: ImageReference::DEFAULT_TAG.to_string(),
+            digest: None,
+        });
+        let (repo, tag, reg) = (
+            parsed_ref.repository.clone(),
+            parsed_ref.tag.clone(),
+            parsed_ref.registry.clone(),
+        );
 
         let mut base_config = self
             .find(&container.image)
@@ -337,6 +385,7 @@ impl ImageStore {
             id: random_id[..12].to_string(),
             reference: repo,
             tag,
+            registry: reg,
             manifest_digest: image_id.clone(),
             config_digest: image_id.clone(),
             size_bytes: if total_size > 0 {
@@ -400,6 +449,7 @@ mod tests {
             id: "1234567890ab".to_string(),
             reference: "library/test".to_string(),
             tag: "latest".to_string(),
+            registry: ImageReference::DEFAULT_REGISTRY.to_string(),
             manifest_digest: "sha256:1234".to_string(),
             config_digest: "sha256:5678".to_string(),
             size_bytes: 1024,
@@ -428,5 +478,174 @@ mod tests {
         store.remove("test").unwrap();
         assert_eq!(store.list().len(), 0);
         assert!(!rootfs.exists(), "Image rootfs must be deleted on remove");
+    }
+
+    fn test_record(reference: &str, tag: &str, registry: &str) -> ImageRecord {
+        ImageRecord {
+            id: "1234567890ab".to_string(),
+            reference: reference.to_string(),
+            tag: tag.to_string(),
+            registry: registry.to_string(),
+            manifest_digest: "sha256:abcdef123456".to_string(),
+            config_digest: "sha256:fedcba654321".to_string(),
+            size_bytes: 1024,
+            created_at: Utc::now(),
+            rootfs_path: "/nonexistent".to_string(),
+            config: ImageConfig {
+                architecture: match std::env::consts::ARCH {
+                    "x86_64" => "amd64".to_string(),
+                    "aarch64" => "arm64".to_string(),
+                    other => other.to_string(),
+                },
+                os: "linux".to_string(),
+                config: Some(ExecutionConfig::default()),
+                rootfs: None,
+                history: Vec::new(),
+            },
+        }
+    }
+
+    // Issue #398: fully-qualified docker.io spellings must resolve to the
+    // same cached image as the short spelling.
+    #[test]
+    fn test_issue_398_qualified_refs_hit_cache() {
+        let temp = tempdir().unwrap();
+        let store = ImageStore {
+            index_file: temp.path().join("images.json"),
+        };
+        store
+            .add(test_record(
+                "library/alpine",
+                "latest",
+                ImageReference::DEFAULT_REGISTRY,
+            ))
+            .unwrap();
+
+        for query in [
+            "alpine",
+            "alpine:latest",
+            "library/alpine",
+            "library/alpine:latest",
+            "docker.io/library/alpine",
+            "docker.io/library/alpine:latest",
+            "docker.io/alpine:latest",
+            "index.docker.io/library/alpine:latest",
+            "registry-1.docker.io/library/alpine:latest",
+        ] {
+            assert!(
+                store.find(query).is_some(),
+                "query '{}' should hit the cached image",
+                query
+            );
+        }
+
+        // A different tag must not match.
+        assert!(store.find("alpine:3.19").is_none());
+        // A different repository must not match.
+        assert!(store.find("docker.io/library/busybox:latest").is_none());
+        // Digest query matches by manifest digest.
+        assert!(store.find("alpine@sha256:abcdef123456").is_some());
+        assert!(store.find("sha256:abcdef123456").is_some());
+
+        // Removal works with a qualified spelling too.
+        store.remove("docker.io/library/alpine:latest").unwrap();
+        assert_eq!(store.list().len(), 0);
+    }
+
+    // Equivalent spellings of a non-Docker-Hub image must hit the cache,
+    // and must not collide with a Docker Hub image of the same repo path.
+    #[test]
+    fn test_issue_398_custom_registry_refs() {
+        let temp = tempdir().unwrap();
+        let store = ImageStore {
+            index_file: temp.path().join("images.json"),
+        };
+        store.add(test_record("org/repo", "v1", "ghcr.io")).unwrap();
+
+        assert!(store.find("ghcr.io/org/repo:v1").is_some());
+        assert!(store.find("ghcr.io/org/repo").is_none()); // default tag is latest
+        assert!(store.find("org/repo:v1").is_none()); // unqualified means Docker Hub
+        assert!(store.find("quay.io/org/repo:v1").is_none()); // wrong registry
+
+        // Registry with a port.
+        let temp2 = tempdir().unwrap();
+        let store2 = ImageStore {
+            index_file: temp2.path().join("images.json"),
+        };
+        store2
+            .add(test_record("myrepo", "latest", "localhost:5000"))
+            .unwrap();
+        assert!(store2.find("localhost:5000/myrepo:v2").is_none());
+        assert!(store2.find("localhost:5000/myrepo:latest").is_some());
+        assert!(store2.find("localhost:5000/myrepo").is_some());
+    }
+
+    // Records written before the `registry` field existed must still load,
+    // defaulting to Docker Hub.
+    #[test]
+    fn test_issue_398_registry_field_backward_compatible() {
+        let json = r#"{"images": [{"id": "abc123def456", "reference": "library/alpine",
+            "tag": "latest", "manifest_digest": "sha256:aaa",
+            "config_digest": "sha256:bbb", "size_bytes": 1,
+            "created_at": "2026-01-01T00:00:00Z", "rootfs_path": "/x",
+            "config": {"architecture": "amd64", "os": "linux"}}]}"#;
+        let data: ImageStoreData = serde_json::from_str(json).unwrap();
+        assert_eq!(data.images.len(), 1);
+        assert_eq!(data.images[0].registry, ImageReference::DEFAULT_REGISTRY);
+    }
+
+    // Records stored with an un-normalized reference (e.g. "test101" instead
+    // of "library/test101", as older code paths wrote) must still match
+    // normalized queries for lookup and removal.
+    #[test]
+    fn test_issue_398_legacy_unnormalized_record_matches() {
+        let temp = tempdir().unwrap();
+        let store = ImageStore {
+            index_file: temp.path().join("images.json"),
+        };
+        store
+            .add(test_record(
+                "test101",
+                "latest",
+                ImageReference::DEFAULT_REGISTRY,
+            ))
+            .unwrap();
+
+        for query in [
+            "test101",
+            "test101:latest",
+            "library/test101:latest",
+            "docker.io/test101:latest",
+            "docker.io/library/test101:latest",
+        ] {
+            assert!(
+                store.find(query).is_some(),
+                "query '{}' should match the legacy record",
+                query
+            );
+        }
+        assert!(store.find("test101:other").is_none());
+        assert!(store.find("other:latest").is_none());
+
+        store.remove("docker.io/library/test101:latest").unwrap();
+        assert_eq!(store.list().len(), 0);
+    }
+
+    #[test]
+    fn test_refs_equivalent() {
+        assert!(refs_equivalent("alpine", "docker.io/library/alpine:latest"));
+        assert!(refs_equivalent(
+            "docker.io/library/alpine:3.19",
+            "registry-1.docker.io/library/alpine:3.19"
+        ));
+        assert!(!refs_equivalent("alpine:3.19", "alpine:latest"));
+        assert!(!refs_equivalent("ghcr.io/org/repo:v1", "org/repo:v1"));
+        assert!(refs_equivalent(
+            "alpine@sha256:aaa",
+            "docker.io/library/alpine@sha256:aaa"
+        ));
+        // A digest on only one side is never equivalent to a tag.
+        assert!(!refs_equivalent("alpine@sha256:aaa", "alpine:latest"));
+        assert!(!refs_equivalent("alpine:latest", "alpine@sha256:aaa"));
     }
 }
