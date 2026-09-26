@@ -76,11 +76,20 @@ jobs:
       new_tag: ${{ steps.version.outputs.tag }}
       new_version: ${{ steps.version.outputs.version }}
     steps:
+      - name: Verify RELEASE_TOKEN secret
+        run: |
+          if [ -z "${{ secrets.RELEASE_TOKEN }}" ]; then
+            echo "::error::RELEASE_TOKEN secret is missing or expired. The automated version bump cannot push to main without it."
+            echo "::error::Rotation runbook: docs/RELEASING.md"
+            exit 1
+          fi
+          echo "RELEASE_TOKEN is present."
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
           submodules: false
 
       - name: Configure PATH
@@ -119,6 +128,12 @@ jobs:
           git push origin main
           git tag -a "$NEW_TAG" -m "Release $NEW_TAG"
           git push origin "$NEW_TAG"
+      - name: Diagnose release push failure
+        if: failure()
+        run: |
+          echo "::error::Version-bump push to main failed. Most likely cause: RELEASE_TOKEN expired, revoked, or missing."
+          echo "::error::Rotation runbook: docs/RELEASING.md"
+
 
   release:
     name: Build & Publish Release (${{ matrix.name }})
