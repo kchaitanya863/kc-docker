@@ -1140,6 +1140,7 @@ pub async fn pull_image_with_platform(
         id: image_id.to_string(),
         reference: reference.repository.clone(),
         tag: reference.tag.clone(),
+        registry: reference.registry.clone(),
         manifest_digest: manifest_digest.clone(),
         config_digest: manifest.config.digest.clone(),
         size_bytes: total_size,
@@ -2434,7 +2435,7 @@ pub fn inspect_target(args: &cli::InspectArgs) -> Result<()> {
             if let Some(i) = i_store.find(target) {
                 let docker_compat_image = serde_json::json!({
                     "Id": format!("sha256:{}", i.id),
-                    "RepoTags": [format!("{}:{}", i.reference, i.tag)],
+                    "RepoTags": [format!("{}:{}", i.display_reference(), i.tag)],
                     "Size": i.size_bytes,
                     "Created": i.created_at.to_rfc3339(),
                     "Architecture": i.config.architecture,
@@ -2968,14 +2969,19 @@ pub async fn build_image(args: BuildArgs) -> Result<()> {
 
     let store = ImageStore::new();
     for extra_tag in args.tags.iter().skip(1) {
-        let (ref_name, tag_name) = if let Some((r, t)) = extra_tag.split_once(':') {
-            (r.to_string(), t.to_string())
-        } else {
-            (extra_tag.clone(), "latest".to_string())
-        };
+        // Normalize so qualified spellings store canonical registry/repo/tag.
+        let parsed = crate::oci::reference::ImageReference::parse(extra_tag).unwrap_or(
+            crate::oci::reference::ImageReference {
+                registry: crate::oci::reference::ImageReference::DEFAULT_REGISTRY.to_string(),
+                repository: extra_tag.clone(),
+                tag: crate::oci::reference::ImageReference::DEFAULT_TAG.to_string(),
+                digest: None,
+            },
+        );
         let mut tagged_record = record.clone();
-        tagged_record.reference = ref_name;
-        tagged_record.tag = tag_name;
+        tagged_record.reference = parsed.repository;
+        tagged_record.tag = parsed.tag;
+        tagged_record.registry = parsed.registry;
         let _ = store.add(tagged_record);
         println!("Successfully tagged image as {}", extra_tag);
     }
@@ -3558,8 +3564,9 @@ pub fn list_images(args: cli::ImagesArgs) -> Result<()> {
                 if let Some((k, v)) = f.split_once('=') {
                     match k.trim() {
                         "reference" | "name" => {
-                            let full = format!("{}:{}", img.reference, img.tag);
-                            if !full.contains(v.trim()) && !img.reference.contains(v.trim()) {
+                            let shown = img.display_reference();
+                            let full = format!("{}:{}", shown, img.tag);
+                            if !full.contains(v.trim()) && !shown.contains(v.trim()) {
                                 return false;
                             }
                         }
@@ -3600,7 +3607,7 @@ pub fn list_images(args: cli::ImagesArgs) -> Result<()> {
                 img.id[..12.min(img.id.len())].to_string()
             };
             line = line.replace("{{.ID}}", &id_str);
-            line = line.replace("{{.Repository}}", &img.reference);
+            line = line.replace("{{.Repository}}", &img.display_reference());
             line = line.replace("{{.Tag}}", &img.tag);
             line = line.replace("{{.Digest}}", &img.manifest_digest);
             line = line.replace("{{.Size}}", &format_image_size(img.size_bytes as u64));
@@ -3643,7 +3650,7 @@ pub fn list_images(args: cli::ImagesArgs) -> Result<()> {
         if args.digests {
             println!(
                 "{:<24} {:<12} {:<32} {:<16} {:<24} {:<10}",
-                img.reference,
+                img.display_reference(),
                 img.tag,
                 &img.manifest_digest[..32.min(img.manifest_digest.len())],
                 id_str,
@@ -3653,7 +3660,7 @@ pub fn list_images(args: cli::ImagesArgs) -> Result<()> {
         } else {
             println!(
                 "{:<28} {:<12} {:<16} {:<24} {:<10}",
-                img.reference,
+                img.display_reference(),
                 img.tag,
                 id_str,
                 img.created_at.format("%Y-%m-%d %H:%M:%S"),
@@ -3909,16 +3916,12 @@ pub fn remove_image(image: &str, force: bool, no_prune: bool) -> Result<()> {
     if !force {
         let c_store = ContainerStore::new();
         let containers = c_store.list();
-        let full_name = format!("{}:{}", img.reference, img.tag);
-        let short_ref = img
-            .reference
-            .strip_prefix("library/")
-            .unwrap_or(&img.reference);
-        let short_name = format!("{}:{}", short_ref, img.tag);
+        let full_name = img.qualified_name();
+        let short_name = format!("{}:{}", img.reference, img.tag);
 
         for c in containers {
-            if c.image == full_name
-                || c.image == short_name
+            if crate::storage::image_store::refs_equivalent(&c.image, &full_name)
+                || crate::storage::image_store::refs_equivalent(&c.image, &short_name)
                 || c.image == img.id
                 || c.image.starts_with(&img.id)
             {
@@ -4677,20 +4680,19 @@ pub fn tag_image(args: &cli::TagArgs) -> Result<()> {
         .find(&args.source)
         .ok_or_else(|| anyhow!("Image '{}' not found", args.source))?;
 
-    let (repo, tag) = if let Some(slash_idx) = args.target.rfind('/') {
-        let (prefix, rest) = args.target.split_at(slash_idx + 1);
-        if let Some((r, t)) = rest.rsplit_once(':') {
-            (format!("{}{}", prefix, r), t.to_string())
-        } else {
-            (args.target.clone(), "latest".to_string())
-        }
-    } else if let Some((r, t)) = args.target.rsplit_once(':') {
-        (r.to_string(), t.to_string())
-    } else {
-        (args.target.clone(), "latest".to_string())
-    };
+    // Normalize the target through ImageReference so qualified spellings
+    // (e.g. docker.io/library/foo:bar) store canonical registry/repo/tag
+    // and stay findable by any equivalent spelling.
+    let target_ref = crate::oci::reference::ImageReference::parse(&args.target)
+        .map_err(|e| anyhow!("invalid target reference '{}': {}", args.target, e))?;
 
-    if repo.trim().is_empty() {
+    // ImageReference::parse normalizes ":v1" to repository "library/"; keep
+    // the historical rejection of an empty repository name.
+    let repo_name = target_ref
+        .repository
+        .strip_prefix("library/")
+        .unwrap_or(&target_ref.repository);
+    if repo_name.trim().is_empty() {
         return Err(anyhow!(
             "invalid reference format: repository name cannot be empty"
         ));
@@ -4698,8 +4700,9 @@ pub fn tag_image(args: &cli::TagArgs) -> Result<()> {
 
     let record = ImageRecord {
         id: src.id.clone(),
-        reference: repo,
-        tag,
+        reference: target_ref.repository.clone(),
+        tag: target_ref.tag.clone(),
+        registry: target_ref.registry.clone(),
         manifest_digest: src.manifest_digest.clone(),
         config_digest: src.config_digest.clone(),
         size_bytes: src.size_bytes,
@@ -4799,16 +4802,21 @@ pub fn import_image(args: &cli::ImportArgs) -> Result<()> {
         .reference
         .clone()
         .unwrap_or_else(|| format!("boxr-import:{}", &random_id[..8]));
-    let (repo, tag) = if let Some((r, t)) = target_ref.rsplit_once(':') {
-        (r.to_string(), t.to_string())
-    } else {
-        (target_ref, "latest".to_string())
-    };
+    // Normalize so imported images store canonical registry/repo/tag.
+    let parsed = oci::reference::ImageReference::parse(&target_ref).unwrap_or(
+        oci::reference::ImageReference {
+            registry: oci::reference::ImageReference::DEFAULT_REGISTRY.to_string(),
+            repository: target_ref.clone(),
+            tag: oci::reference::ImageReference::DEFAULT_TAG.to_string(),
+            digest: None,
+        },
+    );
 
     let record = ImageRecord {
         id: random_id[..12].to_string(),
-        reference: repo,
-        tag,
+        reference: parsed.repository,
+        tag: parsed.tag,
+        registry: parsed.registry,
         manifest_digest: image_id.clone(),
         config_digest: image_id.clone(),
         size_bytes,
@@ -6446,11 +6454,11 @@ pub fn untag_image(query: &str, tags: &[String]) -> Result<()> {
         .ok_or_else(|| anyhow!("Image '{}' not found", query))?;
 
     if tags.is_empty() {
-        let _ = i_store.remove_metadata_only(&format!("{}:{}", img.reference, img.tag));
-        println!("Untagged: {}:{}", img.reference, img.tag);
+        let _ = i_store.remove_metadata_only(&img.qualified_name());
+        println!("Untagged: {}:{}", img.display_reference(), img.tag);
     } else {
         for t in tags {
-            let ref_with_tag = format!("{}:{}", img.reference, t);
+            let ref_with_tag = format!("{}:{}", img.display_reference(), t);
             let _ = i_store.remove_metadata_only(&ref_with_tag);
             println!("Untagged: {}", ref_with_tag);
         }

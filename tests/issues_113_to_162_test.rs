@@ -79,6 +79,7 @@ fn dummy_image_record(repo: &str, tag: &str, home: &Path) -> ImageRecord {
         id: "img123456789".to_string(),
         reference: repo.to_string(),
         tag: tag.to_string(),
+        registry: boxr::oci::reference::ImageReference::DEFAULT_REGISTRY.to_string(),
         manifest_digest: "sha256:1234567890abcdef".to_string(),
         config_digest: "sha256:1234567890abcdef".to_string(),
         size_bytes: 5 * 1024 * 1024,

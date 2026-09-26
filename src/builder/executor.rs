@@ -625,16 +625,22 @@ impl ImageBuilder {
         let full_tag = opts
             .tag
             .unwrap_or_else(|| format!("boxr-build:{}", &random_id[..8]));
-        let (repo, tag) = if let Some((r, t)) = full_tag.split_once(':') {
-            (r.to_string(), t.to_string())
-        } else {
-            (full_tag.clone(), "latest".to_string())
-        };
+        // Normalize through ImageReference so the record stores canonical
+        // registry/repo/tag and stays findable by equivalent spellings.
+        let parsed_tag = crate::oci::reference::ImageReference::parse(&full_tag).unwrap_or(
+            crate::oci::reference::ImageReference {
+                registry: crate::oci::reference::ImageReference::DEFAULT_REGISTRY.to_string(),
+                repository: full_tag.clone(),
+                tag: crate::oci::reference::ImageReference::DEFAULT_TAG.to_string(),
+                digest: None,
+            },
+        );
 
         let record = ImageRecord {
             id: random_id[..12].to_string(),
-            reference: repo,
-            tag,
+            reference: parsed_tag.repository,
+            tag: parsed_tag.tag,
+            registry: parsed_tag.registry,
             manifest_digest: image_id.clone(),
             config_digest: image_id.clone(),
             size_bytes: 1024 * 1024,
