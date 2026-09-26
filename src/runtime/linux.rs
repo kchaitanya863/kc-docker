@@ -458,15 +458,22 @@ pub fn exec_in_bundle(
     };
 
     let mut cmd = std::process::Command::new("nsenter");
-    cmd.args([
-        "-t",
-        &pid.to_string(),
-        "-U",
-        "-m",
-        "-p",
-        "-u",
-        "--preserve-credentials",
-    ]);
+    // Only enter the user namespace if the container actually has a private
+    // one. When boxr runs as root it creates no user namespace, and the
+    // kernel refuses setns() into the initial user namespace (EPERM), so an
+    // unconditional -U breaks `boxr exec` for every root-started container.
+    let same_userns = match (
+        fs::read_link("/proc/self/ns/user"),
+        fs::read_link(format!("/proc/{pid}/ns/user")),
+    ) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false, // unknown: keep historical behavior (pass -U)
+    };
+    cmd.args(["-t", &pid.to_string()]);
+    if !same_userns {
+        cmd.arg("-U");
+    }
+    cmd.args(["-m", "-p", "-u", "--preserve-credentials"]);
     if let Some(wd) = workdir {
         cmd.arg(format!("--wd={}", wd));
     }
