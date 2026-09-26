@@ -78,7 +78,10 @@ impl ArtifactStore {
 
     pub fn add(&self, name: &str, file: &Path, media_type: &str) -> Result<ArtifactRecord> {
         if !file.exists() {
-            return Err(anyhow!("Artifact source file '{}' not found", file.display()));
+            return Err(anyhow!(
+                "Artifact source file '{}' not found",
+                file.display()
+            ));
         }
 
         let content = fs::read(file)?;

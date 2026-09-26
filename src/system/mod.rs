@@ -210,9 +210,13 @@ impl SystemManager {
             let mut deleted_images = Vec::new();
             for img in images {
                 let tag = format!("{}:{}", img.reference, img.tag);
-                let is_used = used_images.contains(&tag) || used_images.contains(&img.reference) || used_images.contains(&img.id);
+                let is_used = used_images.contains(&tag)
+                    || used_images.contains(&img.reference)
+                    || used_images.contains(&img.id);
                 if !is_used {
-                    let is_dangling = img.tag == "<none>" || img.reference.is_empty() || img.reference == "<none>";
+                    let is_dangling = img.tag == "<none>"
+                        || img.reference.is_empty()
+                        || img.reference == "<none>";
                     if all_images || is_dangling {
                         reclaimed += img.size_bytes as u64;
                         let _ = i_store.remove(&img.id);

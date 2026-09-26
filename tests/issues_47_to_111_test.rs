@@ -42,7 +42,12 @@ fn create_isolated_home() -> tempfile::TempDir {
     temp
 }
 
-fn dummy_container_record(id: &str, name: &str, home: &Path, status: ContainerStatus) -> ContainerRecord {
+fn dummy_container_record(
+    id: &str,
+    name: &str,
+    home: &Path,
+    status: ContainerStatus,
+) -> ContainerRecord {
     let bundle = home.join("containers").join(id);
     let _ = fs::create_dir_all(&bundle);
     let spec = Spec::new_default(None, Some(&["sh".to_string()]), None);
@@ -76,7 +81,11 @@ fn test_issue_47_update_persists_limits() {
     let config_path = bundle.join("config.json");
     let content = fs::read_to_string(&config_path).unwrap();
     let mut spec: Spec = serde_json::from_str(&content).unwrap();
-    let res = spec.linux.get_or_insert_with(Default::default).resources.get_or_insert_with(Default::default);
+    let res = spec
+        .linux
+        .get_or_insert_with(Default::default)
+        .resources
+        .get_or_insert_with(Default::default);
     res.memory = Some(boxr::oci::runtime::LinuxMemory {
         limit: Some(268435456),
         ..Default::default()
@@ -246,7 +255,11 @@ fn test_issue_61_logs_tail_zero_and_slicing() {
     let tail_0: usize = 0;
     let tail_2: usize = 2;
 
-    let res_0: Vec<&str> = if tail_0 == 0 { vec![] } else { lines[lines.len() - tail_0..].to_vec() };
+    let res_0: Vec<&str> = if tail_0 == 0 {
+        vec![]
+    } else {
+        lines[lines.len() - tail_0..].to_vec()
+    };
     assert_eq!(res_0.len(), 0);
 
     let res_2 = lines[lines.len() - tail_2..].to_vec();
@@ -322,10 +335,16 @@ fn test_issue_65_rename_invalid_characters() {
 fn test_issue_66_create_invalid_characters() {
     let temp = tempdir().unwrap();
     let store = ContainerStore::with_home(temp.path().to_path_buf());
-    let cont_invalid = dummy_container_record("c66", "bad/name", temp.path(), ContainerStatus::Created);
+    let cont_invalid =
+        dummy_container_record("c66", "bad/name", temp.path(), ContainerStatus::Created);
     assert!(store.add(cont_invalid).is_err());
 
-    let cont_valid = dummy_container_record("c66b", "good-name_1.0", temp.path(), ContainerStatus::Created);
+    let cont_valid = dummy_container_record(
+        "c66b",
+        "good-name_1.0",
+        temp.path(),
+        ContainerStatus::Created,
+    );
     assert!(store.add(cont_valid).is_ok());
 }
 
@@ -336,10 +355,23 @@ fn test_issue_67_commit_preserves_message_and_author() {
     let img_store = ImageStore::with_home(temp.path().to_path_buf());
     let cont = dummy_container_record("c67", "cont-67", temp.path(), ContainerStatus::Running);
 
-    let rec = img_store.commit_container(&cont, Some("myimg:v1"), Some("commit message test"), Some("Jane Doe <jane@example.com>")).unwrap();
+    let rec = img_store
+        .commit_container(
+            &cont,
+            Some("myimg:v1"),
+            Some("commit message test"),
+            Some("Jane Doe <jane@example.com>"),
+        )
+        .unwrap();
     let labels = rec.config.config.unwrap().labels.unwrap();
-    assert_eq!(labels.get("author").map(|s| s.as_str()), Some("Jane Doe <jane@example.com>"));
-    assert_eq!(labels.get("commit_message").map(|s| s.as_str()), Some("commit message test"));
+    assert_eq!(
+        labels.get("author").map(|s| s.as_str()),
+        Some("Jane Doe <jane@example.com>")
+    );
+    assert_eq!(
+        labels.get("commit_message").map(|s| s.as_str()),
+        Some("commit message test")
+    );
 }
 
 // Issue #68: boxr commit hardcodes image size to 1MB and fails to pause container during commit
@@ -420,8 +452,13 @@ fn test_issue_76_stats_reads_bundle_memory_limit() {
     let temp = tempdir().unwrap();
     let cont = dummy_container_record("c76", "cont-76", temp.path(), ContainerStatus::Running);
     let bundle = temp.path().join("containers").join("c76");
-    let mut spec: Spec = serde_json::from_str(&fs::read_to_string(bundle.join("config.json")).unwrap()).unwrap();
-    spec.linux.get_or_insert_with(Default::default).resources.get_or_insert_with(Default::default).memory = Some(boxr::oci::runtime::LinuxMemory {
+    let mut spec: Spec =
+        serde_json::from_str(&fs::read_to_string(bundle.join("config.json")).unwrap()).unwrap();
+    spec.linux
+        .get_or_insert_with(Default::default)
+        .resources
+        .get_or_insert_with(Default::default)
+        .memory = Some(boxr::oci::runtime::LinuxMemory {
         limit: Some(512 * 1024 * 1024),
         ..Default::default()
     });
@@ -514,7 +551,8 @@ fn test_issue_81_rm_paused_without_force_fails() {
     store.add(cont).unwrap();
 
     let c = store.find("c81").unwrap();
-    let is_active = matches!(c.status, ContainerStatus::Running) || matches!(c.status, ContainerStatus::Paused);
+    let is_active =
+        matches!(c.status, ContainerStatus::Running) || matches!(c.status, ContainerStatus::Paused);
     let force = false;
     assert!(is_active && !force);
 }
@@ -567,7 +605,8 @@ fn test_issue_86_diff_filters_runtime_scaffolding() {
 #[test]
 fn test_issue_87_auth_login_server_normalization() {
     let cs = CredentialStore::new();
-    cs.login("https://index.docker.io/v1", "user1", "pass1").unwrap();
+    cs.login("https://index.docker.io/v1", "user1", "pass1")
+        .unwrap();
     let creds = cs.get_credentials("docker.io");
     assert_eq!(creds, Some(("user1".to_string(), "pass1".to_string())));
 }
@@ -694,14 +733,20 @@ fn test_issue_100_pod_rm_running_containers_requires_force() {
 
     let res = p_store.remove_with_force("pod100", false);
     assert!(res.is_err());
-    assert!(res.unwrap_err().to_string().contains("cannot remove running pod"));
+    assert!(
+        res.unwrap_err()
+            .to_string()
+            .contains("cannot remove running pod")
+    );
 }
 
 // Issue #101: Daemon API missing DELETE /images/{name} endpoint for docker rmi compatibility
 #[tokio::test]
 async fn test_issue_101_daemon_delete_image_endpoint() {
     let temp = tempdir().unwrap();
-    let state = DaemonState { home: temp.path().to_path_buf() };
+    let state = DaemonState {
+        home: temp.path().to_path_buf(),
+    };
     let app = create_router(state);
 
     let img_store = ImageStore::with_home(temp.path().to_path_buf());
@@ -745,7 +790,9 @@ async fn test_issue_101_daemon_delete_image_endpoint() {
 #[tokio::test]
 async fn test_issue_102_daemon_post_image_tag_endpoint() {
     let temp = tempdir().unwrap();
-    let state = DaemonState { home: temp.path().to_path_buf() };
+    let state = DaemonState {
+        home: temp.path().to_path_buf(),
+    };
     let app = create_router(state);
 
     let img_store = ImageStore::with_home(temp.path().to_path_buf());
@@ -790,7 +837,9 @@ async fn test_issue_102_daemon_post_image_tag_endpoint() {
 #[tokio::test]
 async fn test_issue_103_daemon_get_image_history_endpoint() {
     let temp = tempdir().unwrap();
-    let state = DaemonState { home: temp.path().to_path_buf() };
+    let state = DaemonState {
+        home: temp.path().to_path_buf(),
+    };
     let app = create_router(state);
 
     let img_store = ImageStore::with_home(temp.path().to_path_buf());
@@ -834,7 +883,9 @@ async fn test_issue_103_daemon_get_image_history_endpoint() {
 #[tokio::test]
 async fn test_issue_104_daemon_post_container_stop_params() {
     let temp = tempdir().unwrap();
-    let state = DaemonState { home: temp.path().to_path_buf() };
+    let state = DaemonState {
+        home: temp.path().to_path_buf(),
+    };
     let app = create_router(state);
 
     let c_store = ContainerStore::with_home(temp.path().to_path_buf());
@@ -880,7 +931,9 @@ async fn test_issue_107_daemon_wait_no_10s_timeout() {
 #[tokio::test]
 async fn test_issue_108_daemon_delete_running_container_without_force_fails() {
     let temp = tempdir().unwrap();
-    let state = DaemonState { home: temp.path().to_path_buf() };
+    let state = DaemonState {
+        home: temp.path().to_path_buf(),
+    };
     let app = create_router(state);
 
     let c_store = ContainerStore::with_home(temp.path().to_path_buf());
@@ -913,7 +966,9 @@ async fn test_issue_109_daemon_create_container_parses_host_config() {
 #[tokio::test]
 async fn test_issue_110_daemon_inspect_container_standard_status_and_configs() {
     let temp = tempdir().unwrap();
-    let state = DaemonState { home: temp.path().to_path_buf() };
+    let state = DaemonState {
+        home: temp.path().to_path_buf(),
+    };
     let app = create_router(state);
 
     let c_store = ContainerStore::with_home(temp.path().to_path_buf());
@@ -932,7 +987,9 @@ async fn test_issue_110_daemon_inspect_container_standard_status_and_configs() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
-    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(v["State"]["Status"], "running");
     assert!(v.get("Config").is_some());
@@ -943,7 +1000,9 @@ async fn test_issue_110_daemon_inspect_container_standard_status_and_configs() {
 #[tokio::test]
 async fn test_issue_111_daemon_delete_volume_in_use_returns_conflict() {
     let temp = tempdir().unwrap();
-    let state = DaemonState { home: temp.path().to_path_buf() };
+    let state = DaemonState {
+        home: temp.path().to_path_buf(),
+    };
     let app = create_router(state);
 
     let v_store = VolumeStore::with_home(temp.path().to_path_buf());
@@ -954,12 +1013,15 @@ async fn test_issue_111_daemon_delete_volume_in_use_returns_conflict() {
     c_store.add(cont).unwrap();
 
     let bundle = temp.path().join("containers").join("c111");
-    let spec_json = format!(r#"{{
+    let spec_json = format!(
+        r#"{{
         "ociVersion": "1.0.2",
         "process": {{ "terminal": false, "user": {{ "uid": 0, "gid": 0 }}, "args": ["sh"], "env": [], "cwd": "/" }},
         "root": {{ "path": "rootfs", "readonly": false }},
         "mounts": [{{ "destination": "/data", "type": "bind", "source": "{}/volumes/inuse-vol/_data" }}]
-    }}"#, temp.path().display());
+    }}"#,
+        temp.path().display()
+    );
     fs::write(bundle.join("config.json"), spec_json).unwrap();
 
     let response = app

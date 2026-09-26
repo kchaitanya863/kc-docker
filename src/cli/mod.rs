@@ -233,15 +233,11 @@ pub enum Commands {
     Machine(MachineSubcommands),
 
     /// Mount a container's root filesystem and return the mount path
-    Mount {
-        container: String,
-    },
+    Mount { container: String },
 
     /// Unmount a container's root filesystem
     #[command(alias = "umount")]
-    Unmount {
-        container: String,
-    },
+    Unmount { container: String },
 
     /// Manage OCI artifacts
     Artifact(ArtifactSubcommands),
@@ -263,9 +259,7 @@ pub enum Commands {
     Kube(KubeSubcommands),
 
     /// Initialize a container
-    Init {
-        container: String,
-    },
+    Init { container: String },
 
     /// Remove one or more tags from an image
     Untag(UntagArgs),

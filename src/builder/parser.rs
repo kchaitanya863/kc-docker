@@ -1,5 +1,5 @@
 use crate::health::HealthConfig;
-use anyhow::{Result, anyhow, Context};
+use anyhow::{Context, Result, anyhow};
 use std::fs;
 use std::path::Path;
 
@@ -104,19 +104,20 @@ impl DockerfileParser {
             }
             "RUN" => Ok(vec![Instruction::Run(rest.to_string())]),
             "COPY" => {
-                let (from_stage, remainder) =
-                    if let Some(stripped) = rest.strip_prefix("--from=") {
-                        let (stage, rem) = stripped
-                            .split_once(char::is_whitespace)
-                            .ok_or_else(|| anyhow!("Invalid COPY --from syntax"))?;
-                        (Some(stage.to_string()), rem.trim())
-                    } else {
-                        (None, rest)
-                    };
+                let (from_stage, remainder) = if let Some(stripped) = rest.strip_prefix("--from=") {
+                    let (stage, rem) = stripped
+                        .split_once(char::is_whitespace)
+                        .ok_or_else(|| anyhow!("Invalid COPY --from syntax"))?;
+                    (Some(stage.to_string()), rem.trim())
+                } else {
+                    (None, rest)
+                };
 
                 let parts = parse_array_or_words(remainder);
                 if parts.len() < 2 {
-                    return Err(anyhow!("COPY requires at least one source and a destination"));
+                    return Err(anyhow!(
+                        "COPY requires at least one source and a destination"
+                    ));
                 }
                 let dest = parts.last().unwrap().clone();
                 let src = parts[..parts.len() - 1].to_vec();
@@ -129,7 +130,9 @@ impl DockerfileParser {
             "ADD" => {
                 let parts = parse_array_or_words(rest);
                 if parts.len() < 2 {
-                    return Err(anyhow!("ADD requires at least one source and a destination"));
+                    return Err(anyhow!(
+                        "ADD requires at least one source and a destination"
+                    ));
                 }
                 let dest = parts.last().unwrap().clone();
                 let src = parts[..parts.len() - 1].to_vec();

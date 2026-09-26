@@ -117,7 +117,11 @@ impl DiskGuard {
             }
 
             let stat = unsafe { stat.assume_init() };
-            let block_size = if stat.f_frsize > 0 { stat.f_frsize } else { stat.f_bsize };
+            let block_size = if stat.f_frsize > 0 {
+                stat.f_frsize
+            } else {
+                stat.f_bsize
+            };
             let free_bytes = (stat.f_bavail as u64) * (block_size as u64);
             Ok(free_bytes)
         }

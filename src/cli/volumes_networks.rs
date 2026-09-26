@@ -259,4 +259,3 @@ pub struct NetworkUpdateArgs {
     #[arg(long = "label-drop")]
     pub label_drop: Vec<String>,
 }
-

@@ -111,15 +111,7 @@ fn test_f11_dangerous_root_mount() {
     pull_if_needed(&home, "alpine:latest");
     let out = run_boxr(
         &home,
-        &[
-            "run",
-            "--rm",
-            "-v",
-            "/:/host:ro",
-            "alpine",
-            "ls",
-            "/host",
-        ],
+        &["run", "--rm", "-v", "/:/host:ro", "alpine", "ls", "/host"],
     );
     // Record behavior: may succeed with ro or warn; should not crash boxr
     let _ = combined_output(&out);

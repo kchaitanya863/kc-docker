@@ -495,9 +495,7 @@ pub enum ManifestAction {
         purge: bool,
     },
     /// Remove one or more manifest lists
-    Rm {
-        target: String,
-    },
+    Rm { target: String },
     /// Add or update annotations on a manifest list
     Annotate {
         target: String,
@@ -658,4 +656,3 @@ pub struct UntagArgs {
     #[arg(trailing_var_arg = true)]
     pub tags: Vec<String>,
 }
-

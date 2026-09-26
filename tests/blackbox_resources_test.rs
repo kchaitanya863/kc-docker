@@ -4,7 +4,10 @@ mod blackbox;
 use blackbox::*;
 
 #[test]
-#[cfg_attr(target_os = "macos", ignore = "micro-VM run --rm is slow/flaky under cargo test on macOS")]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "micro-VM run --rm is slow/flaky under cargo test on macOS"
+)]
 fn test_g1_memory_limit_accepts_flag() {
     let (_guard, home) = isolated_home();
     pull_if_needed(&home, "alpine:latest");
@@ -16,7 +19,10 @@ fn test_g1_memory_limit_accepts_flag() {
 }
 
 #[test]
-#[cfg_attr(target_os = "macos", ignore = "micro-VM run --rm is slow/flaky under cargo test on macOS")]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "micro-VM run --rm is slow/flaky under cargo test on macOS"
+)]
 fn test_g4_cpus_limit_accepts_flag() {
     let (_guard, home) = isolated_home();
     pull_if_needed(&home, "alpine:latest");
@@ -28,7 +34,10 @@ fn test_g4_cpus_limit_accepts_flag() {
 }
 
 #[test]
-#[cfg_attr(target_os = "macos", ignore = "micro-VM run --rm is slow/flaky under cargo test on macOS")]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "micro-VM run --rm is slow/flaky under cargo test on macOS"
+)]
 fn test_g5_pids_limit_accepts_flag() {
     let (_guard, home) = isolated_home();
     pull_if_needed(&home, "alpine:latest");
@@ -80,7 +89,10 @@ fn test_g7_invalid_memory_rejected() {
 }
 
 #[test]
-#[cfg_attr(target_os = "macos", ignore = "micro-VM run --rm is slow/flaky under cargo test on macOS")]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "micro-VM run --rm is slow/flaky under cargo test on macOS"
+)]
 fn test_g8_valid_memory_units() {
     let (_guard, home) = isolated_home();
     pull_if_needed(&home, "alpine:latest");

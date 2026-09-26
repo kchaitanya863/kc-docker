@@ -5,15 +5,21 @@ use blackbox::*;
 use std::time::Duration;
 
 #[test]
-#[cfg_attr(target_os = "macos", ignore = "micro-VM port forwarding is flaky under cargo test on macOS")]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "micro-VM port forwarding is flaky under cargo test on macOS"
+)]
 fn test_d1_tcp_publish_and_curl() {
     let (_guard, home) = isolated_home();
     pull_if_needed(&home, "nginx:alpine");
     let suffix = rand_suffix();
     let ctr = format!("bb-net-tcp-{}", suffix);
-    let port = 19000 + suffix.chars().take(3).fold(0u32, |a, c| {
-        a * 10 + c.to_digit(10).unwrap_or(1)
-    }) % 500;
+    let port = 19000
+        + suffix
+            .chars()
+            .take(3)
+            .fold(0u32, |a, c| a * 10 + c.to_digit(10).unwrap_or(1))
+            % 500;
     let url = format!("http://127.0.0.1:{}/", port);
     let run_args = [
         "run",
@@ -83,7 +89,17 @@ fn test_d5_network_connect() {
     run_boxr_ok(&home, &["network", "create", &net]);
     run_boxr_ok(
         &home,
-        &["run", "-d", "--name", &ctr, "--network", "none", "alpine", "sleep", "120"],
+        &[
+            "run",
+            "-d",
+            "--name",
+            &ctr,
+            "--network",
+            "none",
+            "alpine",
+            "sleep",
+            "120",
+        ],
     );
     let out = run_boxr(&home, &["network", "connect", &net, &ctr]);
     cleanup_container(&home, &ctr);
@@ -92,7 +108,10 @@ fn test_d5_network_connect() {
 }
 
 #[test]
-#[cfg_attr(target_os = "macos", ignore = "micro-VM port forwarding is flaky under cargo test on macOS")]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "micro-VM port forwarding is flaky under cargo test on macOS"
+)]
 fn test_d7_restart_preserves_port_forward() {
     let (_guard, home) = isolated_home();
     pull_if_needed(&home, "nginx:alpine");
@@ -123,7 +142,10 @@ fn test_d7_restart_preserves_port_forward() {
 }
 
 #[test]
-#[cfg_attr(target_os = "macos", ignore = "micro-VM outbound networking is slow/flaky under cargo test on macOS")]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "micro-VM outbound networking is slow/flaky under cargo test on macOS"
+)]
 fn test_d10_outbound_connectivity() {
     let (_guard, home) = isolated_home();
     pull_if_needed(&home, "alpine:latest");
@@ -182,7 +204,10 @@ fn test_d_network_none_blocks_external() {
 }
 
 #[test]
-#[cfg_attr(target_os = "macos", ignore = "micro-VM run --rm is slow/flaky under cargo test on macOS")]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "micro-VM run --rm is slow/flaky under cargo test on macOS"
+)]
 fn test_e1_dns_resolution() {
     let (_guard, home) = isolated_home();
     pull_if_needed(&home, "alpine:latest");
@@ -206,7 +231,10 @@ fn test_e1_dns_resolution() {
 }
 
 #[test]
-#[cfg_attr(target_os = "macos", ignore = "micro-VM run --rm is slow/flaky under cargo test on macOS")]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "micro-VM run --rm is slow/flaky under cargo test on macOS"
+)]
 fn test_e2_custom_dns_server() {
     let (_guard, home) = isolated_home();
     pull_if_needed(&home, "alpine:latest");
@@ -230,7 +258,10 @@ fn test_e7_bridge_hosts_name_resolution() {
     let (_guard, home) = isolated_home();
     pull_if_needed(&home, "alpine:latest");
     let fixture = fixture_path("tests/fixtures/compose/minimal-dns.yml");
-    let _ = run_boxr(&home, &["compose", "-f", fixture.to_str().unwrap(), "down", "-v"]);
+    let _ = run_boxr(
+        &home,
+        &["compose", "-f", fixture.to_str().unwrap(), "down", "-v"],
+    );
     run_boxr_ok(
         &home,
         &["compose", "-f", fixture.to_str().unwrap(), "up", "-d"],
@@ -238,7 +269,10 @@ fn test_e7_bridge_hosts_name_resolution() {
     std::thread::sleep(Duration::from_secs(5));
     let ps = run_boxr_ok(&home, &["compose", "-f", fixture.to_str().unwrap(), "ps"]);
     assert!(ps.contains("web") || ps.contains("db"));
-    let _ = run_boxr(&home, &["compose", "-f", fixture.to_str().unwrap(), "down", "-v"]);
+    let _ = run_boxr(
+        &home,
+        &["compose", "-f", fixture.to_str().unwrap(), "down", "-v"],
+    );
 }
 
 #[cfg(target_os = "linux")]

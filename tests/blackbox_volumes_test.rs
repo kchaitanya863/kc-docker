@@ -35,7 +35,10 @@ fn test_c2_bind_mount_rw() {
         ],
     );
     assert!(dir.path().join("file.txt").exists());
-    assert_eq!(fs::read_to_string(dir.path().join("file.txt")).unwrap(), "bind-ok\n");
+    assert_eq!(
+        fs::read_to_string(dir.path().join("file.txt")).unwrap(),
+        "bind-ok\n"
+    );
 }
 
 #[test]
@@ -169,15 +172,7 @@ fn test_c15_cp_host_container_roundtrip() {
     fs::write(&host_file, "host-content").unwrap();
     run_boxr_ok(
         &home,
-        &[
-            "run",
-            "-d",
-            "--name",
-            &ctr,
-            "alpine",
-            "sleep",
-            "120",
-        ],
+        &["run", "-d", "--name", &ctr, "alpine", "sleep", "120"],
     );
     run_boxr_ok(
         &home,
@@ -223,14 +218,7 @@ fn test_h8_executable_on_volume() {
     );
     let out = run_boxr_ok(
         &home,
-        &[
-            "run",
-            "--rm",
-            "-v",
-            &mount,
-            "alpine",
-            "/scripts/run.sh",
-        ],
+        &["run", "--rm", "-v", &mount, "alpine", "/scripts/run.sh"],
     );
     assert!(out.contains("exec-ok"));
 }

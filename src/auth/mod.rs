@@ -215,7 +215,10 @@ impl ImageArchiver {
         Ok(())
     }
 
-    fn pack_image_tar<W: std::io::Write>(image: &ImageRecord, builder: &mut Builder<W>) -> Result<()> {
+    fn pack_image_tar<W: std::io::Write>(
+        image: &ImageRecord,
+        builder: &mut Builder<W>,
+    ) -> Result<()> {
         // 1. Pack config JSON
         let config_filename = format!("{}.json", &image.config_digest.replace(':', "_"));
         let config_bytes = serde_json::to_vec_pretty(&image.config)?;
@@ -458,7 +461,9 @@ mod tests {
         assert!(store.get_credentials("docker.io").is_none());
 
         // Test server normalization for https:// and index.docker.io
-        store.login("https://index.docker.io/v1/", "hubuser", "token999").unwrap();
+        store
+            .login("https://index.docker.io/v1/", "hubuser", "token999")
+            .unwrap();
         let creds2 = store.get_credentials("registry-1.docker.io").unwrap();
         assert_eq!(creds2.0, "hubuser");
         assert_eq!(creds2.1, "token999");

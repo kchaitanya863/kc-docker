@@ -564,30 +564,32 @@ impl ComposeProject {
                 .clone()
                 .unwrap_or_else(|| format!("{}_{}_1", self.name, svc_name));
             if let Some(img) = &svc.image {
-                let run_args = self.build_service_run_args(&svc_name, svc, &container_name, img, false)?;
+                let run_args =
+                    self.build_service_run_args(&svc_name, svc, &container_name, img, false)?;
                 let _ = crate::create_only_container(run_args).await?;
             }
         }
         Ok(())
     }
 
-    pub async fn run_one_off(
-        &self,
-        service: &str,
-        command: Vec<String>,
-        rm: bool,
-    ) -> Result<()> {
+    pub async fn run_one_off(&self, service: &str, command: Vec<String>, rm: bool) -> Result<()> {
         let svc = self
             .compose
             .services
             .get(service)
             .ok_or_else(|| anyhow!("Service '{}' not found", service))?;
-        let container_name = format!("{}_{}_run_{}", self.name, service, hex::encode(crate::storage::container_store::rand_id()));
+        let container_name = format!(
+            "{}_{}_run_{}",
+            self.name,
+            service,
+            hex::encode(crate::storage::container_store::rand_id())
+        );
         let image_name = svc
             .image
             .clone()
             .ok_or_else(|| anyhow!("Service '{}' has no image", service))?;
-        let mut run_args = self.build_service_run_args(service, svc, &container_name, &image_name, true)?;
+        let mut run_args =
+            self.build_service_run_args(service, svc, &container_name, &image_name, true)?;
         run_args.rm = rm;
         run_args.detach = false;
         run_args.interactive = true;

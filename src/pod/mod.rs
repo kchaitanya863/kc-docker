@@ -2,7 +2,7 @@ pub mod ops;
 pub use ops::PodOps;
 
 use crate::network::PortMapping;
-use crate::storage::{ContainerRecord, ContainerStore, ContainerStatus, boxr_home};
+use crate::storage::{ContainerRecord, ContainerStatus, ContainerStore, boxr_home};
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -284,7 +284,10 @@ impl PodStore {
                             }
                         }
                     }
-                    if let Some(infra) = c_store.find(&infra_name).or_else(|| c_store.find(&pod.infra_container_id)) {
+                    if let Some(infra) = c_store
+                        .find(&infra_name)
+                        .or_else(|| c_store.find(&pod.infra_container_id))
+                    {
                         if matches!(infra.status, ContainerStatus::Running) {
                             return Err(anyhow!(
                                 "conflict: cannot remove running pod {}. Stop the pod or use force",
@@ -300,7 +303,10 @@ impl PodStore {
                 for cid in &removed.containers {
                     let _ = crate::remove_container(cid, force);
                 }
-                if let Some(infra) = c_store.find(&infra_name).or_else(|| c_store.find(&removed.infra_container_id)) {
+                if let Some(infra) = c_store
+                    .find(&infra_name)
+                    .or_else(|| c_store.find(&removed.infra_container_id))
+                {
                     let _ = crate::remove_container(&infra.id, force);
                 }
                 Ok(removed)
@@ -395,9 +401,12 @@ impl PodStore {
 /// Resolve a container namespace path for joining (e.g. `/proc/123/ns/net`).
 pub fn container_namespace_path(container_query: &str, ns: &str) -> Result<String> {
     let store = ContainerStore::new();
-    let cont = store
-        .find(container_query)
-        .ok_or_else(|| anyhow!("Container '{}' not found for namespace join", container_query))?;
+    let cont = store.find(container_query).ok_or_else(|| {
+        anyhow!(
+            "Container '{}' not found for namespace join",
+            container_query
+        )
+    })?;
     container_pid_namespace_path(&cont, ns)
 }
 

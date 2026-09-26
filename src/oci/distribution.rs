@@ -105,9 +105,7 @@ impl RegistryClient {
                     .await?;
                 if token.is_none() && creds.is_some() {
                     self.basic_auth = None;
-                    self.token = self
-                        .fetch_bearer_token(auth_str, reference, None)
-                        .await?;
+                    self.token = self.fetch_bearer_token(auth_str, reference, None).await?;
                 } else {
                     self.token = token;
                 }
@@ -172,9 +170,7 @@ impl RegistryClient {
     ) -> Result<Option<String>> {
         let mut url = format!(
             "{}?scope=repository:{}:{}",
-            realm,
-            reference.repository,
-            scope_action
+            realm, reference.repository, scope_action
         );
         if let Some(s) = service {
             url.push_str(&format!("&service={}", s));
@@ -283,9 +279,7 @@ impl RegistryClient {
     ) -> Result<()> {
         let check_url = format!(
             "https://{}/v2/{}/blobs/{}",
-            reference.registry,
-            reference.repository,
-            digest
+            reference.registry, reference.repository, digest
         );
         let head = self
             .client
@@ -299,8 +293,7 @@ impl RegistryClient {
 
         let upload_url = format!(
             "https://{}/v2/{}/blobs/uploads/",
-            reference.registry,
-            reference.repository
+            reference.registry, reference.repository
         );
         let post = self
             .client
@@ -331,7 +324,11 @@ impl RegistryClient {
             .send()
             .await?;
         if !put.status().is_success() {
-            return Err(anyhow!("Failed to upload blob {}: status {}", digest, put.status()));
+            return Err(anyhow!(
+                "Failed to upload blob {}: status {}",
+                digest,
+                put.status()
+            ));
         }
         Ok(())
     }
@@ -375,13 +372,11 @@ impl RegistryClient {
                 .join("layers")
                 .join(format!("{}.tar", safe_name));
             if !layer_file.exists() {
-                return Err(anyhow!(
-                    "Missing layer blob {} for push",
-                    layer.digest
-                ));
+                return Err(anyhow!("Missing layer blob {} for push", layer.digest));
             }
             let layer_bytes = fs::read(&layer_file)?;
-            self.upload_blob(reference, &layer.digest, &layer_bytes).await?;
+            self.upload_blob(reference, &layer.digest, &layer_bytes)
+                .await?;
         }
 
         let manifest_bytes = serde_json::to_vec(&manifest)?;
@@ -389,9 +384,7 @@ impl RegistryClient {
 
         let put_url = format!(
             "https://{}/v2/{}/manifests/{}",
-            reference.registry,
-            reference.repository,
-            reference.tag
+            reference.registry, reference.repository, reference.tag
         );
         let mut headers = self.auth_headers();
         headers.insert(

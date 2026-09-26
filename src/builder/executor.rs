@@ -34,7 +34,6 @@ pub struct BuildOptions {
     pub quiet: bool,
 }
 
-
 pub struct ImageBuilder {
     store: ImageStore,
 }
@@ -226,7 +225,8 @@ impl ImageBuilder {
 
                             let mut matches_count = 0;
                             if let Ok(entries) = fs::read_dir(&search_dir) {
-                                let mut sorted_entries: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+                                let mut sorted_entries: Vec<_> =
+                                    entries.filter_map(|e| e.ok()).collect();
                                 sorted_entries.sort_by_key(|e| e.file_name());
                                 for entry in sorted_entries {
                                     let fname = entry.file_name().to_string_lossy().to_string();
@@ -258,7 +258,10 @@ impl ImageBuilder {
                         }
                     }
 
-                    if (resolved_sources.len() + url_sources.len()) > 1 && !dest.ends_with('/') && !target_dir.is_dir() {
+                    if (resolved_sources.len() + url_sources.len()) > 1
+                        && !dest.ends_with('/')
+                        && !target_dir.is_dir()
+                    {
                         return Err(anyhow!(
                             "When adding multiple files, destination must end with /: '{}'",
                             dest
@@ -301,10 +304,16 @@ impl ImageBuilder {
                             if s_str.ends_with(".tar.gz") || s_str.ends_with(".tgz") {
                                 let gz = flate2::read::GzDecoder::new(f);
                                 let mut archive = tar::Archive::new(gz);
-                                crate::oci::image::unpack_archive_safely(&mut archive, &target_dir)?;
+                                crate::oci::image::unpack_archive_safely(
+                                    &mut archive,
+                                    &target_dir,
+                                )?;
                             } else {
                                 let mut archive = tar::Archive::new(f);
-                                crate::oci::image::unpack_archive_safely(&mut archive, &target_dir)?;
+                                crate::oci::image::unpack_archive_safely(
+                                    &mut archive,
+                                    &target_dir,
+                                )?;
                             }
                         } else if source_path.is_dir() {
                             copy_dir_all(&source_path, &target_dir)?;
@@ -417,7 +426,8 @@ impl ImageBuilder {
 
                             let mut matches_count = 0;
                             if let Ok(entries) = fs::read_dir(&search_dir) {
-                                let mut sorted_entries: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+                                let mut sorted_entries: Vec<_> =
+                                    entries.filter_map(|e| e.ok()).collect();
                                 sorted_entries.sort_by_key(|e| e.file_name());
                                 for entry in sorted_entries {
                                     let fname = entry.file_name().to_string_lossy().to_string();
@@ -671,4 +681,3 @@ fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
     }
     Ok(())
 }
-

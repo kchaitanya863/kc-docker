@@ -1,9 +1,6 @@
 use super::DaemonState;
 use crate::storage::{ContainerStatus, ContainerStore, ImageStore};
-use axum::{
-    Json,
-    extract::State,
-};
+use axum::{Json, extract::State};
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]

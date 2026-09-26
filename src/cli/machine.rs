@@ -20,13 +20,9 @@ pub enum MachineAction {
         rootful: bool,
     },
     /// Start a virtual machine
-    Start {
-        name: Option<String>,
-    },
+    Start { name: Option<String> },
     /// Stop a virtual machine
-    Stop {
-        name: Option<String>,
-    },
+    Stop { name: Option<String> },
     /// List virtual machines
     #[command(alias = "list")]
     Ls,
@@ -43,18 +39,11 @@ pub enum MachineAction {
         command: Vec<String>,
     },
     /// Display machine host info
-    Info {
-        name: Option<String>,
-    },
+    Info { name: Option<String> },
     /// Copy files between host and virtual machine
-    Cp {
-        source: String,
-        dest: String,
-    },
+    Cp { source: String, dest: String },
     /// Inspect details of a virtual machine
-    Inspect {
-        name: Option<String>,
-    },
+    Inspect { name: Option<String> },
     /// Set machine properties
     Set(MachineSetArgs),
     /// Manage the virtual machine operating system
@@ -65,9 +54,7 @@ pub enum MachineAction {
         force: bool,
     },
     /// Restart a virtual machine
-    Restart {
-        name: Option<String>,
-    },
+    Restart { name: Option<String> },
 }
 
 #[derive(Args, Debug, Clone, Default)]
@@ -97,11 +84,7 @@ pub struct MachineOsArgs {
 #[derive(Subcommand, Debug, Clone)]
 pub enum MachineOsAction {
     /// Apply an OS update to the machine
-    Apply {
-        name: Option<String>,
-    },
+    Apply { name: Option<String> },
     /// Check for available OS updates
-    Check {
-        name: Option<String>,
-    },
+    Check { name: Option<String> },
 }

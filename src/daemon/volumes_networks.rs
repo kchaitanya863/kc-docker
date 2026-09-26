@@ -41,7 +41,10 @@ pub async fn inspect_network(
     ))
 }
 
-pub async fn remove_network(State(state): State<DaemonState>, Path(id): Path<String>) -> StatusCode {
+pub async fn remove_network(
+    State(state): State<DaemonState>,
+    Path(id): Path<String>,
+) -> StatusCode {
     let store = NetworkStore::with_home(state.home.clone());
     match store.remove(&id) {
         Ok(_) => StatusCode::NO_CONTENT,
@@ -92,7 +95,10 @@ pub async fn inspect_volume(
     ))
 }
 
-pub async fn remove_volume(State(state): State<DaemonState>, Path(name): Path<String>) -> StatusCode {
+pub async fn remove_volume(
+    State(state): State<DaemonState>,
+    Path(name): Path<String>,
+) -> StatusCode {
     let store = VolumeStore::with_home(state.home.clone());
     if store.find(&name).is_none() {
         return StatusCode::NOT_FOUND;
@@ -101,7 +107,10 @@ pub async fn remove_volume(State(state): State<DaemonState>, Path(name): Path<St
         Ok(_) => StatusCode::NO_CONTENT,
         Err(e) => {
             let err_msg = e.to_string().to_lowercase();
-            if err_msg.contains("active") || err_msg.contains("in use") || err_msg.contains("conflict") {
+            if err_msg.contains("active")
+                || err_msg.contains("in use")
+                || err_msg.contains("conflict")
+            {
                 StatusCode::CONFLICT
             } else if err_msg.contains("not found") {
                 StatusCode::NOT_FOUND

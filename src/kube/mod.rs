@@ -77,12 +77,19 @@ impl KubeManager {
                 Self::play_pod(pod_yaml).await?;
             }
             "Deployment" => {
-                let name = val["metadata"]["name"].as_str().unwrap_or("deployment").to_string();
+                let name = val["metadata"]["name"]
+                    .as_str()
+                    .unwrap_or("deployment")
+                    .to_string();
                 let replicas = val["spec"]["replicas"].as_u64().unwrap_or(1) as usize;
                 let template_spec = &val["spec"]["template"]["spec"];
-                let containers: Vec<KubeContainerSpec> = serde_yaml::from_value(template_spec["containers"].clone())?;
+                let containers: Vec<KubeContainerSpec> =
+                    serde_yaml::from_value(template_spec["containers"].clone())?;
 
-                println!("Playing Kubernetes Deployment '{}' ({} replica(s))...", name, replicas);
+                println!(
+                    "Playing Kubernetes Deployment '{}' ({} replica(s))...",
+                    name, replicas
+                );
                 for i in 0..replicas {
                     let pod_name = if replicas == 1 {
                         name.clone()

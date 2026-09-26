@@ -263,7 +263,10 @@ fn test_e2e_container_lifecycle_pause_unpause_rename_commit_wait() {
     let output = boxr_locked(&bin, &["commit", &renamed, &snap_img]);
     assert!(output.status.success());
 
-    let output = boxr_locked(&bin, &["run", "--rm", &snap_img, "/bin/cat", "/committed.txt"]);
+    let output = boxr_locked(
+        &bin,
+        &["run", "--rm", &snap_img, "/bin/cat", "/committed.txt"],
+    );
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("committed file"));
@@ -561,7 +564,15 @@ fn test_e2e_platform_and_gpu_sharing() {
     // 1. Test arm64 container
     let arm_out = boxr_locked(
         &bin,
-        &["run", "--rm", "--platform", "linux/arm64", "alpine", "uname", "-m"],
+        &[
+            "run",
+            "--rm",
+            "--platform",
+            "linux/arm64",
+            "alpine",
+            "uname",
+            "-m",
+        ],
     );
     if arm_out.status.success() {
         let stdout = String::from_utf8_lossy(&arm_out.stdout);
@@ -571,7 +582,15 @@ fn test_e2e_platform_and_gpu_sharing() {
     // 2. Test amd64 container (via Rosetta on macOS or emulation)
     let amd_out = boxr_locked(
         &bin,
-        &["run", "--rm", "--platform", "linux/amd64", "alpine", "uname", "-m"],
+        &[
+            "run",
+            "--rm",
+            "--platform",
+            "linux/amd64",
+            "alpine",
+            "uname",
+            "-m",
+        ],
     );
     if amd_out.status.success() {
         let stdout = String::from_utf8_lossy(&amd_out.stdout);
@@ -579,6 +598,9 @@ fn test_e2e_platform_and_gpu_sharing() {
     }
 
     // 3. Test GPU device sharing flag
-    let gpu_out = boxr_locked(&bin, &["run", "--rm", "--gpus", "all", "alpine", "uname", "-a"]);
+    let gpu_out = boxr_locked(
+        &bin,
+        &["run", "--rm", "--gpus", "all", "alpine", "uname", "-a"],
+    );
     assert!(gpu_out.status.success());
 }

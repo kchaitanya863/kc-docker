@@ -339,7 +339,11 @@ impl ImageStore {
             tag,
             manifest_digest: image_id.clone(),
             config_digest: image_id.clone(),
-            size_bytes: if total_size > 0 { total_size as i64 } else { 1024 * 1024 },
+            size_bytes: if total_size > 0 {
+                total_size as i64
+            } else {
+                1024 * 1024
+            },
             created_at: Utc::now(),
             rootfs_path: dest_rootfs.to_string_lossy().to_string(),
             config: base_config,

@@ -71,11 +71,7 @@ impl CheckpointManager {
         }
     }
 
-    pub fn restore(
-        query: &str,
-        import_path: Option<&Path>,
-        _keep: bool,
-    ) -> Result<()> {
+    pub fn restore(query: &str, import_path: Option<&Path>, _keep: bool) -> Result<()> {
         let store = ContainerStore::new();
         let cont = store
             .find(query)

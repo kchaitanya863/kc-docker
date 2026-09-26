@@ -18,7 +18,10 @@ fn test_a1_smoke_version_and_run() {
 fn test_a2_tmp_sticky_and_nonroot_write() {
     let (_guard, home) = isolated_home();
     pull_if_needed(&home, "alpine:latest");
-    let mode = run_boxr_ok(&home, &["run", "--rm", "alpine", "stat", "-c", "%a", "/tmp"]);
+    let mode = run_boxr_ok(
+        &home,
+        &["run", "--rm", "alpine", "stat", "-c", "%a", "/tmp"],
+    );
     assert!(
         mode.contains("1777") || mode.contains("777"),
         "expected /tmp 1777, got {}",
@@ -73,7 +76,10 @@ fn test_a3_dev_shm_and_shm_size() {
 }
 
 #[test]
-#[cfg_attr(target_os = "macos", ignore = "urandom device probe is slow/flaky in micro-VM under cargo test")]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "urandom device probe is slow/flaky in micro-VM under cargo test"
+)]
 fn test_a4_device_nodes_nonroot() {
     let (_guard, home) = isolated_home();
     pull_if_needed(&home, "alpine:latest");
@@ -154,15 +160,21 @@ fn test_a6_postgres_named_volume() {
 }
 
 #[test]
-#[cfg_attr(target_os = "macos", ignore = "micro-VM port forwarding is flaky under cargo test on macOS")]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "micro-VM port forwarding is flaky under cargo test on macOS"
+)]
 fn test_a7_nginx_publish() {
     let (_guard, home) = isolated_home();
     pull_if_needed(&home, "nginx:alpine");
     let suffix = rand_suffix();
     let ctr = format!("bb-ngx-{}", suffix);
-    let port = 18000 + (suffix.chars().filter(|c| c.is_ascii_digit()).fold(0u32, |a, c| {
-        a * 10 + c.to_digit(10).unwrap_or(0)
-    }) % 1000);
+    let port = 18000
+        + (suffix
+            .chars()
+            .filter(|c| c.is_ascii_digit())
+            .fold(0u32, |a, c| a * 10 + c.to_digit(10).unwrap_or(0))
+            % 1000);
     let url = format!("http://127.0.0.1:{}/", port);
     assert!(
         run_detached_until_http(

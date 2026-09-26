@@ -231,7 +231,9 @@ mod tests {
 
         let diffs = FilesystemDiff::compare(&base, &container).unwrap();
         assert!(
-            !diffs.iter().any(|d| d.path == "/libboxr_perm.so" || d.path == "/boxr-run.sh"),
+            !diffs
+                .iter()
+                .any(|d| d.path == "/libboxr_perm.so" || d.path == "/boxr-run.sh"),
             "Injected runtime scaffolding must be filtered from diff"
         );
         assert!(

@@ -130,7 +130,11 @@ pub fn run_boxr(home: &Path, args: &[&str]) -> Output {
     let started = Instant::now();
     while started.elapsed() < BOXR_CMD_TIMEOUT {
         match child.try_wait() {
-            Ok(Some(_)) => return child.wait_with_output().expect("failed to read boxr output"),
+            Ok(Some(_)) => {
+                return child
+                    .wait_with_output()
+                    .expect("failed to read boxr output");
+            }
             Ok(None) => std::thread::sleep(Duration::from_millis(100)),
             Err(err) => panic!("failed waiting for boxr: {}", err),
         }
@@ -217,7 +221,11 @@ pub fn run_detached_until_http(
     let attempts = if cfg!(target_os = "macos") { 3 } else { 1 };
     for attempt in 0..attempts {
         if attempt > 0 {
-            if let Some(name) = run_args.iter().position(|a| *a == "--name").and_then(|i| run_args.get(i + 1)) {
+            if let Some(name) = run_args
+                .iter()
+                .position(|a| *a == "--name")
+                .and_then(|i| run_args.get(i + 1))
+            {
                 cleanup_container(home, name);
             }
             std::thread::sleep(Duration::from_secs(2));
@@ -294,8 +302,7 @@ pub fn cleanup_network(home: &Path, name: &str) {
 
 pub fn inspect_json(home: &Path, id_or_name: &str) -> serde_json::Value {
     let out = run_boxr_ok(home, &["inspect", id_or_name]);
-    let arr: Vec<serde_json::Value> =
-        serde_json::from_str(&out).expect("invalid inspect JSON");
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&out).expect("invalid inspect JSON");
     arr.into_iter().next().expect("empty inspect result")
 }
 
@@ -306,9 +313,8 @@ pub fn pull_if_needed(home: &Path, image: &str) {
     let tag = image.split(':').nth(1).unwrap_or("latest");
     let needle = format!("{}/{}", repo.replace('/', " "), tag);
     let alt_needle = format!("{} {}", repo, tag);
-    let listed = listing.contains(&needle)
-        || listing.contains(&alt_needle)
-        || listing.contains(repo);
+    let listed =
+        listing.contains(&needle) || listing.contains(&alt_needle) || listing.contains(repo);
     if !listed || !image_rootfs_valid(home, image) {
         run_boxr_ok(home, &["pull", image]);
     }
@@ -336,10 +342,7 @@ fn image_rootfs_valid(home: &Path, image: &str) -> bool {
         .map(|a| a.as_slice())
         .unwrap_or(&[]);
     let record = images.iter().find(|img| {
-        let reference = img
-            .get("reference")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let reference = img.get("reference").and_then(|v| v.as_str()).unwrap_or("");
         let img_tag = img.get("tag").and_then(|v| v.as_str()).unwrap_or("latest");
         let short = reference.strip_prefix("library/").unwrap_or(reference);
         (reference == repo || short == repo || reference.ends_with(&format!("/{}", repo)))
